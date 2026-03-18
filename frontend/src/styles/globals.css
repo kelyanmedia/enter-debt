@@ -1,0 +1,40 @@
+@import url('https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700&display=swap');
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+* { box-sizing: border-box; }
+
+body {
+  font-family: 'Plus Jakarta Sans', sans-serif;
+  background: #f5f6fa;
+  color: #1a1d23;
+}
+
+:root {
+  --green: #1a6b3c;
+  --green-l: #e8f5ee;
+  --green-m: #2d9b5a;
+  --green-btn: #1f7a46;
+  --bg: #f5f6fa;
+  --white: #fff;
+  --border: #e8e9ef;
+  --text: #1a1d23;
+  --muted: #8a8fa8;
+  --red: #e84040;
+  --red-l: #fef0f0;
+  --amber: #f0900a;
+  --amb-l: #fff8ee;
+  --blue: #2563eb;
+  --blue-l: #eff4ff;
+}
+
+input, select, textarea {
+  font-family: 'Plus Jakarta Sans', sans-serif;
+}
+
+/* Scrollbar */
+::-webkit-scrollbar { width: 6px; height: 6px; }
+::-webkit-scrollbar-track { background: transparent; }
+::-webkit-scrollbar-thumb { background: #d1d5db; border-radius: 3px; }
+::-webkit-scrollbar-thumb:hover { background: #9ca3af; }
