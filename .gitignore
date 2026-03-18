@@ -1,0 +1,8 @@
+.env
+__pycache__/
+*.pyc
+.next/
+node_modules/
+*.egg-info/
+.DS_Store
+postgres_data/
