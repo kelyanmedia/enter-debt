@@ -1,0 +1,82 @@
+from fastapi import APIRouter, Depends, HTTPException
+from sqlalchemy.orm import Session, joinedload
+from sqlalchemy import func
+from typing import List, Optional
+from app.db.database import get_db
+from app.models.partner import Partner
+from app.models.payment import Payment
+from app.schemas.schemas import PartnerOut, PartnerCreate, PartnerUpdate
+from app.core.security import get_current_user, require_manager_or_admin
+
+router = APIRouter(prefix="/api/partners", tags=["partners"])
+
+
+def enrich_partner(partner: Partner, db: Session) -> PartnerOut:
+    out = PartnerOut.model_validate(partner)
+    counts = db.query(
+        func.count(Payment.id).label("total"),
+        func.sum((Payment.status == "overdue").cast(int)).label("overdue")
+    ).filter(Payment.partner_id == partner.id, Payment.is_archived == False).first()
+    out.open_payments_count = counts.total or 0
+    out.overdue_count = counts.overdue or 0
+    return out
+
+
+@router.get("", response_model=List[PartnerOut])
+def list_partners(
+    status: Optional[str] = None,
+    partner_type: Optional[str] = None,
+    search: Optional[str] = None,
+    db: Session = Depends(get_db),
+    current_user=Depends(get_current_user)
+):
+    q = db.query(Partner).options(joinedload(Partner.manager)).filter(Partner.is_deleted == False)
+    if status:
+        q = q.filter(Partner.status == status)
+    if partner_type:
+        q = q.filter(Partner.partner_type == partner_type)
+    if search:
+        q = q.filter(Partner.name.ilike(f"%{search}%"))
+    partners = q.order_by(Partner.name).all()
+    return [enrich_partner(p, db) for p in partners]
+
+
+@router.get("/{partner_id}", response_model=PartnerOut)
+def get_partner(partner_id: int, db: Session = Depends(get_db), _=Depends(get_current_user)):
+    partner = db.query(Partner).options(joinedload(Partner.manager)).filter(
+        Partner.id == partner_id, Partner.is_deleted == False
+    ).first()
+    if not partner:
+        raise HTTPException(status_code=404, detail="Partner not found")
+    return enrich_partner(partner, db)
+
+
+@router.post("", response_model=PartnerOut)
+def create_partner(data: PartnerCreate, db: Session = Depends(get_db), _=Depends(require_manager_or_admin)):
+    partner = Partner(**data.model_dump())
+    db.add(partner)
+    db.commit()
+    db.refresh(partner)
+    return enrich_partner(partner, db)
+
+
+@router.put("/{partner_id}", response_model=PartnerOut)
+def update_partner(partner_id: int, data: PartnerUpdate, db: Session = Depends(get_db), _=Depends(require_manager_or_admin)):
+    partner = db.query(Partner).filter(Partner.id == partner_id, Partner.is_deleted == False).first()
+    if not partner:
+        raise HTTPException(status_code=404, detail="Partner not found")
+    for field, value in data.model_dump(exclude_none=True).items():
+        setattr(partner, field, value)
+    db.commit()
+    db.refresh(partner)
+    return enrich_partner(partner, db)
+
+
+@router.delete("/{partner_id}")
+def delete_partner(partner_id: int, db: Session = Depends(get_db), _=Depends(require_manager_or_admin)):
+    partner = db.query(Partner).filter(Partner.id == partner_id).first()
+    if not partner:
+        raise HTTPException(status_code=404, detail="Partner not found")
+    partner.is_deleted = True
+    db.commit()
+    return {"ok": True}
