@@ -1,0 +1,50 @@
+version: "3.9"
+
+services:
+  db:
+    image: postgres:16-alpine
+    restart: always
+    environment:
+      POSTGRES_DB: enterdebt
+      POSTGRES_USER: enterdebt
+      POSTGRES_PASSWORD: ${DB_PASSWORD:-enterdebt123}
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    ports:
+      - "5432:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U enterdebt"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  backend:
+    build: ./backend
+    restart: always
+    env_file: .env
+    ports:
+      - "8000:8000"
+    depends_on:
+      db:
+        condition: service_healthy
+    volumes:
+      - ./backend:/app
+
+  frontend:
+    build: ./frontend
+    restart: always
+    env_file: .env
+    ports:
+      - "3000:3000"
+    depends_on:
+      - backend
+
+  bot:
+    build: ./bot
+    restart: always
+    env_file: .env
+    depends_on:
+      - backend
+
+volumes:
+  postgres_data:
