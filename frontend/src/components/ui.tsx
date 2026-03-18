@@ -1,0 +1,220 @@
+import { ReactNode, CSSProperties } from 'react'
+
+// ── Badge ─────────────────────────────────────────────────────────────────────
+
+const BADGE_STYLES: Record<string, CSSProperties> = {
+  green:   { background: '#e8f5ee', color: '#1a6b3c' },
+  red:     { background: '#fef0f0', color: '#e84040' },
+  amber:   { background: '#fff8ee', color: '#f0900a' },
+  blue:    { background: '#eff4ff', color: '#2563eb' },
+  gray:    { background: '#f5f6fa', color: '#8a8fa8' },
+}
+
+export function Badge({ variant = 'gray', children }: { variant?: string; children: ReactNode }) {
+  return (
+    <span style={{
+      display: 'inline-flex', alignItems: 'center',
+      padding: '3px 9px', borderRadius: 20,
+      fontSize: 11, fontWeight: 600,
+      ...BADGE_STYLES[variant],
+    }}>
+      {children}
+    </span>
+  )
+}
+
+export function statusBadge(status: string) {
+  const map: Record<string, { label: string; variant: string }> = {
+    pending:  { label: 'Ожидается', variant: 'amber' },
+    paid:     { label: 'Оплачено',  variant: 'green' },
+    overdue:  { label: 'Просрочено', variant: 'red'  },
+    postponed:{ label: 'Отложено',  variant: 'blue'  },
+    active:   { label: 'Активный',  variant: 'green' },
+    paused:   { label: 'Приостановлен', variant: 'amber' },
+    archive:  { label: 'Архив',     variant: 'gray'  },
+    admin:    { label: 'Администратор', variant: 'green' },
+    manager:  { label: 'Менеджер',  variant: 'blue'  },
+    accountant:{ label: 'Бухгалтерия', variant: 'gray' },
+    regular:  { label: 'Регулярный', variant: 'blue' },
+    one_time: { label: 'Разовый',   variant: 'gray'  },
+    service:  { label: 'Сервисный', variant: 'amber' },
+  }
+  const m = map[status] || { label: status, variant: 'gray' }
+  return <Badge variant={m.variant}>{m.label}</Badge>
+}
+
+// ── Modal ─────────────────────────────────────────────────────────────────────
+
+export function Modal({ open, onClose, title, children, footer }: {
+  open: boolean; onClose: () => void; title: string;
+  children: ReactNode; footer?: ReactNode
+}) {
+  if (!open) return null
+  return (
+    <div
+      onClick={e => { if (e.target === e.currentTarget) onClose() }}
+      style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,.35)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 100 }}
+    >
+      <div style={{ background: '#fff', borderRadius: 16, width: 480, maxWidth: '95vw', boxShadow: '0 8px 40px rgba(0,0,0,.18)', display: 'flex', flexDirection: 'column', maxHeight: '90vh' }}>
+        <div style={{ padding: '20px 24px 16px', borderBottom: '1px solid #e8e9ef', display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexShrink: 0 }}>
+          <div style={{ fontSize: 15, fontWeight: 700 }}>{title}</div>
+          <button onClick={onClose} style={{ width: 28, height: 28, borderRadius: 7, background: '#f5f6fa', border: 'none', cursor: 'pointer', fontSize: 16, color: '#8a8fa8', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>✕</button>
+        </div>
+        <div style={{ padding: '20px 24px', overflowY: 'auto', flex: 1 }}>{children}</div>
+        {footer && <div style={{ padding: '16px 24px', borderTop: '1px solid #e8e9ef', display: 'flex', justifyContent: 'flex-end', gap: 10, flexShrink: 0 }}>{footer}</div>}
+      </div>
+    </div>
+  )
+}
+
+// ── Buttons ───────────────────────────────────────────────────────────────────
+
+export function BtnPrimary({ children, onClick, disabled, type = 'button', style }: { children: ReactNode; onClick?: () => void; disabled?: boolean; type?: 'button'|'submit'; style?: CSSProperties }) {
+  return (
+    <button type={type} onClick={onClick} disabled={disabled} style={{
+      display: 'inline-flex', alignItems: 'center', gap: 6,
+      padding: '8px 16px', borderRadius: 9, fontSize: 13, fontWeight: 600,
+      background: '#1f7a46', color: '#fff', border: 'none', cursor: disabled ? 'not-allowed' : 'pointer',
+      opacity: disabled ? .6 : 1, fontFamily: 'inherit', ...style,
+    }}>{children}</button>
+  )
+}
+
+export function BtnOutline({ children, onClick, style }: { children: ReactNode; onClick?: () => void; style?: CSSProperties }) {
+  return (
+    <button onClick={onClick} style={{
+      display: 'inline-flex', alignItems: 'center', gap: 6,
+      padding: '8px 16px', borderRadius: 9, fontSize: 13, fontWeight: 600,
+      background: '#fff', color: '#1a1d23', border: '1px solid #e8e9ef',
+      cursor: 'pointer', fontFamily: 'inherit', ...style,
+    }}>{children}</button>
+  )
+}
+
+// ── Form Fields ───────────────────────────────────────────────────────────────
+
+export function Field({ label, children }: { label: string; children: ReactNode }) {
+  return (
+    <div style={{ marginBottom: 14 }}>
+      <label style={{ display: 'block', fontSize: 11, fontWeight: 600, color: '#8a8fa8', textTransform: 'uppercase', letterSpacing: '.05em', marginBottom: 5 }}>{label}</label>
+      {children}
+    </div>
+  )
+}
+
+const inputStyle: CSSProperties = {
+  width: '100%', border: '1px solid #e8e9ef', borderRadius: 9,
+  padding: '9px 12px', fontSize: 13.5, outline: 'none', color: '#1a1d23',
+  fontFamily: 'inherit', background: '#fff',
+}
+
+export function Input(props: React.InputHTMLAttributes<HTMLInputElement>) {
+  return <input {...props} style={{ ...inputStyle, ...props.style }} />
+}
+
+export function Select(props: React.SelectHTMLAttributes<HTMLSelectElement>) {
+  return <select {...props} style={{ ...inputStyle, cursor: 'pointer', ...props.style }} />
+}
+
+// ── Page Header ───────────────────────────────────────────────────────────────
+
+export function PageHeader({ title, subtitle, action }: { title: string; subtitle?: string; action?: ReactNode }) {
+  return (
+    <div style={{ background: '#fff', borderBottom: '1px solid #e8e9ef', padding: '0 24px', height: 60, display: 'flex', alignItems: 'center', gap: 16, flexShrink: 0 }}>
+      <div style={{ flex: 1 }}>
+        <div style={{ fontSize: 18, fontWeight: 700 }}>{title}</div>
+        {subtitle && <div style={{ fontSize: 13, color: '#8a8fa8' }}>{subtitle}</div>}
+      </div>
+      {action}
+    </div>
+  )
+}
+
+// ── Stat Card ─────────────────────────────────────────────────────────────────
+
+export function StatCard({ label, value, sub, subColor = '#2d9b5a', featured, onClick }: {
+  label: string; value: string; sub?: string; subColor?: string; featured?: boolean; onClick?: () => void
+}) {
+  return (
+    <div onClick={onClick} style={{
+      background: featured ? '#1a6b3c' : '#fff',
+      border: '1px solid #e8e9ef', borderRadius: 14,
+      padding: '18px 20px', cursor: onClick ? 'pointer' : 'default',
+      transition: 'box-shadow .15s',
+    }}>
+      <div style={{ fontSize: 12, fontWeight: 500, color: featured ? 'rgba(255,255,255,.7)' : '#8a8fa8', marginBottom: 8 }}>{label}</div>
+      <div style={{ fontSize: 28, fontWeight: 700, letterSpacing: '-.02em', color: featured ? '#fff' : '#1a1d23', marginBottom: 6 }}>{value}</div>
+      {sub && <div style={{ fontSize: 12, color: featured ? 'rgba(255,255,255,.8)' : subColor }}>{sub}</div>}
+    </div>
+  )
+}
+
+// ── Empty State ───────────────────────────────────────────────────────────────
+
+export function Empty({ text }: { text: string }) {
+  return (
+    <div style={{ padding: '48px 24px', textAlign: 'center', color: '#8a8fa8', fontSize: 14 }}>{text}</div>
+  )
+}
+
+// ── Table wrapper ─────────────────────────────────────────────────────────────
+
+export function Card({ children, style }: { children: ReactNode; style?: CSSProperties }) {
+  return (
+    <div style={{ background: '#fff', border: '1px solid #e8e9ef', borderRadius: 14, overflow: 'hidden', ...style }}>
+      {children}
+    </div>
+  )
+}
+
+export function CardHeader({ children }: { children: ReactNode }) {
+  return (
+    <div style={{ padding: '16px 20px', borderBottom: '1px solid #e8e9ef', display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+      {children}
+    </div>
+  )
+}
+
+export function CardTitle({ children }: { children: ReactNode }) {
+  return <div style={{ fontSize: 14, fontWeight: 700 }}>{children}</div>
+}
+
+export function Th({ children, style }: { children?: ReactNode; style?: CSSProperties }) {
+  return <th style={{ padding: '10px 16px', textAlign: 'left', fontSize: 11.5, fontWeight: 600, color: '#8a8fa8', textTransform: 'uppercase', letterSpacing: '.05em', borderBottom: '1px solid #e8e9ef', background: '#f5f6fa', whiteSpace: 'nowrap', ...style }}>{children}</th>
+}
+
+export function Td({ children, style }: { children?: ReactNode; style?: CSSProperties }) {
+  return <td style={{ padding: '12px 16px', fontSize: 13, borderBottom: '1px solid #e8e9ef', ...style }}>{children}</td>
+}
+
+export function PartnerAvatar({ name }: { name: string }) {
+  const letters = name.split(' ').map(w => w[0]).join('').slice(0, 2).toUpperCase()
+  return (
+    <div style={{ width: 30, height: 30, borderRadius: 8, background: '#e8f5ee', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 11, fontWeight: 700, color: '#1a6b3c', flexShrink: 0 }}>{letters}</div>
+  )
+}
+
+export function formatAmount(n: number | string) {
+  return Number(n).toLocaleString('ru-RU') + ' UZS'
+}
+
+export function formatDate(d?: string | null) {
+  if (!d) return '—'
+  return new Date(d).toLocaleDateString('ru-RU', { day: '2-digit', month: 'short', year: 'numeric' })
+}
+
+export function daysLeft(deadline?: string | null, dayOfMonth?: number | null): { label: string; color: string } {
+  let date: Date | null = null
+  if (deadline) {
+    date = new Date(deadline)
+  } else if (dayOfMonth) {
+    const now = new Date()
+    date = new Date(now.getFullYear(), now.getMonth(), dayOfMonth)
+    if (date < now) date = new Date(now.getFullYear(), now.getMonth() + 1, dayOfMonth)
+  }
+  if (!date) return { label: '—', color: '#8a8fa8' }
+  const diff = Math.ceil((date.getTime() - Date.now()) / 86400000)
+  if (diff < 0) return { label: `−${Math.abs(diff)} дн.`, color: '#e84040' }
+  if (diff <= 3) return { label: `${diff} дн.`, color: '#f0900a' }
+  return { label: `${diff} дн.`, color: '#2d9b5a' }
+}
