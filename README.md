@@ -1,6 +1,6 @@
 # EnterDebt — Система контроля дебиторки
 
-## Стек
+## Стек 
 - **Backend**: Python 3.12 + FastAPI + PostgreSQL + APScheduler
 - **Frontend**: Next.js 14 + TypeScript + TailwindCSS
 - **Деплой**: Docker Compose (Hetzner VPS или любой сервер)
