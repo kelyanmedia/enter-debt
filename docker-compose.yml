@@ -39,12 +39,5 @@ services:
     depends_on:
       - backend
 
-  bot:
-    build: ./bot
-    restart: always
-    env_file: .env
-    depends_on:
-      - backend
-
 volumes:
   postgres_data:
