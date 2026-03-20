@@ -9,12 +9,18 @@
 
 ## Быстрый старт (Docker)
 
+> **Примечание**: PostgreSQL должна быть уже установлена на хосте (например, через FastPanel).
+> Docker Compose **не** создаёт контейнер с базой данных — используется внешняя БД.
+
 ```bash
 # 1. Клонировать / распаковать проект
 cd enterdebt
 
-# 2. (Опционально) Создать .env с токеном бота
-echo "TELEGRAM_BOT_TOKEN=ваш_токен" > .env
+# 2. Создать .env с подключением к БД и токеном бота
+cat > .env <<EOF
+DATABASE_URL=postgresql://user:password@127.0.0.1:5432/dbname
+TELEGRAM_BOT_TOKEN=ваш_токен
+EOF
 
 # 3. Запустить
 docker-compose up --build
@@ -116,8 +122,14 @@ enterdebt/
 # На сервере:
 apt install docker.io docker-compose-plugin -y
 
+# PostgreSQL должна быть уже установлена (FastPanel или вручную)
+
 git clone ... && cd enterdebt
-echo "TELEGRAM_BOT_TOKEN=токен" > .env
+
+cat > .env <<EOF
+DATABASE_URL=postgresql://user:password@127.0.0.1:5432/dbname
+TELEGRAM_BOT_TOKEN=токен
+EOF
 
 docker compose up -d --build
 
