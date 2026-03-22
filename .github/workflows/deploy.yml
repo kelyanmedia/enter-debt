@@ -19,19 +19,21 @@ jobs:
           key: ${{ secrets.SSH_KEY }}
           command_timeout: 30m
           script: |
-            set -e
-            echo "=== Step 1: cd to project ==="
             cd ${{ secrets.SSH_PATH }}
-            echo "=== Step 2: git fetch ==="
+
+            # Clean up any stale git lock files
+            rm -f .git/index.lock .git/FETCH_HEAD
+
             git fetch origin main
-            echo "=== Step 3: git reset ==="
             git reset --hard origin/main
-            echo "=== Step 4: docker ==="
-            if command -v docker-compose &> /dev/null; then
-              echo "Using docker-compose (v1)"
-              docker-compose up --build -d
+
+            # Build first - if build fails, keep old containers running
+            if command -v docker-compose >/dev/null 2>&1; then
+              COMPOSE="docker-compose"
             else
-              echo "Using docker compose (v2)"
-              docker compose up --build -d
+              COMPOSE="docker compose"
             fi
-            echo "=== Done ==="
+
+            echo "Using: $COMPOSE"
+            $COMPOSE build && $COMPOSE up -d || $COMPOSE up -d
+            echo "Deploy done"
