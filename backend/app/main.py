@@ -36,7 +36,13 @@ def seed_initial_data():
 
     db = Session(bind=engine)
     try:
-        if db.query(UserModel).count() == 0:
+        admin = db.query(UserModel).filter(UserModel.role == "admin").first()
+        if admin:
+            admin.email = settings.ADMIN_EMAIL
+            admin.hashed_password = get_password_hash(settings.ADMIN_PASSWORD)
+            admin.is_active = True
+            db.commit()
+        else:
             users_data = [
                 {"name": "Администратор", "email": settings.ADMIN_EMAIL, "password": settings.ADMIN_PASSWORD, "role": "admin"},
                 {"name": "Rustam Karimov", "email": "rustam@kelyanmedia.uz", "password": "rustam123", "role": "manager"},

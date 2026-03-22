@@ -12,8 +12,8 @@ class Settings(BaseSettings):
     BOT_TOKEN: Optional[str] = None
     API_URL: str = "http://localhost:8000"
 
-    ADMIN_EMAIL: str = "admin@entergroup.uz"
-    ADMIN_PASSWORD: str = "admin123"
+    ADMIN_EMAIL: str = "agasi@gmail.com"
+    ADMIN_PASSWORD: str = "KM2026admin_controlpanel"
 
     class Config:
         env_file = ".env"
