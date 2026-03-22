@@ -46,4 +46,8 @@ jobs:
               echo "Build FAILED - will use existing images"
             fi
             $COMPOSE up -d --force-recreate
+
+            # Restart nginx to ensure reverse proxy is running
+            sudo systemctl restart nginx 2>/dev/null || true
+
             echo "Deploy done"
