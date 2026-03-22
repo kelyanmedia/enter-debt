@@ -17,13 +17,10 @@ jobs:
           host: ${{ secrets.SSH_HOST }}
           username: ${{ secrets.SSH_USER }}
           key: ${{ secrets.SSH_KEY }}
-          port: 22
-          timeout: 60s
           command_timeout: 30m
-          debug: true
           script: |
             set -e
             cd ${{ secrets.SSH_PATH }}
             git fetch origin main
             git reset --hard origin/main
-            docker compose up --build -d
+            docker-compose up --build -d
