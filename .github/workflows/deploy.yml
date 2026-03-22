@@ -21,13 +21,16 @@ jobs:
           script: |
             cd ${{ secrets.SSH_PATH }}
 
-            # Clean up any stale git lock files
+            # Clean up stale git lock files
             rm -f .git/index.lock .git/FETCH_HEAD
 
             git fetch origin main
             git reset --hard origin/main
 
-            # Build first - if build fails, keep old containers running
+            # Free disk space: clean orphaned git objects and unused docker images
+            git gc --prune=all --quiet
+            docker image prune -f
+
             if command -v docker-compose >/dev/null 2>&1; then
               COMPOSE="docker-compose"
             else
@@ -35,5 +38,6 @@ jobs:
             fi
 
             echo "Using: $COMPOSE"
+            # Build new images; fall back to old images if build fails (keeps service up)
             $COMPOSE build && $COMPOSE up -d || $COMPOSE up -d
             echo "Deploy done"
