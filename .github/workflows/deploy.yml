@@ -39,6 +39,11 @@ jobs:
 
             echo "Using: $COMPOSE"
 
+            # Show disk usage and running processes for debugging
+            df -h | tail -3
+            echo "--- Docker containers before ---"
+            $COMPOSE ps 2>/dev/null || docker ps 2>/dev/null || echo "no docker"
+
             # Build and start containers
             if $COMPOSE build; then
               echo "Build succeeded"
@@ -47,7 +52,19 @@ jobs:
             fi
             $COMPOSE up -d --force-recreate
 
-            # Restart nginx to ensure reverse proxy is running
-            sudo systemctl restart nginx 2>/dev/null || true
+            # Give containers a moment to start
+            sleep 5
+
+            echo "--- Docker containers after ---"
+            $COMPOSE ps 2>/dev/null || docker ps 2>/dev/null
+
+            # Restart nginx if available
+            systemctl restart nginx 2>/dev/null || service nginx restart 2>/dev/null || true
+
+            # Show what's listening on ports
+            echo "--- Port 3000 ---"
+            ss -tlnp 2>/dev/null | grep 3000 || netstat -tlnp 2>/dev/null | grep 3000 || echo "nothing on 3000"
+            echo "--- Port 8000 ---"
+            ss -tlnp 2>/dev/null | grep 8000 || netstat -tlnp 2>/dev/null | grep 8000 || echo "nothing on 8000"
 
             echo "Deploy done"
