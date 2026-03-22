@@ -39,16 +39,11 @@ jobs:
 
             echo "Using: $COMPOSE"
 
-            # Stop ALL containers and also kill any stray processes on ports 3000/8000
-            $COMPOSE down || true
-            fuser -k 3000/tcp 2>/dev/null || true
-            fuser -k 8000/tcp 2>/dev/null || true
-
-            # Build and start
+            # Build and start containers
             if $COMPOSE build; then
               echo "Build succeeded"
             else
               echo "Build FAILED - will use existing images"
             fi
-            $COMPOSE up -d
+            $COMPOSE up -d --force-recreate
             echo "Deploy done"
