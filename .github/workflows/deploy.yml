@@ -38,12 +38,17 @@ jobs:
             fi
 
             echo "Using: $COMPOSE"
-            # Build new images; fall back to old images if build fails (keeps service up)
+
+            # Stop ALL containers and also kill any stray processes on ports 3000/8000
+            $COMPOSE down || true
+            fuser -k 3000/tcp 2>/dev/null || true
+            fuser -k 8000/tcp 2>/dev/null || true
+
+            # Build and start
             if $COMPOSE build; then
-              echo "Build succeeded, recreating containers with new images"
-              $COMPOSE up -d --force-recreate
+              echo "Build succeeded"
             else
-              echo "Build FAILED - restarting with existing images"
-              $COMPOSE up -d --force-recreate
+              echo "Build FAILED - will use existing images"
             fi
+            $COMPOSE up -d
             echo "Deploy done"
