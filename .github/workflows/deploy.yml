@@ -44,27 +44,32 @@ jobs:
             echo "--- Docker containers before ---"
             $COMPOSE ps 2>/dev/null || docker ps 2>/dev/null || echo "no docker"
 
-            # Build and start containers
+            # Stop and remove containers first (avoids KeyError: ContainerConfig bug in docker-compose v1)
+            $COMPOSE stop 2>/dev/null || true
+            $COMPOSE rm -f 2>/dev/null || true
+
+            # Build new images
             if $COMPOSE build; then
               echo "Build succeeded"
             else
               echo "Build FAILED - will use existing images"
             fi
-            $COMPOSE up -d --force-recreate
 
-            # Give containers a moment to start
-            sleep 5
+            # Start containers fresh
+            $COMPOSE up -d
 
-            echo "--- Docker containers after ---"
+            # Give containers time to initialize
+            sleep 8
+
+            echo "--- Docker containers ---"
             $COMPOSE ps 2>/dev/null || docker ps 2>/dev/null
 
-            # Restart nginx if available
-            systemctl restart nginx 2>/dev/null || service nginx restart 2>/dev/null || true
-
-            # Show what's listening on ports
             echo "--- Port 3000 ---"
-            ss -tlnp 2>/dev/null | grep 3000 || netstat -tlnp 2>/dev/null | grep 3000 || echo "nothing on 3000"
+            ss -tlnp 2>/dev/null | grep 3000 || echo "nothing on 3000"
             echo "--- Port 8000 ---"
-            ss -tlnp 2>/dev/null | grep 8000 || netstat -tlnp 2>/dev/null | grep 8000 || echo "nothing on 8000"
+            ss -tlnp 2>/dev/null | grep 8000 || echo "nothing on 8000"
+
+            # Restart nginx
+            systemctl restart nginx 2>/dev/null || service nginx restart 2>/dev/null || echo "nginx restart skipped"
 
             echo "Deploy done"
