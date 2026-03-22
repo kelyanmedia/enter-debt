@@ -1,6 +1,6 @@
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session, joinedload
-from sqlalchemy import func
+from sqlalchemy import func, case
 from typing import List, Optional
 from app.db.database import get_db
 from app.models.partner import Partner
@@ -15,10 +15,10 @@ def enrich_partner(partner: Partner, db: Session) -> PartnerOut:
     out = PartnerOut.model_validate(partner)
     counts = db.query(
         func.count(Payment.id).label("total"),
-        func.sum((Payment.status == "overdue").cast(int)).label("overdue")
+        func.sum(case((Payment.status == "overdue", 1), else_=0)).label("overdue")
     ).filter(Payment.partner_id == partner.id, Payment.is_archived == False).first()
     out.open_payments_count = counts.total or 0
-    out.overdue_count = counts.overdue or 0
+    out.overdue_count = int(counts.overdue or 0)
     return out
 
 

@@ -2,7 +2,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from app.db.database import init_db, engine, Base
 from app.models import user, partner, payment
-from app.api.routes import auth, users, partners, payments, dashboard, notifications
+from app.api.routes import auth, users, partners, payments, dashboard, notifications, archive
 from app.core.config import settings
 from app.core.security import get_password_hash
 
@@ -22,6 +22,7 @@ app.include_router(partners.router)
 app.include_router(payments.router)
 app.include_router(dashboard.router)
 app.include_router(notifications.router)
+app.include_router(archive.router)
 
 
 @app.on_event("startup")

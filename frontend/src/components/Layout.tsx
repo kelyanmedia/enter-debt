@@ -9,6 +9,7 @@ const NAV = [
   { href: '/partners', label: 'Партнёры', icon: '🤝' },
   { href: '/users', label: 'Пользователи', icon: '👥', adminOnly: true },
   { href: '/notifications', label: 'Уведомления', icon: '🔔' },
+  { href: '/archive', label: 'Архив', icon: '🗄️', adminOnly: true },
 ]
 
 export default function Layout({ children }: { children: ReactNode }) {

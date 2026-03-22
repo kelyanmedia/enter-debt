@@ -57,7 +57,7 @@ export default function PartnersPage() {
     try {
       const payload = { ...form, manager_id: form.manager_id ? Number(form.manager_id) : null }
       if (editing) {
-        await api.patch(`partners/${editing.id}`, payload)
+        await api.put(`partners/${editing.id}`, payload)
       } else {
         await api.post('partners', payload)
       }
@@ -154,7 +154,7 @@ export default function PartnersPage() {
           </Field>
         </div>
         <Field label="Email">
-          <Input type="email" value={form.email} onChange={e => setForm(f => ({ ...f, email: e.target.value }))} placeholder="contact@company.uz" />
+          <Input value={form.email} onChange={e => setForm(f => ({ ...f, email: e.target.value }))} placeholder="contact@company.uz" />
         </Field>
         <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
           <Field label="Тип партнёра">
