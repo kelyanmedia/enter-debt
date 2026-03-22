@@ -5,8 +5,9 @@ import { useAuth } from '@/context/AuthContext'
 export default function LoginPage() {
   const { login } = useAuth()
   const router = useRouter()
-  const [email, setEmail] = useState('')
-  const [password, setPassword] = useState('')
+  const isDev = process.env.NODE_ENV === 'development'
+  const [email, setEmail] = useState(isDev ? 'admin@entergroup.uz' : '')
+  const [password, setPassword] = useState(isDev ? 'admin123' : '')
   const [error, setError] = useState('')
   const [loading, setLoading] = useState(false)
 
@@ -43,10 +44,10 @@ export default function LoginPage() {
           <div style={{ marginBottom: 14 }}>
             <label style={{ display: 'block', fontSize: 11, fontWeight: 600, color: '#8a8fa8', textTransform: 'uppercase', letterSpacing: '.05em', marginBottom: 5 }}>Email</label>
             <input
-              type="email"
+              type="text"
               value={email}
               onChange={e => setEmail(e.target.value)}
-              required
+              placeholder="email@example.com"
               style={{ width: '100%', border: '1px solid #e8e9ef', borderRadius: 9, padding: '10px 13px', fontSize: 14, outline: 'none', color: '#1a1d23' }}
             />
           </div>
@@ -56,7 +57,7 @@ export default function LoginPage() {
               type="password"
               value={password}
               onChange={e => setPassword(e.target.value)}
-              required
+              placeholder="••••••••"
               style={{ width: '100%', border: '1px solid #e8e9ef', borderRadius: 9, padding: '10px 13px', fontSize: 14, outline: 'none', color: '#1a1d23' }}
             />
           </div>
