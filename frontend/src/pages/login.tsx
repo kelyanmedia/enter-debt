@@ -5,8 +5,8 @@ import { useAuth } from '@/context/AuthContext'
 export default function LoginPage() {
   const { login } = useAuth()
   const router = useRouter()
-  const [email, setEmail] = useState('admin@entergroup.uz')
-  const [password, setPassword] = useState('admin123')
+  const [email, setEmail] = useState('')
+  const [password, setPassword] = useState('')
   const [error, setError] = useState('')
   const [loading, setLoading] = useState(false)
 
@@ -72,12 +72,6 @@ export default function LoginPage() {
           </button>
         </form>
 
-        <div style={{ marginTop: 20, padding: '12px', background: '#f5f6fa', borderRadius: 9, fontSize: 12, color: '#8a8fa8' }}>
-          <div style={{ fontWeight: 600, marginBottom: 4, color: '#1a1d23' }}>Тестовые аккаунты:</div>
-          <div>admin@entergroup.uz / admin123</div>
-          <div>rustam@kelyanmedia.uz / rustam123</div>
-          <div>buh@entergroup.uz / buh123</div>
-        </div>
       </div>
     </div>
   )
