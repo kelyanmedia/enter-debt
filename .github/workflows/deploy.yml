@@ -39,5 +39,11 @@ jobs:
 
             echo "Using: $COMPOSE"
             # Build new images; fall back to old images if build fails (keeps service up)
-            $COMPOSE build && $COMPOSE up -d || $COMPOSE up -d
+            if $COMPOSE build; then
+              echo "Build succeeded, starting containers"
+              $COMPOSE up -d
+            else
+              echo "Build FAILED - restarting with existing images"
+              $COMPOSE up -d
+            fi
             echo "Deploy done"
