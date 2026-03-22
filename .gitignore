@@ -6,3 +6,6 @@ node_modules/
 *.egg-info/
 .DS_Store
 postgres_data/
+.venv/
+venv/
+db_backups/
