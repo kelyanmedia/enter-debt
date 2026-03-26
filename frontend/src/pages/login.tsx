@@ -1,4 +1,4 @@
-import { useState, FormEvent } from 'react'
+import { useState, FormEvent, useEffect } from 'react'
 import { useRouter } from 'next/router'
 import { useAuth } from '@/context/AuthContext'
 
@@ -8,15 +8,24 @@ export default function LoginPage() {
   const isDev = process.env.NODE_ENV === 'development'
   const [email, setEmail] = useState(isDev ? 'admin@entergroup.uz' : '')
   const [password, setPassword] = useState(isDev ? 'admin123' : '')
+  const [remember, setRemember] = useState(false)
   const [error, setError] = useState('')
   const [loading, setLoading] = useState(false)
+
+  useEffect(() => {
+    const saved = localStorage.getItem('saved_email')
+    if (saved) {
+      setEmail(saved)
+      setRemember(true)
+    }
+  }, [])
 
   const handleSubmit = async (e: FormEvent) => {
     e.preventDefault()
     setError('')
     setLoading(true)
     try {
-      await login(email, password)
+      await login(email, password, remember)
       router.push('/')
     } catch (err: any) {
       const status = err?.response?.status
@@ -53,19 +62,39 @@ export default function LoginPage() {
               value={email}
               onChange={e => setEmail(e.target.value)}
               placeholder="email@example.com"
-              style={{ width: '100%', border: '1px solid #e8e9ef', borderRadius: 9, padding: '10px 13px', fontSize: 14, outline: 'none', color: '#1a1d23' }}
+              style={{ width: '100%', border: '1px solid #e8e9ef', borderRadius: 9, padding: '10px 13px', fontSize: 14, outline: 'none', color: '#1a1d23', boxSizing: 'border-box' }}
             />
           </div>
-          <div style={{ marginBottom: 20 }}>
+          <div style={{ marginBottom: 16 }}>
             <label style={{ display: 'block', fontSize: 11, fontWeight: 600, color: '#8a8fa8', textTransform: 'uppercase', letterSpacing: '.05em', marginBottom: 5 }}>Пароль</label>
             <input
               type="password"
               value={password}
               onChange={e => setPassword(e.target.value)}
               placeholder="••••••••"
-              style={{ width: '100%', border: '1px solid #e8e9ef', borderRadius: 9, padding: '10px 13px', fontSize: 14, outline: 'none', color: '#1a1d23' }}
+              style={{ width: '100%', border: '1px solid #e8e9ef', borderRadius: 9, padding: '10px 13px', fontSize: 14, outline: 'none', color: '#1a1d23', boxSizing: 'border-box' }}
             />
           </div>
+
+          <label style={{ display: 'flex', alignItems: 'center', gap: 9, marginBottom: 20, cursor: 'pointer', userSelect: 'none' }}>
+            <div
+              onClick={() => setRemember(v => !v)}
+              style={{
+                width: 18, height: 18, borderRadius: 5, flexShrink: 0,
+                border: `2px solid ${remember ? '#1a6b3c' : '#d0d3de'}`,
+                background: remember ? '#1a6b3c' : '#fff',
+                display: 'flex', alignItems: 'center', justifyContent: 'center',
+                transition: 'all .15s',
+              }}
+            >
+              {remember && (
+                <svg width="10" height="8" viewBox="0 0 10 8" fill="none">
+                  <path d="M1 4l3 3 5-6" stroke="#fff" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"/>
+                </svg>
+              )}
+            </div>
+            <span style={{ fontSize: 13, color: '#444' }} onClick={() => setRemember(v => !v)}>Запомнить меня</span>
+          </label>
 
           {error && <div style={{ background: '#fef0f0', color: '#e84040', borderRadius: 8, padding: '9px 12px', fontSize: 13, marginBottom: 14 }}>{error}</div>}
 
@@ -77,7 +106,6 @@ export default function LoginPage() {
             {loading ? 'Входим...' : 'Войти'}
           </button>
         </form>
-
       </div>
     </div>
   )

@@ -13,34 +13,58 @@ interface User {
 interface AuthCtx {
   user: User | null
   loading: boolean
-  login: (email: string, password: string) => Promise<void>
+  login: (email: string, password: string, remember: boolean) => Promise<void>
   logout: () => void
 }
 
 const Ctx = createContext<AuthCtx>({} as AuthCtx)
+
+function getToken() {
+  return localStorage.getItem('token') || sessionStorage.getItem('token')
+}
+
+function saveToken(token: string, remember: boolean) {
+  if (remember) {
+    localStorage.setItem('token', token)
+    sessionStorage.removeItem('token')
+  } else {
+    sessionStorage.setItem('token', token)
+    localStorage.removeItem('token')
+  }
+}
+
+function clearToken() {
+  localStorage.removeItem('token')
+  sessionStorage.removeItem('token')
+}
 
 export function AuthProvider({ children }: { children: ReactNode }) {
   const [user, setUser] = useState<User | null>(null)
   const [loading, setLoading] = useState(true)
 
   useEffect(() => {
-    const token = localStorage.getItem('token')
+    const token = getToken()
     if (!token) { setLoading(false); return }
     api.get('auth/me')
       .then(r => setUser(r.data))
-      .catch(() => localStorage.removeItem('token'))
+      .catch(() => clearToken())
       .finally(() => setLoading(false))
   }, [])
 
-  const login = async (email: string, password: string) => {
+  const login = async (email: string, password: string, remember: boolean) => {
     const r = await api.post('auth/login', { email, password })
-    localStorage.setItem('token', r.data.access_token)
+    saveToken(r.data.access_token, remember)
+    if (remember) {
+      localStorage.setItem('saved_email', email)
+    } else {
+      localStorage.removeItem('saved_email')
+    }
     const me = await api.get('auth/me')
     setUser(me.data)
   }
 
   const logout = () => {
-    localStorage.removeItem('token')
+    clearToken()
     setUser(null)
   }
 
