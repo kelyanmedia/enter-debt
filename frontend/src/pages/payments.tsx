@@ -55,6 +55,7 @@ export default function PaymentsPage() {
   const [filterManager, setFilterManager] = useState('')
   const [users, setUsers] = useState<User[]>([])
   const [modal, setModal] = useState(false)
+  const [editingId, setEditingId] = useState<number | null>(null)
   const [confirmModal, setConfirmModal] = useState<Payment | null>(null)
   const [postponeDays, setPostponeDays] = useState(0)
   const [form, setForm] = useState({ ...EMPTY_FORM })
@@ -87,13 +88,31 @@ export default function PaymentsPage() {
     api.get('users').then(r => setUsers(r.data)).catch(() => {})
   }, [filterStatus, filterType, filterManager])
 
-  const openAdd = () => { setForm({ ...EMPTY_FORM }); setError(''); setModal(true) }
+  const openAdd = () => { setForm({ ...EMPTY_FORM }); setEditingId(null); setError(''); setModal(true) }
+
+  const openEdit = (p: Payment) => {
+    setForm({
+      partner_id: String(p.partner_id),
+      payment_type: p.payment_type,
+      description: p.description,
+      amount: String(p.amount),
+      day_of_month: p.day_of_month ? String(p.day_of_month) : '',
+      deadline_date: p.deadline_date || '',
+      remind_days_before: String(p.remind_days_before),
+      contract_months: p.contract_months ? String(p.contract_months) : '',
+      notify_accounting: p.notify_accounting ?? true,
+      contract_url: p.contract_url || '',
+    })
+    setEditingId(p.id)
+    setError('')
+    setModal(true)
+  }
 
   const save = async () => {
     if (!form.partner_id || !form.description || !form.amount) { setError('Заполните все обязательные поля'); return }
     setSaving(true)
     try {
-      await api.post('payments', {
+      const payload = {
         partner_id: Number(form.partner_id),
         payment_type: form.payment_type,
         description: form.description,
@@ -104,7 +123,12 @@ export default function PaymentsPage() {
         remind_days_before: Number(form.remind_days_before),
         notify_accounting: form.notify_accounting,
         contract_url: form.contract_url || null,
-      })
+      }
+      if (editingId) {
+        await api.put(`payments/${editingId}`, payload)
+      } else {
+        await api.post('payments', payload)
+      }
       setModal(false)
       load()
     } catch (e: any) {
@@ -277,6 +301,7 @@ export default function PaymentsPage() {
                         {p.status !== 'paid' && (
                           <BtnOutline onClick={() => { setPostponeDays(0); setConfirmModal(p) }} style={{ padding: '5px 10px', fontSize: 12 }}>✅ Оплачено</BtnOutline>
                         )}
+                        <BtnOutline onClick={() => openEdit(p)} style={{ padding: '5px 10px', fontSize: 12 }}>✏️</BtnOutline>
                         <BtnOutline onClick={() => deletePayment(p.id)} style={{ padding: '5px 10px', fontSize: 12, color: '#e84040' }}>✕</BtnOutline>
                       </div>
                     </Td>
@@ -498,8 +523,8 @@ export default function PaymentsPage() {
         </>
       )}
 
-      {/* Add project Modal */}
-      <Modal open={modal} onClose={() => setModal(false)} title="Новый проект"
+      {/* Add / Edit project Modal */}
+      <Modal open={modal} onClose={() => setModal(false)} title={editingId ? 'Редактировать проект' : 'Новый проект'}
         footer={<><BtnOutline onClick={() => setModal(false)}>Отмена</BtnOutline><BtnPrimary onClick={save} disabled={saving}>{saving ? 'Сохраняем...' : 'Сохранить'}</BtnPrimary></>}
       >
         {error && <div style={{ background: '#fef0f0', color: '#e84040', borderRadius: 8, padding: '9px 12px', fontSize: 13, marginBottom: 14 }}>{error}</div>}

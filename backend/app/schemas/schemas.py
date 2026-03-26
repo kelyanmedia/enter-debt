@@ -127,8 +127,11 @@ class PaymentMonthOut(BaseModel):
 
 
 class PaymentUpdate(BaseModel):
+    partner_id: Optional[int] = None
+    payment_type: Optional[str] = None
     description: Optional[str] = None
     amount: Optional[Decimal] = None
+    contract_months: Optional[int] = None
     day_of_month: Optional[int] = None
     deadline_date: Optional[date] = None
     remind_days_before: Optional[int] = None
