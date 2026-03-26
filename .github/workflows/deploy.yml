@@ -78,8 +78,8 @@ jobs:
             # Start containers fresh
             $COMPOSE up -d
 
-            # Give containers time to initialize
-            sleep 8
+            # Give containers time to initialize (Next.js needs a few seconds)
+            sleep 12
 
             echo "--- Docker containers ---"
             $COMPOSE ps 2>/dev/null || docker ps 2>/dev/null
@@ -89,7 +89,28 @@ jobs:
             echo "--- Port 8000 ---"
             ss -tlnp 2>/dev/null | grep 8000 || echo "nothing on 8000"
 
-            # Restart nginx
+            # ── Smoke tests (fail deploy if stack is not reachable on localhost) ──
+            FAIL=0
+            if ! curl -fsS --max-time 10 http://127.0.0.1:8000/health >/dev/null 2>&1; then
+              echo "ERROR: backend /health failed on :8000"
+              $COMPOSE logs --tail 100 backend 2>/dev/null || true
+              FAIL=1
+            else
+              echo "OK: backend /health"
+            fi
+            if ! curl -fsS --max-time 15 http://127.0.0.1:3000/ >/dev/null 2>&1; then
+              echo "ERROR: frontend not responding on :3000"
+              $COMPOSE logs --tail 100 frontend 2>/dev/null || true
+              FAIL=1
+            else
+              echo "OK: frontend :3000"
+            fi
+            if [ "$FAIL" -ne 0 ]; then
+              echo "Deploy verification FAILED — nginx will show 502 until containers respond."
+              exit 1
+            fi
+
+            # Restart nginx only after stack is healthy (avoids brief 502 during restart)
             systemctl restart nginx 2>/dev/null || service nginx restart 2>/dev/null || echo "nginx restart skipped"
 
             echo "Deploy done"
