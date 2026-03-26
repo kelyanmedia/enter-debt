@@ -2,7 +2,6 @@ import httpx
 import logging
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session, joinedload
-from sqlalchemy import and_
 from typing import List, Optional
 from datetime import datetime
 
@@ -19,13 +18,16 @@ router = APIRouter(prefix="/api/payments", tags=["payment-months"])
 logger = logging.getLogger(__name__)
 
 
-async def _send_tg(chat_id: str, text: str):
+async def _send_tg(chat_id: str, text: str, reply_markup: Optional[dict] = None):
     if not settings.BOT_TOKEN:
         return
     url = f"https://api.telegram.org/bot{settings.BOT_TOKEN}/sendMessage"
+    payload: dict = {"chat_id": chat_id, "text": text, "parse_mode": "HTML"}
+    if reply_markup:
+        payload["reply_markup"] = reply_markup
     try:
-        async with httpx.AsyncClient(timeout=5) as client:
-            await client.post(url, json={"chat_id": chat_id, "text": text, "parse_mode": "HTML"})
+        async with httpx.AsyncClient(timeout=10) as client:
+            await client.post(url, json=payload)
     except Exception as e:
         logger.warning(f"TG notify failed: {e}")
 
@@ -90,6 +92,67 @@ def add_month(
         raise HTTPException(status_code=500, detail=f"Ошибка базы данных: {str(e)}")
 
 
+def _payments_panel_url() -> str:
+    return f"{settings.APP_PUBLIC_URL.rstrip('/')}/payments"
+
+
+@router.post("/{payment_id}/months/{month_id}/mark-act", response_model=PaymentMonthOut)
+async def mark_act_issued(
+    payment_id: int,
+    month_id: int,
+    db: Session = Depends(get_db),
+    _=Depends(require_manager_or_admin),
+):
+    """Фиксация «Акт выставлен» — независимо от оплаты. Уведомление бухгалтерии: Акт + кнопка «Добавить»."""
+    pm = db.query(PaymentMonth).filter(
+        PaymentMonth.id == month_id,
+        PaymentMonth.payment_id == payment_id,
+    ).first()
+    if not pm:
+        raise HTTPException(status_code=404, detail="Month not found")
+
+    already = bool(pm.act_issued)
+    if not already:
+        pm.act_issued = True
+        pm.act_issued_at = datetime.utcnow()
+        db.commit()
+        db.refresh(pm)
+    else:
+        db.refresh(pm)
+
+    payment = db.query(Payment).options(
+        joinedload(Payment.partner).joinedload(Partner.manager)
+    ).filter(Payment.id == payment_id).first()
+
+    if payment and payment.notify_accounting and not already:
+        amount_val = pm.amount or payment.amount
+        month_label = _month_label(pm.month)
+        desc = pm.description or f"{payment.description} {month_label}"
+        partner_name = payment.partner.name if payment.partner else "—"
+        contract_line = f"\n📄 Договор: {payment.contract_url}" if payment.contract_url else ""
+        panel = _payments_panel_url()
+        reply_markup = {
+            "inline_keyboard": [[{"text": "Добавить", "url": panel}]],
+        }
+        accountants = db.query(User).filter(
+            User.role == "accountant",
+            User.is_active == True,
+            User.telegram_chat_id.isnot(None),
+        ).all()
+        for acc in accountants:
+            text = (
+                f"📋 <b>Акт</b> — выставьте документы по периоду\n\n"
+                f"🏢 Компания: <b>{partner_name}</b>\n"
+                f"📋 Описание: <b>{desc}</b>\n"
+                f"📅 Месяц: <b>{month_label}</b>\n"
+                f"💰 Сумма: <b>{int(amount_val):,} UZS</b>{contract_line}\n\n"
+                f"Нажмите «Добавить», чтобы открыть панель и приложить Акт/СФ."
+            )
+            await _send_tg(str(acc.telegram_chat_id), text, reply_markup=reply_markup)
+
+    return pm
+
+
 @router.post("/{payment_id}/months/{month_id}/confirm", response_model=PaymentMonthOut)
 async def confirm_month(
     payment_id: int,
@@ -97,6 +160,7 @@ async def confirm_month(
     db: Session = Depends(get_db),
     current_user=Depends(get_current_user)
 ):
+    """Только «Оплата прошла» — независимо от акта (предоплата и т.д.)."""
     pm = db.query(PaymentMonth).filter(
         PaymentMonth.id == month_id,
         PaymentMonth.payment_id == payment_id
@@ -104,28 +168,31 @@ async def confirm_month(
     if not pm:
         raise HTTPException(status_code=404, detail="Month not found")
 
-    pm.status = "paid"
-    pm.paid_at = datetime.utcnow()
-    db.commit()
-    db.refresh(pm)
+    already_paid = pm.status == "paid"
+    if not already_paid:
+        pm.status = "paid"
+        pm.paid_at = datetime.utcnow()
+        db.commit()
+        db.refresh(pm)
+    else:
+        db.refresh(pm)
 
     # Load payment with all relations for notifications
     payment = db.query(Payment).options(
         joinedload(Payment.partner).joinedload(Partner.manager)
     ).filter(Payment.id == payment_id).first()
 
-    if payment:
+    if payment and not already_paid:
         amount_val = pm.amount or payment.amount
         month_label = _month_label(pm.month)
         desc = pm.description or f"{payment.description} {month_label}"
         partner_name = payment.partner.name if payment.partner else "—"
         contract_line = f"\n📄 Договор: {payment.contract_url}" if payment.contract_url else ""
 
-        # Notify manager
         mgr = payment.partner.manager if payment.partner else None
         if mgr and mgr.telegram_chat_id:
             text = (
-                f"✅ <b>Оплата подтверждена</b>\n\n"
+                f"✅ <b>Оплата прошла</b>\n\n"
                 f"🏢 Компания: <b>{partner_name}</b>\n"
                 f"📋 Описание: <b>{desc}</b>\n"
                 f"📅 Месяц: <b>{month_label}</b>\n"
@@ -134,7 +201,6 @@ async def confirm_month(
             )
             await _send_tg(str(mgr.telegram_chat_id), text)
 
-        # Notify accounting if notify_accounting is set
         if payment.notify_accounting:
             accountants = db.query(User).filter(
                 User.role == "accountant",
@@ -144,13 +210,12 @@ async def confirm_month(
             mgr_name = mgr.name if mgr else "—"
             for acc in accountants:
                 text = (
-                    f"📊 <b>Новый платёж к обработке</b>\n\n"
+                    f"✅ <b>Оплата прошла</b>\n\n"
                     f"🏢 Компания: <b>{partner_name}</b>\n"
                     f"📋 Описание: <b>{desc}</b>\n"
                     f"📅 Месяц: <b>{month_label}</b>\n"
                     f"💰 Сумма: <b>{int(amount_val):,} UZS</b>\n"
-                    f"👤 Менеджер: <b>{mgr_name}</b>{contract_line}\n\n"
-                    f"📎 Пожалуйста, вышлите Акт и СФ в ответ на это сообщение."
+                    f"👤 Менеджер: <b>{mgr_name}</b>{contract_line}"
                 )
                 await _send_tg(str(acc.telegram_chat_id), text)
 

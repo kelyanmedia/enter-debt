@@ -48,6 +48,8 @@ class PaymentMonth(Base):
     description = Column(String(300), nullable=True)  # e.g. "SEO Март 2026 Акт/СФ"
     note = Column(String(300), nullable=True)
     paid_at = Column(DateTime(timezone=True), nullable=True)
+    act_issued = Column(Boolean, nullable=False, default=False)
+    act_issued_at = Column(DateTime(timezone=True), nullable=True)
     created_at = Column(DateTime(timezone=True), server_default=func.now())
 
     payment = relationship("Payment", back_populates="months")

@@ -125,6 +125,8 @@ class PaymentMonthOut(BaseModel):
     description: Optional[str] = None
     note: Optional[str] = None
     paid_at: Optional[datetime] = None
+    act_issued: bool = False
+    act_issued_at: Optional[datetime] = None
     created_at: datetime
 
     class Config:

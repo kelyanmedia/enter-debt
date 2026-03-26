@@ -8,6 +8,7 @@ interface User { id: number; name: string }
 interface PaymentMonth {
   id: number; payment_id: number; month: string; amount?: number
   status: 'pending' | 'paid'; description?: string; note?: string; paid_at?: string; created_at: string
+  act_issued?: boolean; act_issued_at?: string
 }
 interface Payment {
   id: number; partner_id: number; description: string; amount: number
@@ -69,6 +70,7 @@ export default function PaymentsPage() {
   const [addMonthForm, setAddMonthForm] = useState({ month: currentYM(), amount: '', description: '', note: '' })
   const [addMonthOpen, setAddMonthOpen] = useState(false)
   const [confirmingMonth, setConfirmingMonth] = useState<number | null>(null)
+  const [confirmingAct, setConfirmingAct] = useState<number | null>(null)
   const [monthSaved, setMonthSaved] = useState<number | null>(null)
 
   const load = useCallback(() => {
@@ -206,6 +208,19 @@ export default function PaymentsPage() {
     }
   }
 
+  const markActMonth = async (monthId: number) => {
+    if (!drawer) return
+    setConfirmingAct(monthId)
+    try {
+      const r = await api.post(`payments/${drawer.id}/months/${monthId}/mark-act`, {})
+      setDrawerMonths(prev => prev.map(m => m.id === monthId ? r.data : m))
+      setMonthSaved(monthId)
+      setTimeout(() => setMonthSaved(null), 3000)
+    } finally {
+      setConfirmingAct(null)
+    }
+  }
+
   const deleteMonth = async (monthId: number) => {
     if (!drawer || !confirm('Удалить месяц?')) return
     await api.delete(`payments/${drawer.id}/months/${monthId}`)
@@ -229,6 +244,7 @@ export default function PaymentsPage() {
   }
 
   const paidMonths = drawerMonths.filter(m => m.status === 'paid').length
+  const actMonths = drawerMonths.filter(m => m.act_issued).length
   const totalMonths = drawerMonths.length
 
   return (
@@ -395,8 +411,22 @@ export default function PaymentsPage() {
             {/* progress bar */}
             {totalMonths > 0 && (
               <div style={{ padding: '12px 24px 0' }}>
+                <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 12, color: '#8a8fa8', marginBottom: 4 }}>
+                  <span>Акт выставлен</span>
+                  <span style={{ fontWeight: 600, color: actMonths === totalMonths ? '#1a6b3c' : '#1a1d23' }}>
+                    {actMonths} / {totalMonths}
+                  </span>
+                </div>
+                <div style={{ height: 5, background: '#e8e9ef', borderRadius: 3, overflow: 'hidden', marginBottom: 8 }}>
+                  <div style={{
+                    height: '100%', borderRadius: 3,
+                    width: `${Math.round((actMonths / totalMonths) * 100)}%`,
+                    background: actMonths === totalMonths ? '#2d6a4f' : '#52b788',
+                    transition: 'width .3s',
+                  }} />
+                </div>
                 <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 12, color: '#8a8fa8', marginBottom: 5 }}>
-                  <span>Оплачено месяцев</span>
+                  <span>Оплата прошла</span>
                   <span style={{ fontWeight: 600, color: paidMonths === totalMonths ? '#1a6b3c' : '#1a1d23' }}>
                     {paidMonths} / {totalMonths}
                   </span>
@@ -489,58 +519,90 @@ export default function PaymentsPage() {
 
               {drawerMonths.map(m => {
                 const isPaid = m.status === 'paid'
+                const actOk = !!m.act_issued
+                const bothDone = actOk && isPaid
                 const effAmount = m.amount ?? drawer.amount
+                const btnStyle = (primary: boolean, disabled: boolean) => ({
+                  background: primary ? '#1a6b3c' : '#fff',
+                  color: primary ? '#fff' : '#4361ee',
+                  border: primary ? 'none' : '1px solid #c8d4f0',
+                  borderRadius: 7,
+                  padding: '5px 10px',
+                  fontSize: 11,
+                  fontWeight: 600,
+                  cursor: disabled ? 'default' : 'pointer',
+                  fontFamily: 'inherit',
+                  opacity: disabled ? 0.55 : 1,
+                } as const)
                 return (
                   <div key={m.id} style={{
-                    display: 'flex', alignItems: 'center', justifyContent: 'space-between',
+                    display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between',
                     padding: '11px 14px', borderRadius: 10, marginBottom: 8,
-                    background: isPaid ? '#f0faf4' : '#fafbfc',
-                    border: `1px solid ${isPaid ? '#c3e6d0' : '#e8e9ef'}`,
+                    background: bothDone ? '#f0faf4' : '#fafbfc',
+                    border: `1px solid ${bothDone ? '#c3e6d0' : '#e8e9ef'}`,
                     transition: 'background .2s',
                   }}>
-                    <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+                    <div style={{ display: 'flex', alignItems: 'flex-start', gap: 10, minWidth: 0 }}>
                       <div style={{
                         width: 32, height: 32, borderRadius: '50%', display: 'flex', alignItems: 'center',
-                        justifyContent: 'center', fontSize: 15,
-                        background: isPaid ? '#d1f0de' : '#e8e9ef',
+                        justifyContent: 'center', fontSize: 15, flexShrink: 0,
+                        background: bothDone ? '#d1f0de' : '#e8e9ef',
                       }}>
-                        {isPaid ? '✅' : '⏳'}
+                        {bothDone ? '✅' : '⏳'}
                       </div>
-                      <div>
+                      <div style={{ minWidth: 0 }}>
                         <div style={{ fontWeight: 600, fontSize: 13 }}>{monthLabel(m.month)}</div>
                         {m.description && (
                           <div style={{ fontSize: 11, color: '#444', marginTop: 1 }}>{m.description}</div>
                         )}
-                        <div style={{ fontSize: 11, color: '#8a8fa8', marginTop: 1 }}>
-                          {isPaid
-                            ? `Оплачено ${m.paid_at ? new Date(m.paid_at).toLocaleDateString('ru-RU') : ''}`
-                            : m.note || 'Ожидается оплата'
-                          }
+                        <div style={{ fontSize: 10, color: '#6b7088', marginTop: 6, display: 'flex', flexDirection: 'column', gap: 2 }}>
+                          <span>
+                            <b style={{ color: actOk ? '#1a6b3c' : '#999' }}>Акт</b>
+                            {actOk
+                              ? ` ✓ ${m.act_issued_at ? new Date(m.act_issued_at).toLocaleDateString('ru-RU') : ''}`
+                              : ' — не отмечен'}
+                          </span>
+                          <span>
+                            <b style={{ color: isPaid ? '#1a6b3c' : '#999' }}>Оплата</b>
+                            {isPaid
+                              ? ` ✓ ${m.paid_at ? new Date(m.paid_at).toLocaleDateString('ru-RU') : ''}`
+                              : ' — ожидается'}
+                          </span>
+                          {m.note && <span style={{ color: '#8a8fa8' }}>{m.note}</span>}
                         </div>
                       </div>
                     </div>
-                    <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                    <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-end', gap: 6, flexShrink: 0 }}>
                       <span style={{ fontWeight: 700, fontSize: 13, color: isPaid ? '#1a6b3c' : '#1a1d23' }}>
                         {Number(effAmount).toLocaleString('ru-RU')}
                       </span>
+                      <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6, justifyContent: 'flex-end' }}>
+                        {!actOk && (
+                          <button
+                            type="button"
+                            onClick={() => markActMonth(m.id)}
+                            disabled={confirmingAct === m.id}
+                            style={btnStyle(false, confirmingAct === m.id)}
+                          >
+                            {confirmingAct === m.id ? '...' : 'Добавить'}
+                          </button>
+                        )}
+                        {!isPaid && (
+                          <button
+                            type="button"
+                            onClick={() => confirmMonth(m.id)}
+                            disabled={confirmingMonth === m.id}
+                            style={btnStyle(true, confirmingMonth === m.id)}
+                          >
+                            {confirmingMonth === m.id ? '...' : 'Оплата прошла'}
+                          </button>
+                        )}
+                      </div>
                       {monthSaved === m.id && (
-                        <span style={{ fontSize: 11, color: '#1a6b3c', fontWeight: 600 }}>✓ TG отправлен</span>
-                      )}
-                      {!isPaid && (
-                        <button
-                          onClick={() => confirmMonth(m.id)}
-                          disabled={confirmingMonth === m.id}
-                          style={{
-                            background: '#1a6b3c', color: '#fff', border: 'none',
-                            borderRadius: 7, padding: '5px 10px', fontSize: 11,
-                            fontWeight: 600, cursor: 'pointer', fontFamily: 'inherit',
-                            opacity: confirmingMonth === m.id ? .6 : 1,
-                          }}
-                        >
-                          {confirmingMonth === m.id ? '...' : 'Оплачено'}
-                        </button>
+                        <span style={{ fontSize: 10, color: '#1a6b3c', fontWeight: 600 }}>✓ TG</span>
                       )}
                       <button
+                        type="button"
                         onClick={() => deleteMonth(m.id)}
                         style={{
                           background: 'none', border: 'none', color: '#ccc',
