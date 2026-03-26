@@ -185,7 +185,11 @@ export default function PaymentsPage() {
       const autoDesc = `${drawer.description} ${MONTHS_RU[parseInt(nextMonth.split('-')[1]) - 1]} ${nextMonth.split('-')[0]} Акт/СФ`
       setAddMonthForm({ month: currentYM(), amount: '', description: autoDesc, note: '' })
     } catch (e: any) {
-      alert(e.response?.data?.detail || 'Ошибка добавления месяца')
+      const detail = e.response?.data?.detail
+      const msg = typeof detail === 'string' ? detail
+        : typeof detail === 'object' ? JSON.stringify(detail)
+        : e.message || 'Ошибка добавления месяца'
+      alert(msg)
     }
   }
 

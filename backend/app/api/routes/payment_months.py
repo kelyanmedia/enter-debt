@@ -70,19 +70,24 @@ def add_month(
         PaymentMonth.month == data.month
     ).first()
     if existing:
-        raise HTTPException(status_code=400, detail="Month already exists for this payment")
-    pm = PaymentMonth(
-        payment_id=payment_id,
-        month=data.month,
-        amount=data.amount,
-        description=data.description,
-        note=data.note,
-        status="pending"
-    )
-    db.add(pm)
-    db.commit()
-    db.refresh(pm)
-    return pm
+        raise HTTPException(status_code=400, detail=f"Месяц {data.month} уже добавлен для этого проекта")
+    try:
+        pm = PaymentMonth(
+            payment_id=payment_id,
+            month=data.month,
+            amount=data.amount,
+            description=data.description,
+            note=data.note,
+            status="pending"
+        )
+        db.add(pm)
+        db.commit()
+        db.refresh(pm)
+        return pm
+    except Exception as e:
+        db.rollback()
+        logger.error(f"add_month error payment_id={payment_id} month={data.month}: {e}")
+        raise HTTPException(status_code=500, detail=f"Ошибка базы данных: {str(e)}")
 
 
 @router.post("/{payment_id}/months/{month_id}/confirm", response_model=PaymentMonthOut)

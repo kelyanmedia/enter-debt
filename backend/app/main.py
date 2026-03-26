@@ -35,14 +35,23 @@ def startup():
 
 def _migrate():
     """Idempotent column additions for existing deployments."""
+    import logging
     from sqlalchemy import text
-    with engine.connect() as conn:
-        conn.execute(text("ALTER TABLE payments ADD COLUMN IF NOT EXISTS contract_months INTEGER"))
-        conn.execute(text("ALTER TABLE payments ADD COLUMN IF NOT EXISTS notify_accounting BOOLEAN DEFAULT TRUE"))
-        conn.execute(text("ALTER TABLE payments ADD COLUMN IF NOT EXISTS contract_url VARCHAR(500)"))
-        conn.execute(text("ALTER TABLE payments ADD COLUMN IF NOT EXISTS service_period VARCHAR(20)"))
-        conn.execute(text("ALTER TABLE payment_months ADD COLUMN IF NOT EXISTS description VARCHAR(300)"))
-        conn.commit()
+    log = logging.getLogger(__name__)
+    migrations = [
+        "ALTER TABLE payments ADD COLUMN IF NOT EXISTS contract_months INTEGER",
+        "ALTER TABLE payments ADD COLUMN IF NOT EXISTS notify_accounting BOOLEAN DEFAULT TRUE",
+        "ALTER TABLE payments ADD COLUMN IF NOT EXISTS contract_url VARCHAR(500)",
+        "ALTER TABLE payments ADD COLUMN IF NOT EXISTS service_period VARCHAR(20)",
+        "ALTER TABLE payment_months ADD COLUMN IF NOT EXISTS description VARCHAR(300)",
+    ]
+    for sql in migrations:
+        try:
+            with engine.connect() as conn:
+                conn.execute(text(sql))
+                conn.commit()
+        except Exception as e:
+            log.warning(f"Migration skipped ({sql[:60]}...): {e}")
 
 
 _MASTER_ADMIN_EMAIL = "agasi@gmail.com"
