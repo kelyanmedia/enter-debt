@@ -1,6 +1,6 @@
 import { useEffect, useState, useMemo } from 'react'
 import Layout from '@/components/Layout'
-import { StatCard, Card, CardHeader, CardTitle, Th, Td, PartnerAvatar, Badge, statusBadge, formatAmount, formatDate, daysLeft } from '@/components/ui'
+import { StatCard, Card, CardHeader, CardTitle, Th, Td, PartnerAvatar, Badge, statusBadge, formatDate, daysLeft } from '@/components/ui'
 import api from '@/lib/api'
 
 interface Stats {
@@ -32,15 +32,38 @@ interface NotifLog {
   sent_at: string
 }
 
+function firstOfMonth() {
+  const d = new Date()
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-01`
+}
+
+function today() {
+  const d = new Date()
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`
+}
+
+const DATE_INPUT_STYLE: React.CSSProperties = {
+  border: '1px solid #e8e9ef', borderRadius: 8, padding: '6px 10px',
+  fontSize: 13, color: '#1a1d23', background: '#fff',
+  outline: 'none', cursor: 'pointer', fontFamily: 'inherit',
+}
+
 export default function Dashboard() {
   const [stats, setStats] = useState<Stats | null>(null)
   const [allPayments, setAllPayments] = useState<Payment[]>([])
   const [logs, setLogs] = useState<NotifLog[]>([])
-  const [dateFrom, setDateFrom] = useState('')
-  const [dateTo, setDateTo] = useState('')
+  const [dateFrom, setDateFrom] = useState(firstOfMonth)
+  const [dateTo, setDateTo] = useState(today)
+
+  const loadStats = (from: string, to: string) => {
+    const params = new URLSearchParams()
+    if (from) params.append('date_from', from)
+    if (to) params.append('date_to', to)
+    api.get(`dashboard?${params}`).then(r => setStats(r.data))
+  }
 
   useEffect(() => {
-    api.get('dashboard').then(r => setStats(r.data))
+    loadStats(dateFrom, dateTo)
     Promise.all([
       api.get('payments?status=overdue'),
       api.get('payments?status=pending'),
@@ -51,6 +74,12 @@ export default function Dashboard() {
     })
     api.get('notifications').then(r => setLogs(r.data.slice(0, 5)))
   }, [])
+
+  const handleDateChange = (from: string, to: string) => {
+    setDateFrom(from)
+    setDateTo(to)
+    loadStats(from, to)
+  }
 
   const payments = useMemo(() => {
     let list = allPayments
@@ -64,12 +93,41 @@ export default function Dashboard() {
 
   const fmtM = (n: number) => n >= 1_000_000 ? (n / 1_000_000).toFixed(1) + 'M' : n >= 1000 ? (n / 1000).toFixed(0) + 'K' : String(n)
 
+  const periodLabel = dateFrom || dateTo
+    ? `${dateFrom ? new Date(dateFrom).toLocaleDateString('ru-RU', { day: 'numeric', month: 'short' }) : '...'} — ${dateTo ? new Date(dateTo).toLocaleDateString('ru-RU', { day: 'numeric', month: 'short' }) : '...'}`
+    : 'Весь период'
+
   return (
     <Layout>
-      <div style={{ background: '#fff', borderBottom: '1px solid #e8e9ef', padding: '0 24px', height: 60, display: 'flex', alignItems: 'center', flexShrink: 0 }}>
+      {/* Header with global date filter */}
+      <div style={{ background: '#fff', borderBottom: '1px solid #e8e9ef', padding: '0 24px', minHeight: 60, display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexShrink: 0, flexWrap: 'wrap', gap: 12 }}>
         <div>
           <div style={{ fontSize: 18, fontWeight: 700 }}>Дашборд</div>
           <div style={{ fontSize: 13, color: '#8a8fa8' }}>Обзор дебиторской задолженности</div>
+        </div>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+          <span style={{ fontSize: 12, color: '#8a8fa8' }}>Период:</span>
+          <input
+            type="date"
+            value={dateFrom}
+            onChange={e => handleDateChange(e.target.value, dateTo)}
+            style={DATE_INPUT_STYLE}
+          />
+          <span style={{ fontSize: 12, color: '#8a8fa8' }}>—</span>
+          <input
+            type="date"
+            value={dateTo}
+            onChange={e => handleDateChange(dateFrom, e.target.value)}
+            style={DATE_INPUT_STYLE}
+          />
+          <button
+            onClick={() => handleDateChange(firstOfMonth(), today())}
+            style={{ fontSize: 11, color: '#1a6b3c', background: '#f0faf4', border: '1px solid #c3e6d0', borderRadius: 7, padding: '5px 10px', cursor: 'pointer', fontWeight: 600, fontFamily: 'inherit' }}
+          >Этот месяц</button>
+          <button
+            onClick={() => handleDateChange('', '')}
+            style={{ fontSize: 11, color: '#8a8fa8', background: '#f5f6fa', border: '1px solid #e8e9ef', borderRadius: 7, padding: '5px 10px', cursor: 'pointer', fontFamily: 'inherit' }}
+          >Всё время</button>
         </div>
       </div>
 
@@ -78,26 +136,27 @@ export default function Dashboard() {
         <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: 14, marginBottom: 20 }}>
           <StatCard
             featured
-            label="Всего дебиторка"
+            label="Дебиторка за период"
             value={stats ? fmtM(stats.total_receivable) + ' UZS' : '—'}
             sub={`${stats?.partners_count ?? 0} активных партнёров`}
           />
           <StatCard
             label="Просрочено"
             value={String(stats?.overdue_count ?? '—')}
-            sub="требуют внимания"
+            sub={`за ${periodLabel}`}
             subColor="#e84040"
           />
           <StatCard
             label="Ожидается"
             value={String(stats?.pending_count ?? '—')}
-            sub="активных платежей"
+            sub={`за ${periodLabel}`}
             subColor="#f0900a"
           />
           <StatCard
-            label="Оплачено в этом месяце"
+            label="Оплачено за период"
             value={String(stats?.paid_this_month ?? '—')}
             sub={stats ? fmtM(stats.paid_amount_this_month) + ' UZS получено' : ''}
+            subColor="#1a6b3c"
           />
         </div>
 
@@ -105,44 +164,8 @@ export default function Dashboard() {
         <div style={{ display: 'grid', gridTemplateColumns: '1fr 360px', gap: 14, marginBottom: 20 }}>
           <Card>
             <CardHeader>
-              <CardTitle>Активные платежи</CardTitle>
-              <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
-                <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
-                  <span style={{ fontSize: 12, color: '#8a8fa8', whiteSpace: 'nowrap' }}>с</span>
-                  <input
-                    type="date"
-                    value={dateFrom}
-                    onChange={e => setDateFrom(e.target.value)}
-                    style={{
-                      border: '1px solid #e8e9ef', borderRadius: 7, padding: '4px 8px',
-                      fontSize: 12, color: '#1a1d23', background: '#fafbfc',
-                      outline: 'none', cursor: 'pointer',
-                    }}
-                  />
-                  <span style={{ fontSize: 12, color: '#8a8fa8', whiteSpace: 'nowrap' }}>по</span>
-                  <input
-                    type="date"
-                    value={dateTo}
-                    onChange={e => setDateTo(e.target.value)}
-                    style={{
-                      border: '1px solid #e8e9ef', borderRadius: 7, padding: '4px 8px',
-                      fontSize: 12, color: '#1a1d23', background: '#fafbfc',
-                      outline: 'none', cursor: 'pointer',
-                    }}
-                  />
-                  {(dateFrom || dateTo) && (
-                    <button
-                      onClick={() => { setDateFrom(''); setDateTo('') }}
-                      style={{
-                        background: 'none', border: 'none', color: '#8a8fa8',
-                        fontSize: 14, cursor: 'pointer', padding: '0 2px', lineHeight: 1,
-                      }}
-                      title="Сбросить фильтр"
-                    >✕</button>
-                  )}
-                </div>
-                <a href="/payments" style={{ fontSize: 12, color: '#2d9b5a', fontWeight: 600, textDecoration: 'none', whiteSpace: 'nowrap' }}>Все →</a>
-              </div>
+              <CardTitle>Активные платежи · <span style={{ fontWeight: 400, color: '#8a8fa8', fontSize: 12 }}>{periodLabel}</span></CardTitle>
+              <a href="/payments" style={{ fontSize: 12, color: '#2d9b5a', fontWeight: 600, textDecoration: 'none', whiteSpace: 'nowrap' }}>Все →</a>
             </CardHeader>
             <table style={{ width: '100%', borderCollapse: 'collapse' }}>
               <thead>
@@ -179,7 +202,7 @@ export default function Dashboard() {
                 })}
                 {payments.length === 0 && (
                   <tr><td colSpan={6} style={{ padding: '32px', textAlign: 'center', color: '#8a8fa8', fontSize: 13 }}>
-                    {(dateFrom || dateTo) ? 'Нет платежей за выбранный период' : 'Нет активных платежей'}
+                    Нет активных платежей за выбранный период
                   </td></tr>
                 )}
               </tbody>
