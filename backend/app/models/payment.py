@@ -27,6 +27,7 @@ class Payment(Base):
     is_archived = Column(Boolean, default=False)
     notify_accounting = Column(Boolean, default=True)
     contract_url = Column(String(500), nullable=True)
+    service_period = Column(String(20), nullable=True)  # monthly / yearly — for service_expiry type
     created_at = Column(DateTime(timezone=True), server_default=func.now())
     updated_at = Column(DateTime(timezone=True), onupdate=func.now())
 

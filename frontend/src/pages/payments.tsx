@@ -13,7 +13,7 @@ interface Payment {
   id: number; partner_id: number; description: string; amount: number
   payment_type: string; status: string; deadline_date?: string; day_of_month?: number
   contract_months?: number; remind_days_before: number; created_at: string; postponed_until?: string
-  notify_accounting: boolean; contract_url?: string
+  notify_accounting: boolean; contract_url?: string; service_period?: string
   partner: { id: number; name: string; manager?: { id: number; name: string } }
   months?: PaymentMonth[]
 }
@@ -21,7 +21,7 @@ interface Payment {
 const EMPTY_FORM = {
   partner_id: '', payment_type: 'recurring', description: '', amount: '',
   day_of_month: '', deadline_date: '', remind_days_before: '3', contract_months: '',
-  notify_accounting: true, contract_url: ''
+  notify_accounting: true, contract_url: '', service_period: 'yearly'
 }
 
 const MONTHS_RU = ['Январь','Февраль','Март','Апрель','Май','Июнь',
@@ -102,6 +102,7 @@ export default function PaymentsPage() {
       contract_months: p.contract_months ? String(p.contract_months) : '',
       notify_accounting: p.notify_accounting ?? true,
       contract_url: p.contract_url || '',
+      service_period: p.service_period || 'yearly',
     })
     setEditingId(p.id)
     setError('')
@@ -123,6 +124,7 @@ export default function PaymentsPage() {
         remind_days_before: Number(form.remind_days_before),
         notify_accounting: form.notify_accounting,
         contract_url: form.contract_url || null,
+        service_period: form.payment_type === 'service_expiry' ? form.service_period : null,
       }
       if (editingId) {
         await api.put(`payments/${editingId}`, payload)
@@ -359,6 +361,11 @@ export default function PaymentsPage() {
                   }}>
                     {drawer.notify_accounting ? '📊 Бухгалтерия уведомляется' : '📊 Без бухгалтерии'}
                   </span>
+                  {drawer.payment_type === 'service_expiry' && drawer.service_period && (
+                    <span style={{ fontSize: 11, borderRadius: 6, padding: '2px 8px', fontWeight: 600, background: '#eef2ff', color: '#4361ee', border: '1px solid #c7d2fe' }}>
+                      {drawer.service_period === 'yearly' ? '📅 Ежегодно' : '🗓 Ежемесячно'}
+                    </span>
+                  )}
                 </div>
                 {drawer.contract_url && (
                   <a
@@ -560,6 +567,30 @@ export default function PaymentsPage() {
               <option value="12">12 месяцев</option>
               <option value="24">24 месяца</option>
             </Select>
+          </Field>
+        )}
+        {form.payment_type === 'service_expiry' && (
+          <Field label="Периодичность напоминания">
+            <div style={{ display: 'flex', gap: 10 }}>
+              {[
+                { value: 'yearly', label: '📅 Ежегодно', hint: 'домен, хостинг' },
+                { value: 'monthly', label: '🗓 Ежемесячно', hint: 'подписка, сервис' },
+              ].map(opt => (
+                <div
+                  key={opt.value}
+                  onClick={() => setForm(f => ({ ...f, service_period: opt.value }))}
+                  style={{
+                    flex: 1, padding: '10px 14px', borderRadius: 10, cursor: 'pointer',
+                    border: `2px solid ${form.service_period === opt.value ? '#1a6b3c' : '#e8e9ef'}`,
+                    background: form.service_period === opt.value ? '#f0faf4' : '#fafbfc',
+                    transition: 'all .15s',
+                  }}
+                >
+                  <div style={{ fontWeight: 600, fontSize: 13 }}>{opt.label}</div>
+                  <div style={{ fontSize: 11, color: '#8a8fa8', marginTop: 2 }}>{opt.hint}</div>
+                </div>
+              ))}
+            </div>
           </Field>
         )}
         {form.payment_type === 'regular' ? (

@@ -99,6 +99,7 @@ class PaymentBase(BaseModel):
     remind_days_before: int = 3
     notify_accounting: bool = True
     contract_url: Optional[str] = None
+    service_period: Optional[str] = None  # monthly / yearly
 
 
 class PaymentCreate(PaymentBase):
@@ -139,6 +140,7 @@ class PaymentUpdate(BaseModel):
     postponed_until: Optional[date] = None
     notify_accounting: Optional[bool] = None
     contract_url: Optional[str] = None
+    service_period: Optional[str] = None
 
 
 class PaymentConfirm(BaseModel):
@@ -155,6 +157,7 @@ class PaymentOut(PaymentBase):
     is_archived: bool
     notify_accounting: Optional[bool] = True
     contract_url: Optional[str] = None
+    service_period: Optional[str] = None
     created_at: datetime
     partner: Optional[PartnerOut] = None
     confirmed_by_user: Optional[UserOut] = None
