@@ -21,6 +21,26 @@ jobs:
           script: |
             cd ${{ secrets.SSH_PATH }}
 
+            # ── DATABASE BACKUP ──────────────────────────────────────────
+            mkdir -p db_backups
+            if [ -f .env ]; then
+              DB_URL=$(grep '^DATABASE_URL=' .env | cut -d '=' -f2- | tr -d '"' | tr -d "'")
+            fi
+            if [ -n "$DB_URL" ]; then
+              BACKUP_FILE="db_backups/backup_$(date +%Y%m%d_%H%M%S).sql"
+              if pg_dump "$DB_URL" > "$BACKUP_FILE" 2>/dev/null; then
+                echo "DB backup saved: $BACKUP_FILE"
+                # Keep only last 7 backups
+                ls -t db_backups/backup_*.sql 2>/dev/null | tail -n +8 | xargs rm -f 2>/dev/null || true
+              else
+                echo "DB backup skipped (pg_dump not available or connection failed)"
+                rm -f "$BACKUP_FILE"
+              fi
+            else
+              echo "DB backup skipped (DATABASE_URL not found in .env)"
+            fi
+            # ─────────────────────────────────────────────────────────────
+
             # Clean up stale git lock files
             rm -f .git/index.lock .git/FETCH_HEAD
 
