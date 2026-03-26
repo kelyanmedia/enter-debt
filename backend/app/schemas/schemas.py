@@ -110,6 +110,7 @@ class PaymentCreate(PaymentBase):
 class PaymentMonthCreate(BaseModel):
     month: str   # YYYY-MM
     amount: Optional[Decimal] = None
+    description: Optional[str] = None
     note: Optional[str] = None
 
 
@@ -119,6 +120,7 @@ class PaymentMonthOut(BaseModel):
     month: str
     amount: Optional[Decimal] = None
     status: str
+    description: Optional[str] = None
     note: Optional[str] = None
     paid_at: Optional[datetime] = None
     created_at: datetime

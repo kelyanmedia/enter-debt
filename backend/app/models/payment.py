@@ -43,8 +43,9 @@ class PaymentMonth(Base):
     id = Column(Integer, primary_key=True, index=True)
     payment_id = Column(Integer, ForeignKey("payments.id", ondelete="CASCADE"), nullable=False)
     month = Column(String(7), nullable=False)   # YYYY-MM
-    amount = Column(Numeric(15, 2), nullable=True)  # override parent amount if set
+    amount = Column(Numeric(15, 2), nullable=True)
     status = Column(String(20), nullable=False, default="pending")  # pending / paid
+    description = Column(String(300), nullable=True)  # e.g. "SEO Март 2026 Акт/СФ"
     note = Column(String(300), nullable=True)
     paid_at = Column(DateTime(timezone=True), nullable=True)
     created_at = Column(DateTime(timezone=True), server_default=func.now())

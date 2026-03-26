@@ -72,3 +72,23 @@ def delete_user(user_id: int, db: Session = Depends(get_db), _=Depends(require_a
     user.is_active = False
     db.commit()
     return {"ok": True}
+
+
+# ── Internal endpoints for bot (no auth required, internal network only) ──────
+
+@router.get("/internal/by-chat/{chat_id}")
+def get_user_by_chat(chat_id: int, db: Session = Depends(get_db)):
+    user = db.query(User).filter(User.telegram_chat_id == chat_id, User.is_active == True).first()
+    if not user:
+        raise HTTPException(status_code=404, detail="User not found")
+    return {"id": user.id, "name": user.name, "role": user.role, "telegram_chat_id": user.telegram_chat_id}
+
+
+@router.get("/internal/managers")
+def get_managers(db: Session = Depends(get_db)):
+    managers = db.query(User).filter(
+        User.role.in_(["manager", "admin"]),
+        User.is_active == True,
+        User.telegram_chat_id.isnot(None)
+    ).all()
+    return [{"id": u.id, "name": u.name, "telegram_chat_id": u.telegram_chat_id} for u in managers]

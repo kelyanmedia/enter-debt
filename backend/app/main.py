@@ -41,6 +41,7 @@ def _migrate():
         conn.execute(text("ALTER TABLE payments ADD COLUMN IF NOT EXISTS notify_accounting BOOLEAN DEFAULT TRUE"))
         conn.execute(text("ALTER TABLE payments ADD COLUMN IF NOT EXISTS contract_url VARCHAR(500)"))
         conn.execute(text("ALTER TABLE payments ADD COLUMN IF NOT EXISTS service_period VARCHAR(20)"))
+        conn.execute(text("ALTER TABLE payment_months ADD COLUMN IF NOT EXISTS description VARCHAR(300)"))
         conn.commit()
 
 

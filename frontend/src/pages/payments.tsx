@@ -7,7 +7,7 @@ interface Partner { id: number; name: string }
 interface User { id: number; name: string }
 interface PaymentMonth {
   id: number; payment_id: number; month: string; amount?: number
-  status: 'pending' | 'paid'; note?: string; paid_at?: string; created_at: string
+  status: 'pending' | 'paid'; description?: string; note?: string; paid_at?: string; created_at: string
 }
 interface Payment {
   id: number; partner_id: number; description: string; amount: number
@@ -66,7 +66,7 @@ export default function PaymentsPage() {
   const [drawer, setDrawer] = useState<Payment | null>(null)
   const [drawerMonths, setDrawerMonths] = useState<PaymentMonth[]>([])
   const [drawerLoading, setDrawerLoading] = useState(false)
-  const [addMonthForm, setAddMonthForm] = useState({ month: currentYM(), amount: '', note: '' })
+  const [addMonthForm, setAddMonthForm] = useState({ month: currentYM(), amount: '', description: '', note: '' })
   const [addMonthOpen, setAddMonthOpen] = useState(false)
   const [confirmingMonth, setConfirmingMonth] = useState<number | null>(null)
   const [monthSaved, setMonthSaved] = useState<number | null>(null)
@@ -159,7 +159,8 @@ export default function PaymentsPage() {
     setDrawer(p)
     setDrawerLoading(true)
     setAddMonthOpen(false)
-    setAddMonthForm({ month: currentYM(), amount: '', note: '' })
+    const autoDesc = `${p.description} ${MONTHS_RU[parseInt(currentYM().split('-')[1]) - 1]} ${currentYM().split('-')[0]} Акт/СФ`
+    setAddMonthForm({ month: currentYM(), amount: '', description: autoDesc, note: '' })
     setMonthSaved(null)
     try {
       const r = await api.get(`payments/${p.id}/months`)
@@ -175,11 +176,14 @@ export default function PaymentsPage() {
       const r = await api.post(`payments/${drawer.id}/months`, {
         month: addMonthForm.month,
         amount: addMonthForm.amount ? Number(addMonthForm.amount) : null,
+        description: addMonthForm.description || null,
         note: addMonthForm.note || null,
       })
       setDrawerMonths(prev => [...prev, r.data].sort((a, b) => a.month.localeCompare(b.month)))
       setAddMonthOpen(false)
-      setAddMonthForm({ month: currentYM(), amount: '', note: '' })
+      const nextMonth = addMonthForm.month
+      const autoDesc = `${drawer.description} ${MONTHS_RU[parseInt(nextMonth.split('-')[1]) - 1]} ${nextMonth.split('-')[0]} Акт/СФ`
+      setAddMonthForm({ month: currentYM(), amount: '', description: autoDesc, note: '' })
     } catch (e: any) {
       alert(e.response?.data?.detail || 'Ошибка добавления месяца')
     }
@@ -423,20 +427,44 @@ export default function PaymentsPage() {
               {/* add month form */}
               {addMonthOpen && (
                 <div style={{ background: '#f5f6fa', borderRadius: 10, padding: '14px 16px', marginBottom: 14 }}>
-                  <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10, marginBottom: 10 }}>
+                  {/* Auto info row */}
+                  <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', marginBottom: 12 }}>
+                    {drawer.partner?.manager && (
+                      <span style={{ fontSize: 11, background: '#eef2ff', color: '#4361ee', borderRadius: 6, padding: '3px 8px', fontWeight: 600 }}>
+                        👤 {drawer.partner.manager.name}
+                      </span>
+                    )}
+                    {drawer.contract_url && (
+                      <a href={drawer.contract_url} target="_blank" rel="noopener noreferrer"
+                        style={{ fontSize: 11, background: '#f0faf4', color: '#1a6b3c', borderRadius: 6, padding: '3px 8px', fontWeight: 600, textDecoration: 'none' }}>
+                        📄 Договор →
+                      </a>
+                    )}
+                    {drawer.notify_accounting && (
+                      <span style={{ fontSize: 11, background: '#fff7ed', color: '#c2410c', borderRadius: 6, padding: '3px 8px', fontWeight: 600 }}>
+                        📊 Бухгалтерия получит уведомление
+                      </span>
+                    )}
+                  </div>
+                  <Field label="Описание (Акт/СФ)">
+                    <Input value={addMonthForm.description}
+                      placeholder={`${drawer.description} Март 2026 Акт/СФ`}
+                      onChange={e => setAddMonthForm(f => ({ ...f, description: e.target.value }))} />
+                  </Field>
+                  <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10, marginTop: 10 }}>
                     <Field label="Месяц">
                       <Input type="month" value={addMonthForm.month}
-                        onChange={e => setAddMonthForm(f => ({ ...f, month: e.target.value }))} />
+                        onChange={e => {
+                          const [y, m] = e.target.value.split('-')
+                          const autoDesc = `${drawer.description} ${MONTHS_RU[parseInt(m) - 1]} ${y} Акт/СФ`
+                          setAddMonthForm(f => ({ ...f, month: e.target.value, description: autoDesc }))
+                        }} />
                     </Field>
                     <Field label="Сумма (если другая)">
                       <Input type="number" value={addMonthForm.amount} placeholder={String(drawer.amount)}
                         onChange={e => setAddMonthForm(f => ({ ...f, amount: e.target.value }))} />
                     </Field>
                   </div>
-                  <Field label="Заметка">
-                    <Input value={addMonthForm.note} placeholder="Необязательно"
-                      onChange={e => setAddMonthForm(f => ({ ...f, note: e.target.value }))} />
-                  </Field>
                   <div style={{ display: 'flex', gap: 8, marginTop: 10 }}>
                     <BtnPrimary onClick={addMonth} style={{ fontSize: 12, padding: '6px 14px' }}>Добавить</BtnPrimary>
                     <BtnOutline onClick={() => setAddMonthOpen(false)} style={{ fontSize: 12, padding: '6px 14px' }}>Отмена</BtnOutline>
@@ -476,7 +504,10 @@ export default function PaymentsPage() {
                       </div>
                       <div>
                         <div style={{ fontWeight: 600, fontSize: 13 }}>{monthLabel(m.month)}</div>
-                        <div style={{ fontSize: 11, color: '#8a8fa8' }}>
+                        {m.description && (
+                          <div style={{ fontSize: 11, color: '#444', marginTop: 1 }}>{m.description}</div>
+                        )}
+                        <div style={{ fontSize: 11, color: '#8a8fa8', marginTop: 1 }}>
                           {isPaid
                             ? `Оплачено ${m.paid_at ? new Date(m.paid_at).toLocaleDateString('ru-RU') : ''}`
                             : m.note || 'Ожидается оплата'
