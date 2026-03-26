@@ -590,14 +590,14 @@ export default function PaymentsPage() {
         </div>
         {form.payment_type === 'recurring' && (
           <Field label="Период контракта (месяцев)">
-            <Select value={form.contract_months} onChange={e => setForm(f => ({ ...f, contract_months: e.target.value }))}>
-              <option value="">Не указан</option>
-              <option value="1">1 месяц</option>
-              <option value="3">3 месяца</option>
-              <option value="6">6 месяцев</option>
-              <option value="12">12 месяцев</option>
-              <option value="24">24 месяца</option>
-            </Select>
+            <Input
+              type="number"
+              min="1"
+              max="120"
+              value={form.contract_months}
+              onChange={e => setForm(f => ({ ...f, contract_months: e.target.value }))}
+              placeholder="Например: 6, 12, 24..."
+            />
           </Field>
         )}
         {form.payment_type === 'service_expiry' && (
