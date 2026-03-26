@@ -265,7 +265,7 @@ export default function PaymentsPage() {
                 <Th>Услуга</Th>
                 <Th>Тип</Th>
                 <Th>Сумма</Th>
-                <Th>Дедлайн</Th>
+                <Th>Окончание договора</Th>
                 <Th>Осталось</Th>
                 <Th>Статус</Th>
                 <Th></Th>
@@ -629,7 +629,7 @@ export default function PaymentsPage() {
             <Input type="number" min="1" max="31" value={form.day_of_month} onChange={e => setForm(f => ({ ...f, day_of_month: e.target.value }))} placeholder="10" />
           </Field>
         ) : (
-          <Field label="Дата дедлайна">
+          <Field label="Дата окончания договора">
             <Input type="date" value={form.deadline_date} onChange={e => setForm(f => ({ ...f, deadline_date: e.target.value }))} />
           </Field>
         )}
