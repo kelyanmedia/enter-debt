@@ -24,6 +24,7 @@ class UserBase(BaseModel):
     telegram_chat_id: Optional[int] = None
     telegram_username: Optional[str] = None
     is_active: bool = True
+    web_access: bool = True
 
 
 class UserCreate(UserBase):
@@ -38,6 +39,7 @@ class UserUpdate(BaseModel):
     telegram_chat_id: Optional[int] = None
     telegram_username: Optional[str] = None
     is_active: Optional[bool] = None
+    web_access: Optional[bool] = None
     password: Optional[str] = None
 
 
@@ -193,6 +195,31 @@ class NotificationLogOut(BaseModel):
 
     class Config:
         from_attributes = True
+
+
+class TelegramJoinRequestOut(BaseModel):
+    id: int
+    telegram_chat_id: int
+    telegram_username: Optional[str] = None
+    full_name: Optional[str] = None
+    status: str
+    created_at: datetime
+
+    class Config:
+        from_attributes = True
+
+
+class TelegramJoinApprove(BaseModel):
+    role: str  # manager | accountant
+    name: str
+    email: Optional[str] = None
+
+
+class TelegramJoinInternalRequest(BaseModel):
+    chat_id: int
+    username: Optional[str] = None
+    full_name: Optional[str] = None
+    access_password: str
 
 
 Token.model_rebuild()

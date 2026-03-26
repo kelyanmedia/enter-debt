@@ -2,7 +2,8 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from app.db.database import init_db, engine, Base
 from app.models import user, partner, payment
-from app.api.routes import auth, users, partners, payments, dashboard, notifications, archive, payment_months
+import app.models.telegram_join  # noqa: F401 — таблица telegram_join_requests
+from app.api.routes import auth, users, partners, payments, dashboard, notifications, archive, payment_months, telegram_join
 from app.core.config import settings
 from app.core.security import get_password_hash
 
@@ -24,6 +25,7 @@ app.include_router(dashboard.router)
 app.include_router(notifications.router)
 app.include_router(archive.router)
 app.include_router(payment_months.router)
+app.include_router(telegram_join.router)
 
 
 @app.on_event("startup")
@@ -39,6 +41,8 @@ def _migrate():
     from sqlalchemy import text
     log = logging.getLogger(__name__)
     migrations = [
+        "ALTER TABLE users ADD COLUMN IF NOT EXISTS web_access BOOLEAN DEFAULT TRUE",
+        "UPDATE users SET web_access = TRUE WHERE web_access IS NULL",
         "ALTER TABLE payments ADD COLUMN IF NOT EXISTS contract_months INTEGER",
         "ALTER TABLE payments ADD COLUMN IF NOT EXISTS notify_accounting BOOLEAN DEFAULT TRUE",
         "ALTER TABLE payments ADD COLUMN IF NOT EXISTS contract_url VARCHAR(500)",
@@ -84,6 +88,7 @@ def seed_initial_data():
                     hashed_password=get_password_hash(u["password"]),
                     role=u["role"],
                     is_active=True,
+                    web_access=True,
                 )
                 db.add(db_user)
             db.commit()

@@ -25,6 +25,11 @@ def authenticate_user(email: str, password: str, db: Session):
         )
     if not user.is_active:
         raise HTTPException(status_code=400, detail="Inactive user")
+    if user.web_access is False:
+        raise HTTPException(
+            status_code=403,
+            detail="Вход в веб-панель для этой учётной записи отключён. Используйте Telegram-бота.",
+        )
     return user
 
 

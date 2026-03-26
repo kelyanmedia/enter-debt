@@ -26,6 +26,7 @@ def create_user(data: UserCreate, db: Session = Depends(get_db), _=Depends(requi
         telegram_chat_id=data.telegram_chat_id,
         telegram_username=data.telegram_username,
         is_active=data.is_active,
+        web_access=data.web_access,
         hashed_password=get_password_hash(data.password),
     )
     db.add(user)

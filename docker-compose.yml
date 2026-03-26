@@ -18,3 +18,15 @@ services:
     network_mode: host
     depends_on:
       - backend
+
+  bot:
+    build: ./backend
+    restart: always
+    env_file: .env
+    command: python -m bot.bot
+    working_dir: /app
+    network_mode: host
+    depends_on:
+      - backend
+    environment:
+      API_URL: http://127.0.0.1:8000

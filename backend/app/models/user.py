@@ -16,6 +16,7 @@ class User(Base):
     telegram_chat_id = Column(BigInteger, unique=True, nullable=True)
     telegram_username = Column(String(100), nullable=True)
     is_active = Column(Boolean, default=True)
+    web_access = Column(Boolean, nullable=False, default=True)  # False = только Telegram (бухгалтерия)
     created_at = Column(DateTime(timezone=True), server_default=func.now())
 
     # Relationships

@@ -11,6 +11,12 @@ class Settings(BaseSettings):
 
     BOT_TOKEN: Optional[str] = None
     API_URL: str = "http://localhost:8000"
+    # Пароль, который пользователь вводит в боте после /start (до заявки на модерацию)
+    BOT_ACCESS_PASSWORD: str = "EnterDebt2026"
+    # Общий секрет для вызовов API из бота (заголовок X-Internal-Secret)
+    INTERNAL_API_SECRET: str = "change_internal_secret_in_production"
+    # Ссылка на веб-панель для сообщений менеджеру после одобрения
+    APP_PUBLIC_URL: str = "https://debt.agasiarakelyan.com"
 
     ADMIN_EMAIL: str = "agasi@gmail.com"
     ADMIN_PASSWORD: str = "KM2026admin_controlpanel"
