@@ -43,6 +43,8 @@ def _migrate():
     migrations = [
         "ALTER TABLE users ADD COLUMN IF NOT EXISTS web_access BOOLEAN DEFAULT TRUE",
         "UPDATE users SET web_access = TRUE WHERE web_access IS NULL",
+        "ALTER TABLE users ADD COLUMN IF NOT EXISTS see_all_partners BOOLEAN DEFAULT FALSE",
+        "UPDATE users SET see_all_partners = FALSE WHERE see_all_partners IS NULL",
         "ALTER TABLE payments ADD COLUMN IF NOT EXISTS contract_months INTEGER",
         "ALTER TABLE payments ADD COLUMN IF NOT EXISTS notify_accounting BOOLEAN DEFAULT TRUE",
         "ALTER TABLE payments ADD COLUMN IF NOT EXISTS contract_url VARCHAR(500)",
@@ -102,6 +104,7 @@ def seed_initial_data():
                     role=u["role"],
                     is_active=True,
                     web_access=True,
+                    see_all_partners=False,
                     telegram_chat_id=u.get("telegram_chat_id"),
                 )
                 db.add(db_user)

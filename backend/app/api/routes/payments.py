@@ -7,6 +7,8 @@ from app.models.payment import Payment, PaymentMonth
 from app.models.partner import Partner
 from app.schemas.schemas import PaymentOut, PaymentCreate, PaymentUpdate, PaymentConfirm
 from app.core.security import get_current_user, require_manager_or_admin
+from app.core.access import assert_partner_access, filter_payments_query
+from app.models.user import User
 
 router = APIRouter(prefix="/api/payments", tags=["payments"])
 
@@ -45,13 +47,14 @@ def list_payments(
     partner_id: Optional[int] = None,
     payment_type: Optional[str] = None,
     db: Session = Depends(get_db),
-    _=Depends(get_current_user)
+    current_user: User = Depends(get_current_user),
 ):
     q = db.query(Payment).options(
         joinedload(Payment.partner).joinedload(Partner.manager),
         joinedload(Payment.confirmed_by_user),
         joinedload(Payment.months)
     ).filter(Payment.is_archived == False)
+    q = filter_payments_query(q, db, current_user)
     if status:
         q = q.filter(Payment.status == status)
     if partner_id:
@@ -63,18 +66,24 @@ def list_payments(
 
 
 @router.get("/{payment_id}", response_model=PaymentOut)
-def get_payment(payment_id: int, db: Session = Depends(get_db), _=Depends(get_current_user)):
+def get_payment(payment_id: int, db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
     p = db.query(Payment).options(
         joinedload(Payment.partner),
         joinedload(Payment.confirmed_by_user)
     ).filter(Payment.id == payment_id).first()
     if not p:
         raise HTTPException(status_code=404, detail="Payment not found")
+    assert_partner_access(db, current_user, p.partner_id)
     return enrich(p)
 
 
 @router.post("", response_model=PaymentOut)
-def create_payment(data: PaymentCreate, db: Session = Depends(get_db), _=Depends(require_manager_or_admin)):
+def create_payment(
+    data: PaymentCreate,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(require_manager_or_admin),
+):
+    assert_partner_access(db, current_user, data.partner_id)
     payment = Payment(**data.model_dump())
     db.add(payment)
     db.commit()
@@ -83,11 +92,20 @@ def create_payment(data: PaymentCreate, db: Session = Depends(get_db), _=Depends
 
 
 @router.put("/{payment_id}", response_model=PaymentOut)
-def update_payment(payment_id: int, data: PaymentUpdate, db: Session = Depends(get_db), _=Depends(require_manager_or_admin)):
+def update_payment(
+    payment_id: int,
+    data: PaymentUpdate,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(require_manager_or_admin),
+):
     p = db.query(Payment).filter(Payment.id == payment_id).first()
     if not p:
         raise HTTPException(status_code=404, detail="Payment not found")
-    for field, value in data.model_dump(exclude_none=True).items():
+    assert_partner_access(db, current_user, p.partner_id)
+    upd = data.model_dump(exclude_none=True)
+    if "partner_id" in upd:
+        assert_partner_access(db, current_user, upd["partner_id"])
+    for field, value in upd.items():
         setattr(p, field, value)
     db.commit()
     p = load_payment(db, payment_id)
@@ -95,10 +113,16 @@ def update_payment(payment_id: int, data: PaymentUpdate, db: Session = Depends(g
 
 
 @router.post("/{payment_id}/confirm", response_model=PaymentOut)
-def confirm_payment(payment_id: int, data: PaymentConfirm, db: Session = Depends(get_db), current_user=Depends(get_current_user)):
+def confirm_payment(
+    payment_id: int,
+    data: PaymentConfirm,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
     p = db.query(Payment).filter(Payment.id == payment_id).first()
     if not p:
         raise HTTPException(status_code=404, detail="Payment not found")
+    assert_partner_access(db, current_user, p.partner_id)
     if data.postpone_days and data.postpone_days > 0:
         from datetime import timedelta
         p.postponed_until = date.today() + timedelta(days=data.postpone_days)
@@ -114,10 +138,15 @@ def confirm_payment(payment_id: int, data: PaymentConfirm, db: Session = Depends
 
 
 @router.delete("/{payment_id}")
-def delete_payment(payment_id: int, db: Session = Depends(get_db), _=Depends(require_manager_or_admin)):
+def delete_payment(
+    payment_id: int,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(require_manager_or_admin),
+):
     p = db.query(Payment).filter(Payment.id == payment_id).first()
     if not p:
         raise HTTPException(status_code=404, detail="Payment not found")
+    assert_partner_access(db, current_user, p.partner_id)
     p.is_archived = True
     db.commit()
     return {"ok": True}

@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react'
+import { useAuth } from '@/context/AuthContext'
 import Layout from '@/components/Layout'
 import { PageHeader, Card, Th, Td, PartnerAvatar, statusBadge, BtnPrimary, BtnOutline, Modal, Field, Input, Select, Empty } from '@/components/ui'
 import api from '@/lib/api'
@@ -13,6 +14,7 @@ interface Partner {
 const EMPTY = { name: '', contact_person: '', phone: '', email: '', partner_type: 'regular', manager_id: '', status: 'active', comment: '' }
 
 export default function PartnersPage() {
+  const { user } = useAuth()
   const [partners, setPartners] = useState<Partner[]>([])
   const [users, setUsers] = useState<User[]>([])
   const [filterStatus, setFilterStatus] = useState('')
@@ -29,7 +31,7 @@ export default function PartnersPage() {
 
   useEffect(() => {
     load()
-    api.get('users').then(r => setUsers(r.data)).catch(() => {})
+    api.get('users/managers-for-select').then(r => setUsers(r.data)).catch(() => {})
   }, [filterStatus])
 
   const openAdd = () => {
@@ -173,10 +175,16 @@ export default function PartnersPage() {
           </Field>
         </div>
         <Field label="Менеджер">
-          <Select value={form.manager_id} onChange={e => setForm(f => ({ ...f, manager_id: e.target.value }))}>
-            <option value="">Не назначен</option>
-            {users.map(u => <option key={u.id} value={u.id}>{u.name}</option>)}
-          </Select>
+          {user?.role === 'manager' ? (
+            <div style={{ fontSize: 13, padding: '8px 0', color: '#1a1d23' }}>
+              Вы: <b>{user.name}</b> (партнёр закрепляется за вами)
+            </div>
+          ) : (
+            <Select value={form.manager_id} onChange={e => setForm(f => ({ ...f, manager_id: e.target.value }))}>
+              <option value="">Не назначен</option>
+              {users.map(u => <option key={u.id} value={u.id}>{u.name}</option>)}
+            </Select>
+          )}
         </Field>
         <Field label="Комментарий">
           <Input value={form.comment} onChange={e => setForm(f => ({ ...f, comment: e.target.value }))} placeholder="Любые заметки..." />

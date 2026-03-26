@@ -1,4 +1,5 @@
 import { useEffect, useState, useCallback } from 'react'
+import { useAuth } from '@/context/AuthContext'
 import Layout from '@/components/Layout'
 import { PageHeader, Card, Th, Td, PartnerAvatar, statusBadge, formatAmount, formatDate, daysLeft, BtnPrimary, BtnOutline, Modal, Field, Input, Select, Empty } from '@/components/ui'
 import api from '@/lib/api'
@@ -49,6 +50,7 @@ function generateMonths(startYM: string, count: number): string[] {
 }
 
 export default function PaymentsPage() {
+  const { user } = useAuth()
   const [payments, setPayments] = useState<Payment[]>([])
   const [partners, setPartners] = useState<Partner[]>([])
   const [filterStatus, setFilterStatus] = useState('')
@@ -87,8 +89,12 @@ export default function PaymentsPage() {
   useEffect(() => {
     load()
     api.get('partners').then(r => setPartners(r.data))
-    api.get('users').then(r => setUsers(r.data)).catch(() => {})
+    api.get('users/managers-for-select').then(r => setUsers(r.data)).catch(() => {})
   }, [filterStatus, filterType, filterManager])
+
+  useEffect(() => {
+    if (user?.role === 'manager') setFilterManager(String(user.id))
+  }, [user])
 
   const openAdd = () => { setForm({ ...EMPTY_FORM }); setEditingId(null); setError(''); setModal(true) }
 
@@ -258,10 +264,12 @@ export default function PaymentsPage() {
       <div style={{ padding: '22px 24px', overflowY: 'auto', flex: 1 }}>
         {/* Filters */}
         <div style={{ display: 'flex', gap: 10, marginBottom: 18, flexWrap: 'wrap' }}>
-          <Select value={filterManager} onChange={e => setFilterManager(e.target.value)} style={{ maxWidth: 200 }}>
-            <option value="">Все менеджеры</option>
-            {users.map(u => <option key={u.id} value={u.id}>{u.name}</option>)}
-          </Select>
+          {user?.role === 'admin' && (
+            <Select value={filterManager} onChange={e => setFilterManager(e.target.value)} style={{ maxWidth: 200 }}>
+              <option value="">Все менеджеры</option>
+              {users.map(u => <option key={u.id} value={u.id}>{u.name}</option>)}
+            </Select>
+          )}
           <Select value={filterStatus} onChange={e => setFilterStatus(e.target.value)} style={{ maxWidth: 180 }}>
             <option value="">Все статусы</option>
             <option value="pending">Ожидается</option>

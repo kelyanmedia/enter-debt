@@ -9,6 +9,8 @@ from app.models.payment import Payment
 from app.models.partner import Partner
 from app.schemas.schemas import DashboardStats
 from app.core.security import get_current_user
+from app.core.access import accessible_partner_ids, filter_payments_query, filter_partners_query
+from app.models.user import User
 
 router = APIRouter(prefix="/api/dashboard", tags=["dashboard"])
 
@@ -18,13 +20,24 @@ def get_dashboard(
     date_from: Optional[date] = None,
     date_to: Optional[date] = None,
     db: Session = Depends(get_db),
-    _=Depends(get_current_user)
+    current_user: User = Depends(get_current_user),
 ):
     today = date.today()
+    ids = accessible_partner_ids(db, current_user)
+    if ids is not None and len(ids) == 0:
+        return DashboardStats(
+            total_receivable=Decimal(0),
+            overdue_count=0,
+            pending_count=0,
+            paid_this_month=0,
+            paid_amount_this_month=Decimal(0),
+            partners_count=0,
+        )
 
     # Base filter for active (non-archived) payments in the period
     def period_filter(q, use_created_at=True):
         q = q.filter(Payment.is_archived == False)
+        q = filter_payments_query(q, db, current_user)
         if date_from and use_created_at:
             q = q.filter(func.date(Payment.created_at) >= date_from)
         if date_to and use_created_at:
@@ -33,6 +46,7 @@ def get_dashboard(
 
     def paid_period_filter(q):
         q = q.filter(Payment.is_archived == False)
+        q = filter_payments_query(q, db, current_user)
         if date_from:
             q = q.filter(func.date(Payment.paid_at) >= date_from)
         if date_to:
@@ -58,7 +72,9 @@ def get_dashboard(
     ).scalar() or 0
 
     paid_q = db.query(func.count(Payment.id)).filter(Payment.status == "paid")
+    paid_q = filter_payments_query(paid_q, db, current_user)
     paid_amount_q = db.query(func.sum(Payment.amount)).filter(Payment.status == "paid")
+    paid_amount_q = filter_payments_query(paid_amount_q, db, current_user)
 
     if date_from or date_to:
         paid_this_month = paid_period_filter(paid_q).scalar() or 0
@@ -73,10 +89,12 @@ def get_dashboard(
             func.extract("year", Payment.paid_at) == today.year
         ).scalar() or Decimal(0)
 
-    partners_count = db.query(func.count(Partner.id)).filter(
+    pcq = db.query(func.count(Partner.id)).filter(
         Partner.status == "active",
-        Partner.is_deleted == False
-    ).scalar() or 0
+        Partner.is_deleted == False,
+    )
+    pcq = filter_partners_query(pcq, db, current_user)
+    partners_count = pcq.scalar() or 0
 
     return DashboardStats(
         total_receivable=total_receivable,

@@ -11,6 +11,8 @@ from app.models.partner import Partner
 from app.models.user import User
 from app.schemas.schemas import PaymentMonthCreate, PaymentMonthOut
 from app.core.security import get_current_user, require_manager_or_admin
+from app.core.access import assert_payment_access
+from app.models.user import User
 from app.core.config import settings
 
 router = APIRouter(prefix="/api/payments", tags=["payment-months"])
@@ -47,11 +49,12 @@ def _month_label(month_str: str) -> str:
 def list_months(
     payment_id: int,
     db: Session = Depends(get_db),
-    _=Depends(get_current_user)
+    current_user: User = Depends(get_current_user),
 ):
     p = db.query(Payment).filter(Payment.id == payment_id).first()
     if not p:
         raise HTTPException(status_code=404, detail="Payment not found")
+    assert_payment_access(db, current_user, p)
     return db.query(PaymentMonth).filter(
         PaymentMonth.payment_id == payment_id
     ).order_by(PaymentMonth.month).all()
@@ -62,11 +65,12 @@ def add_month(
     payment_id: int,
     data: PaymentMonthCreate,
     db: Session = Depends(get_db),
-    _=Depends(require_manager_or_admin)
+    current_user: User = Depends(require_manager_or_admin),
 ):
     p = db.query(Payment).filter(Payment.id == payment_id).first()
     if not p:
         raise HTTPException(status_code=404, detail="Payment not found")
+    assert_payment_access(db, current_user, p)
     existing = db.query(PaymentMonth).filter(
         PaymentMonth.payment_id == payment_id,
         PaymentMonth.month == data.month
@@ -101,9 +105,13 @@ async def mark_act_issued(
     payment_id: int,
     month_id: int,
     db: Session = Depends(get_db),
-    _=Depends(require_manager_or_admin),
+    current_user: User = Depends(require_manager_or_admin),
 ):
     """Фиксация «Акт выставлен» — независимо от оплаты. Уведомление бухгалтерии: Акт + кнопка «Добавить»."""
+    pay = db.query(Payment).filter(Payment.id == payment_id).first()
+    if not pay:
+        raise HTTPException(status_code=404, detail="Payment not found")
+    assert_payment_access(db, current_user, pay)
     pm = db.query(PaymentMonth).filter(
         PaymentMonth.id == month_id,
         PaymentMonth.payment_id == payment_id,
@@ -158,9 +166,13 @@ async def confirm_month(
     payment_id: int,
     month_id: int,
     db: Session = Depends(get_db),
-    current_user=Depends(get_current_user)
+    current_user: User = Depends(get_current_user),
 ):
     """Только «Оплата прошла» — независимо от акта (предоплата и т.д.)."""
+    pay = db.query(Payment).filter(Payment.id == payment_id).first()
+    if not pay:
+        raise HTTPException(status_code=404, detail="Payment not found")
+    assert_payment_access(db, current_user, pay)
     pm = db.query(PaymentMonth).filter(
         PaymentMonth.id == month_id,
         PaymentMonth.payment_id == payment_id
@@ -227,8 +239,12 @@ def delete_month(
     payment_id: int,
     month_id: int,
     db: Session = Depends(get_db),
-    _=Depends(require_manager_or_admin)
+    current_user: User = Depends(require_manager_or_admin),
 ):
+    pay = db.query(Payment).filter(Payment.id == payment_id).first()
+    if not pay:
+        raise HTTPException(status_code=404, detail="Payment not found")
+    assert_payment_access(db, current_user, pay)
     pm = db.query(PaymentMonth).filter(
         PaymentMonth.id == month_id,
         PaymentMonth.payment_id == payment_id

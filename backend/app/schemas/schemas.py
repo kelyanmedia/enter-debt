@@ -25,6 +25,7 @@ class UserBase(BaseModel):
     telegram_username: Optional[str] = None
     is_active: bool = True
     web_access: bool = True
+    see_all_partners: bool = False
 
 
 class UserCreate(UserBase):
@@ -40,7 +41,12 @@ class UserUpdate(BaseModel):
     telegram_username: Optional[str] = None
     is_active: Optional[bool] = None
     web_access: Optional[bool] = None
+    see_all_partners: Optional[bool] = None
     password: Optional[str] = None
+
+
+class AssignedPartnersBody(BaseModel):
+    partner_ids: List[int]
 
 
 class UserOut(UserBase):

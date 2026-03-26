@@ -9,7 +9,9 @@ interface User {
   id: number; name: string; email: string; role: string
   telegram_chat_id?: number; telegram_username?: string; is_active: boolean
   web_access?: boolean
+  see_all_partners?: boolean
 }
+interface PartnerRow { id: number; name: string }
 
 interface TelegramJoinRequest {
   id: number
@@ -20,7 +22,10 @@ interface TelegramJoinRequest {
   created_at: string
 }
 
-const EMPTY = { name: '', email: '', password: '', role: 'manager', telegram_chat_id: '', telegram_username: '', is_active: 'true' }
+const EMPTY = {
+  name: '', email: '', password: '', role: 'manager', telegram_chat_id: '', telegram_username: '', is_active: 'true',
+  see_all_partners: 'false', new_password: '',
+}
 
 export default function UsersPage() {
   const { user } = useAuth()
@@ -35,6 +40,8 @@ export default function UsersPage() {
   const [approveReq, setApproveReq] = useState<TelegramJoinRequest | null>(null)
   const [approveForm, setApproveForm] = useState({ role: 'manager' as 'manager' | 'accountant', name: '', email: '' })
   const [approveSaving, setApproveSaving] = useState(false)
+  const [allPartners, setAllPartners] = useState<PartnerRow[]>([])
+  const [assignedPartnerIds, setAssignedPartnerIds] = useState<number[]>([])
 
   const loadAll = () => {
     api.get('users').then(r => setUsers(r.data))
@@ -46,11 +53,42 @@ export default function UsersPage() {
     loadAll()
   }, [user])
 
-  const openAdd = () => { setEditing(null); setForm({ ...EMPTY }); setError(''); setModal(true) }
-  const openEdit = (u: User) => {
-    setEditing(u)
-    setForm({ name: u.name, email: u.email, password: '', role: u.role, telegram_chat_id: String(u.telegram_chat_id || ''), telegram_username: u.telegram_username || '', is_active: String(u.is_active) })
+  const openAdd = () => {
+    setEditing(null)
+    setForm({ ...EMPTY })
+    setAssignedPartnerIds([])
     setError('')
+    setModal(true)
+  }
+  const openEdit = async (u: User) => {
+    setEditing(u)
+    setForm({
+      name: u.name,
+      email: u.email,
+      password: '',
+      role: u.role,
+      telegram_chat_id: String(u.telegram_chat_id || ''),
+      telegram_username: u.telegram_username || '',
+      is_active: String(u.is_active),
+      see_all_partners: u.see_all_partners ? 'true' : 'false',
+      new_password: '',
+    })
+    setError('')
+    setAssignedPartnerIds([])
+    if (u.role === 'manager') {
+      try {
+        const [ap, pr] = await Promise.all([
+          api.get(`users/${u.id}/assigned-partners`),
+          api.get('partners'),
+        ])
+        setAssignedPartnerIds(ap.data.partner_ids || [])
+        setAllPartners(pr.data.map((p: PartnerRow) => ({ id: p.id, name: p.name })))
+      } catch {
+        setAllPartners([])
+      }
+    } else {
+      setAllPartners([])
+    }
     setModal(true)
   }
 
@@ -59,17 +97,36 @@ export default function UsersPage() {
     setSaving(true)
     try {
       if (editing) {
-        const payload: any = { name: form.name, role: form.role, is_active: form.is_active === 'true', telegram_username: form.telegram_username || null }
+        const payload: any = {
+          name: form.name,
+          role: form.role,
+          is_active: form.is_active === 'true',
+          telegram_username: form.telegram_username || null,
+        }
         if (form.telegram_chat_id) payload.telegram_chat_id = Number(form.telegram_chat_id)
+        if (form.role === 'manager') payload.see_all_partners = form.see_all_partners === 'true'
+        if (form.new_password.trim()) payload.password = form.new_password.trim()
         await api.patch(`users/${editing.id}`, payload)
+        if (form.role === 'manager' && form.see_all_partners === 'false') {
+          await api.put(`users/${editing.id}/assigned-partners`, { partner_ids: assignedPartnerIds })
+        }
       } else {
         if (!form.password) { setError('Введите пароль'); setSaving(false); return }
-        await api.post('users', { name: form.name, email: form.email, password: form.password, role: form.role, telegram_chat_id: form.telegram_chat_id ? Number(form.telegram_chat_id) : null, telegram_username: form.telegram_username || null })
+        await api.post('users', {
+          name: form.name,
+          email: form.email,
+          password: form.password,
+          role: form.role,
+          telegram_chat_id: form.telegram_chat_id ? Number(form.telegram_chat_id) : null,
+          telegram_username: form.telegram_username || null,
+          see_all_partners: form.role === 'manager' ? form.see_all_partners === 'true' : false,
+        })
       }
       setModal(false)
       loadAll()
     } catch (e: any) {
-      setError(e.response?.data?.detail || 'Ошибка сохранения')
+      const d = e.response?.data?.detail
+      setError(typeof d === 'string' ? d : JSON.stringify(d) || 'Ошибка сохранения')
     } finally {
       setSaving(false)
     }
@@ -152,6 +209,7 @@ export default function UsersPage() {
                 <Th>Роль</Th>
                 <Th>Telegram</Th>
                 <Th>Получает пуши</Th>
+                <Th>Доступ к данным</Th>
                 <Th>Активен</Th>
                 <Th></Th>
               </tr>
@@ -178,6 +236,9 @@ export default function UsersPage() {
                   <Td style={{ fontSize: 12, color: '#8a8fa8' }}>
                     {u.web_access === false ? 'Только Telegram' : roleNotifLabel[u.role]}
                   </Td>
+                  <Td style={{ fontSize: 11, color: '#8a8fa8' }}>
+                    {u.role === 'manager' ? (u.see_all_partners ? 'Все партнёры' : 'Только назначенные') : '—'}
+                  </Td>
                   <Td><Badge variant={u.is_active ? 'green' : 'gray'}>{u.is_active ? 'Да' : 'Нет'}</Badge></Td>
                   <Td><BtnOutline onClick={() => openEdit(u)} style={{ padding: '5px 12px', fontSize: 12 }}>Ред.</BtnOutline></Td>
                 </tr>
@@ -188,7 +249,7 @@ export default function UsersPage() {
         </Card>
       </div>
 
-      <Modal open={modal} onClose={() => setModal(false)} title={editing ? 'Редактировать пользователя' : 'Новый пользователь'}
+      <Modal open={modal} onClose={() => setModal(false)} title={editing ? 'Карточка пользователя' : 'Новый пользователь'}
         footer={<><BtnOutline onClick={() => setModal(false)}>Отмена</BtnOutline><BtnPrimary onClick={save} disabled={saving}>{saving ? 'Сохраняем...' : 'Сохранить'}</BtnPrimary></>}
       >
         {error && <div style={{ background: '#fef0f0', color: '#e84040', borderRadius: 8, padding: '9px 12px', fontSize: 13, marginBottom: 14 }}>{error}</div>}
@@ -202,6 +263,16 @@ export default function UsersPage() {
           <Field label="Пароль *">
             <Input type="password" value={form.password} onChange={e => setForm(f => ({ ...f, password: e.target.value }))} placeholder="Минимум 6 символов" />
           </Field>
+        )}
+        {editing && (
+          <>
+            <div style={{ padding: '10px 12px', background: '#f0f4fa', borderRadius: 9, fontSize: 12, color: '#4a5568', marginBottom: 12 }}>
+              Текущий пароль в базе хранится в зашифрованном виде — показать его нельзя. Чтобы сменить доступ, введите <b>новый пароль</b> ниже.
+            </div>
+            <Field label="Новый пароль (оставьте пустым, если не меняете)">
+              <Input type="password" value={form.new_password} onChange={e => setForm(f => ({ ...f, new_password: e.target.value }))} placeholder="••••••••" autoComplete="new-password" />
+            </Field>
+          </>
         )}
         <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
           <Field label="Роль">
@@ -218,6 +289,33 @@ export default function UsersPage() {
             </Select>
           </Field>
         </div>
+        {form.role === 'manager' && (
+          <Field label="Менеджер видит проекты всех партнёров">
+            <Select value={form.see_all_partners} onChange={e => setForm(f => ({ ...f, see_all_partners: e.target.value }))}>
+              <option value="false">Нет — только выбранные ниже партнёры</option>
+              <option value="true">Да — полный доступ по всем партнёрам</option>
+            </Select>
+          </Field>
+        )}
+        {editing && form.role === 'manager' && form.see_all_partners === 'false' && allPartners.length > 0 && (
+          <div style={{ marginBottom: 14 }}>
+            <div style={{ fontSize: 12, fontWeight: 600, marginBottom: 8 }}>Партнёры, доступные этому менеджеру</div>
+            <div style={{ maxHeight: 180, overflowY: 'auto', border: '1px solid #e8e9ef', borderRadius: 8, padding: 8 }}>
+              {allPartners.map(p => (
+                <label key={p.id} style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '4px 0', fontSize: 13, cursor: 'pointer' }}>
+                  <input
+                    type="checkbox"
+                    checked={assignedPartnerIds.includes(p.id)}
+                    onChange={(e) => {
+                      setAssignedPartnerIds(prev => e.target.checked ? [...prev, p.id] : prev.filter(x => x !== p.id))
+                    }}
+                  />
+                  {p.name}
+                </label>
+              ))}
+            </div>
+          </div>
+        )}
         <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
           <Field label="Telegram Username">
             <Input value={form.telegram_username} onChange={e => setForm(f => ({ ...f, telegram_username: e.target.value }))} placeholder="username (без @)" />
@@ -227,7 +325,7 @@ export default function UsersPage() {
           </Field>
         </div>
         <div style={{ padding: '10px 12px', background: '#f5f6fa', borderRadius: 9, fontSize: 12, color: '#8a8fa8' }}>
-          💡 Chat ID можно узнать через @userinfobot в Telegram
+          💡 Chat ID можно узнать через @userinfobot в Telegram. Добавлять пользователей может только администратор.
         </div>
       </Modal>
 
