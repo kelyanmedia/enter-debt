@@ -159,7 +159,7 @@ export default function PartnersPage() {
         <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
           <Field label="Тип партнёра">
             <Select value={form.partner_type} onChange={e => setForm(f => ({ ...f, partner_type: e.target.value }))}>
-              <option value="regular">Регулярный</option>
+              <option value="recurring">Рекуррентный</option>
               <option value="one_time">Разовый</option>
               <option value="service">Сервисный</option>
             </Select>
