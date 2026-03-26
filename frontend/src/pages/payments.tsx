@@ -132,7 +132,8 @@ export default function PaymentsPage() {
       setModal(false)
       load()
     } catch (e: any) {
-      setError(e.response?.data?.detail || 'Ошибка сохранения')
+      const detail = e.response?.data?.detail
+      setError(typeof detail === 'string' ? detail : detail ? JSON.stringify(detail) : 'Ошибка сохранения')
     } finally {
       setSaving(false)
     }

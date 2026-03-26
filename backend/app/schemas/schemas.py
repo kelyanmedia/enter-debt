@@ -142,7 +142,7 @@ class PaymentUpdate(BaseModel):
 
 
 class PaymentConfirm(BaseModel):
-    confirmed_by: int
+    postpone_days: Optional[int] = 0
 
 
 class PaymentOut(PaymentBase):
@@ -153,7 +153,7 @@ class PaymentOut(PaymentBase):
     postponed_until: Optional[date] = None
     last_notified_at: Optional[datetime] = None
     is_archived: bool
-    notify_accounting: bool = True
+    notify_accounting: Optional[bool] = True
     contract_url: Optional[str] = None
     created_at: datetime
     partner: Optional[PartnerOut] = None

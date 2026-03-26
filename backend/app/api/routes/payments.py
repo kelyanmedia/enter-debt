@@ -3,7 +3,7 @@ from sqlalchemy.orm import Session, joinedload
 from typing import List, Optional
 from datetime import date, datetime
 from app.db.database import get_db
-from app.models.payment import Payment
+from app.models.payment import Payment, PaymentMonth
 from app.models.partner import Partner
 from app.schemas.schemas import PaymentOut, PaymentCreate, PaymentUpdate, PaymentConfirm
 from app.core.security import get_current_user, require_manager_or_admin
@@ -25,6 +25,14 @@ def compute_days_until_due(p: Payment) -> Optional[int]:
     return None
 
 
+def load_payment(db: Session, payment_id: int) -> Payment:
+    return db.query(Payment).options(
+        joinedload(Payment.partner).joinedload(Partner.manager),
+        joinedload(Payment.confirmed_by_user),
+        joinedload(Payment.months),
+    ).filter(Payment.id == payment_id).first()
+
+
 def enrich(p: Payment) -> PaymentOut:
     out = PaymentOut.model_validate(p)
     out.days_until_due = compute_days_until_due(p)
@@ -41,7 +49,8 @@ def list_payments(
 ):
     q = db.query(Payment).options(
         joinedload(Payment.partner).joinedload(Partner.manager),
-        joinedload(Payment.confirmed_by_user)
+        joinedload(Payment.confirmed_by_user),
+        joinedload(Payment.months)
     ).filter(Payment.is_archived == False)
     if status:
         q = q.filter(Payment.status == status)
@@ -69,8 +78,8 @@ def create_payment(data: PaymentCreate, db: Session = Depends(get_db), _=Depends
     payment = Payment(**data.model_dump())
     db.add(payment)
     db.commit()
-    db.refresh(payment)
-    return enrich(payment)
+    p = load_payment(db, payment.id)
+    return enrich(p)
 
 
 @router.put("/{payment_id}", response_model=PaymentOut)
@@ -81,7 +90,7 @@ def update_payment(payment_id: int, data: PaymentUpdate, db: Session = Depends(g
     for field, value in data.model_dump(exclude_none=True).items():
         setattr(p, field, value)
     db.commit()
-    db.refresh(p)
+    p = load_payment(db, payment_id)
     return enrich(p)
 
 
@@ -90,11 +99,17 @@ def confirm_payment(payment_id: int, data: PaymentConfirm, db: Session = Depends
     p = db.query(Payment).filter(Payment.id == payment_id).first()
     if not p:
         raise HTTPException(status_code=404, detail="Payment not found")
-    p.status = "paid"
-    p.paid_at = datetime.utcnow()
-    p.confirmed_by = current_user.id
+    if data.postpone_days and data.postpone_days > 0:
+        from datetime import timedelta
+        p.postponed_until = date.today() + timedelta(days=data.postpone_days)
+        p.status = "postponed"
+    else:
+        p.status = "paid"
+        p.paid_at = datetime.utcnow()
+        p.confirmed_by = current_user.id
+        p.postponed_until = None
     db.commit()
-    db.refresh(p)
+    p = load_payment(db, payment_id)
     return enrich(p)
 
 
