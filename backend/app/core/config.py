@@ -1,3 +1,4 @@
+from pydantic import field_validator
 from pydantic_settings import BaseSettings
 from typing import Optional
 import os
@@ -13,8 +14,15 @@ class Settings(BaseSettings):
     API_URL: str = "http://localhost:8000"
     # Пароль, который пользователь вводит в боте после /start (до заявки на модерацию)
     BOT_ACCESS_PASSWORD: str = "EnterDebt2026"
-    # Общий секрет для вызовов API из бота (заголовок X-Internal-Secret)
+    # Общий секрет для вызовов API из бота (заголовок X-Internal-Secret); пустой env = дефолт как в bot.py
     INTERNAL_API_SECRET: str = "change_internal_secret_in_production"
+
+    @field_validator("INTERNAL_API_SECRET", mode="before")
+    @classmethod
+    def _internal_secret_nonempty(cls, v):
+        if v is None or (isinstance(v, str) and not v.strip()):
+            return "change_internal_secret_in_production"
+        return str(v).strip()
     # Ссылка на веб-панель для сообщений менеджеру после одобрения
     APP_PUBLIC_URL: str = "https://debt.agasiarakelyan.com"
 

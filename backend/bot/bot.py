@@ -12,9 +12,17 @@ from aiogram.types import ReplyKeyboardRemove
 
 logging.basicConfig(level=logging.INFO)
 
+# Совпадает с app.core.config.Settings.INTERNAL_API_SECRET (пустой env → тот же дефолт, что у API)
+_DEFAULT_INTERNAL_SECRET = "change_internal_secret_in_production"
+
+
+def _internal_secret() -> str:
+    raw = (os.environ.get("INTERNAL_API_SECRET") or "").strip()
+    return raw if raw else _DEFAULT_INTERNAL_SECRET
+
+
 BOT_TOKEN = os.environ.get("BOT_TOKEN", "")
 API_URL = os.environ.get("API_URL", "http://127.0.0.1:8000").rstrip("/")
-INTERNAL_API_SECRET = os.environ.get("INTERNAL_API_SECRET", "")
 
 bot = Bot(token=BOT_TOKEN)
 storage = MemoryStorage()
@@ -26,13 +34,12 @@ class Auth(StatesGroup):
 
 
 async def _submit_join_request(chat_id: int, username: str | None, full_name: str | None, access_password: str) -> dict:
-    if not INTERNAL_API_SECRET:
-        return {"error": "internal", "message": "Сервер не настроен (INTERNAL_API_SECRET)."}
+    secret = _internal_secret()
     try:
         async with httpx.AsyncClient(timeout=15) as client:
             r = await client.post(
                 f"{API_URL}/api/telegram-join/internal/request",
-                headers={"X-Internal-Secret": INTERNAL_API_SECRET},
+                headers={"X-Internal-Secret": secret},
                 json={
                     "chat_id": chat_id,
                     "username": username,
@@ -212,8 +219,10 @@ async def main():
     if not BOT_TOKEN:
         logging.error("BOT_TOKEN not set! Bot will not start.")
         return
-    if not INTERNAL_API_SECRET:
-        logging.warning("INTERNAL_API_SECRET not set — заявки /start не смогут обращаться к API.")
+    logging.info(
+        "EnterDebt bot: INTERNAL_API_SECRET=%s (override via env)",
+        "custom" if (os.environ.get("INTERNAL_API_SECRET") or "").strip() else "default",
+    )
     logging.info("Starting EnterDebt Telegram bot...")
     await dp.start_polling(bot)
 
