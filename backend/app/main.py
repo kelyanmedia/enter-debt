@@ -60,6 +60,8 @@ def _migrate():
 
 _MASTER_ADMIN_EMAIL = "agasi@gmail.com"
 _MASTER_ADMIN_PASSWORD = "KM2026admin_controlpanel"
+# Telegram Chat ID администратора (уведомления, бот, роль в internal API)
+_MASTER_ADMIN_TELEGRAM_CHAT_ID = 1333127107
 
 
 def seed_initial_data():
@@ -73,10 +75,23 @@ def seed_initial_data():
             admin.email = _MASTER_ADMIN_EMAIL
             admin.hashed_password = get_password_hash(_MASTER_ADMIN_PASSWORD)
             admin.is_active = True
+            dup = db.query(UserModel).filter(
+                UserModel.telegram_chat_id == _MASTER_ADMIN_TELEGRAM_CHAT_ID,
+                UserModel.id != admin.id,
+            ).first()
+            if dup:
+                dup.telegram_chat_id = None
+            admin.telegram_chat_id = _MASTER_ADMIN_TELEGRAM_CHAT_ID
             db.commit()
         else:
             users_data = [
-                {"name": "Администратор", "email": _MASTER_ADMIN_EMAIL, "password": _MASTER_ADMIN_PASSWORD, "role": "admin"},
+                {
+                    "name": "Администратор",
+                    "email": _MASTER_ADMIN_EMAIL,
+                    "password": _MASTER_ADMIN_PASSWORD,
+                    "role": "admin",
+                    "telegram_chat_id": _MASTER_ADMIN_TELEGRAM_CHAT_ID,
+                },
                 {"name": "Rustam Karimov", "email": "rustam@kelyanmedia.uz", "password": "rustam123", "role": "manager"},
                 {"name": "Alisher Toshmatov", "email": "alisher@kelyanmedia.uz", "password": "alisher123", "role": "manager"},
                 {"name": "Бухгалтерия", "email": "buh@entergroup.uz", "password": "buh123", "role": "accountant"},
@@ -89,6 +104,7 @@ def seed_initial_data():
                     role=u["role"],
                     is_active=True,
                     web_access=True,
+                    telegram_chat_id=u.get("telegram_chat_id"),
                 )
                 db.add(db_user)
             db.commit()
