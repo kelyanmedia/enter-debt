@@ -18,8 +18,13 @@ export default function LoginPage() {
     try {
       await login(email, password)
       router.push('/')
-    } catch {
-      setError('Неверный email или пароль')
+    } catch (err: any) {
+      const status = err?.response?.status
+      if (status === 500 || status === 503 || !status) {
+        setError('Сервер недоступен. Попробуйте позже.')
+      } else {
+        setError('Неверный email или пароль')
+      }
     } finally {
       setLoading(false)
     }
