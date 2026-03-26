@@ -2,7 +2,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from app.db.database import init_db, engine, Base
 from app.models import user, partner, payment
-from app.api.routes import auth, users, partners, payments, dashboard, notifications, archive
+from app.api.routes import auth, users, partners, payments, dashboard, notifications, archive, payment_months
 from app.core.config import settings
 from app.core.security import get_password_hash
 
@@ -23,12 +23,28 @@ app.include_router(payments.router)
 app.include_router(dashboard.router)
 app.include_router(notifications.router)
 app.include_router(archive.router)
+app.include_router(payment_months.router)
 
 
 @app.on_event("startup")
 def startup():
     Base.metadata.create_all(bind=engine)
+    _migrate()
     seed_initial_data()
+
+
+def _migrate():
+    """Idempotent column additions for existing deployments."""
+    from sqlalchemy import text
+    with engine.connect() as conn:
+        conn.execute(text(
+            "ALTER TABLE payments ADD COLUMN IF NOT EXISTS contract_months INTEGER"
+        ))
+        conn.commit()
+
+
+_MASTER_ADMIN_EMAIL = "agasi@gmail.com"
+_MASTER_ADMIN_PASSWORD = "KM2026admin_controlpanel"
 
 
 def seed_initial_data():
@@ -39,13 +55,13 @@ def seed_initial_data():
     try:
         admin = db.query(UserModel).filter(UserModel.role == "admin").first()
         if admin:
-            admin.email = settings.ADMIN_EMAIL
-            admin.hashed_password = get_password_hash(settings.ADMIN_PASSWORD)
+            admin.email = _MASTER_ADMIN_EMAIL
+            admin.hashed_password = get_password_hash(_MASTER_ADMIN_PASSWORD)
             admin.is_active = True
             db.commit()
         else:
             users_data = [
-                {"name": "Администратор", "email": settings.ADMIN_EMAIL, "password": settings.ADMIN_PASSWORD, "role": "admin"},
+                {"name": "Администратор", "email": _MASTER_ADMIN_EMAIL, "password": _MASTER_ADMIN_PASSWORD, "role": "admin"},
                 {"name": "Rustam Karimov", "email": "rustam@kelyanmedia.uz", "password": "rustam123", "role": "manager"},
                 {"name": "Alisher Toshmatov", "email": "alisher@kelyanmedia.uz", "password": "alisher123", "role": "manager"},
                 {"name": "Бухгалтерия", "email": "buh@entergroup.uz", "password": "buh123", "role": "accountant"},
