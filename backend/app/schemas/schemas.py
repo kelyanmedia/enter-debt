@@ -90,16 +90,40 @@ class PartnerOut(PartnerBase):
 # ── PAYMENTS ──────────────────────────────────────────────────────────────────
 class PaymentBase(BaseModel):
     partner_id: int
-    payment_type: str  # regular / service / one_time
+    payment_type: str
     description: str
     amount: Decimal
+    contract_months: Optional[int] = None
     day_of_month: Optional[int] = None
     deadline_date: Optional[date] = None
     remind_days_before: int = 3
+    notify_accounting: bool = True
+    contract_url: Optional[str] = None
 
 
 class PaymentCreate(PaymentBase):
     pass
+
+
+# ── PAYMENT MONTHS ─────────────────────────────────────────────────────────────
+class PaymentMonthCreate(BaseModel):
+    month: str   # YYYY-MM
+    amount: Optional[Decimal] = None
+    note: Optional[str] = None
+
+
+class PaymentMonthOut(BaseModel):
+    id: int
+    payment_id: int
+    month: str
+    amount: Optional[Decimal] = None
+    status: str
+    note: Optional[str] = None
+    paid_at: Optional[datetime] = None
+    created_at: datetime
+
+    class Config:
+        from_attributes = True
 
 
 class PaymentUpdate(BaseModel):
@@ -110,6 +134,8 @@ class PaymentUpdate(BaseModel):
     remind_days_before: Optional[int] = None
     status: Optional[str] = None
     postponed_until: Optional[date] = None
+    notify_accounting: Optional[bool] = None
+    contract_url: Optional[str] = None
 
 
 class PaymentConfirm(BaseModel):
@@ -124,10 +150,13 @@ class PaymentOut(PaymentBase):
     postponed_until: Optional[date] = None
     last_notified_at: Optional[datetime] = None
     is_archived: bool
+    notify_accounting: bool = True
+    contract_url: Optional[str] = None
     created_at: datetime
     partner: Optional[PartnerOut] = None
     confirmed_by_user: Optional[UserOut] = None
     days_until_due: Optional[int] = None
+    months: List['PaymentMonthOut'] = []
 
     class Config:
         from_attributes = True
@@ -159,3 +188,4 @@ class NotificationLogOut(BaseModel):
 
 
 Token.model_rebuild()
+PaymentOut.model_rebuild()

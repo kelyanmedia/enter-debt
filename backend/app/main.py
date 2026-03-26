@@ -37,9 +37,9 @@ def _migrate():
     """Idempotent column additions for existing deployments."""
     from sqlalchemy import text
     with engine.connect() as conn:
-        conn.execute(text(
-            "ALTER TABLE payments ADD COLUMN IF NOT EXISTS contract_months INTEGER"
-        ))
+        conn.execute(text("ALTER TABLE payments ADD COLUMN IF NOT EXISTS contract_months INTEGER"))
+        conn.execute(text("ALTER TABLE payments ADD COLUMN IF NOT EXISTS notify_accounting BOOLEAN DEFAULT TRUE"))
+        conn.execute(text("ALTER TABLE payments ADD COLUMN IF NOT EXISTS contract_url VARCHAR(500)"))
         conn.commit()
 
 
