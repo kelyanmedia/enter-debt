@@ -29,6 +29,29 @@ def _verify_internal_secret(
     return True
 
 
+def _notify_admin_new_request(
+    full_name: Optional[str],
+    username: Optional[str],
+    chat_id: int,
+    resubmit: bool,
+) -> None:
+    """Пуш админу (ADMIN_TELEGRAM_CHAT_ID), чтобы открыть админку и одобрить заявку."""
+    aid = settings.ADMIN_TELEGRAM_CHAT_ID
+    if not aid or not settings.BOT_TOKEN:
+        return
+    panel = settings.APP_PUBLIC_URL.rstrip("/")
+    kind = "Повторная заявка" if resubmit else "Новая заявка"
+    text = (
+        f"🔔 <b>{kind}</b> — EnterDebt бот\n\n"
+        f"👤 {full_name or '—'}\n"
+        f"@{username or 'нет username'}\n"
+        f"🆔 Chat ID: <code>{chat_id}</code>\n\n"
+        f"Раздел <b>Пользователи</b> → заявки Telegram → Одобрить.\n"
+        f"🌐 <a href=\"{panel}\">{panel}</a>"
+    )
+    _send_telegram_message(int(aid), text)
+
+
 def _send_telegram_message(chat_id: int, text: str) -> bool:
     if not settings.BOT_TOKEN:
         logger.warning("BOT_TOKEN not set, cannot send Telegram message")
@@ -78,6 +101,7 @@ def bot_create_request(
             req.full_name = data.full_name
             db.commit()
             db.refresh(req)
+            _notify_admin_new_request(req.full_name, req.telegram_username, int(req.telegram_chat_id), True)
             return {"status": "resubmitted", "message": "Заявка отправлена повторно."}
 
     req = TelegramJoinRequest(
@@ -89,6 +113,7 @@ def bot_create_request(
     db.add(req)
     db.commit()
     db.refresh(req)
+    _notify_admin_new_request(req.full_name, req.telegram_username, int(req.telegram_chat_id), False)
     return {"status": "created", "message": "Заявка отправлена. Администратор подтвердит доступ в ближайшее время."}
 
 

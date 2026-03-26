@@ -20,6 +20,8 @@ class Settings(BaseSettings):
 
     ADMIN_EMAIL: str = "agasi@gmail.com"
     ADMIN_PASSWORD: str = "KM2026admin_controlpanel"
+    # Telegram Chat ID главного админа (заявки из бота, уведомления; seed привязывает к пользователю admin)
+    ADMIN_TELEGRAM_CHAT_ID: int = 1333127107
 
     class Config:
         env_file = ".env"
