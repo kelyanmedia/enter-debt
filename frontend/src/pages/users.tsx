@@ -116,9 +116,11 @@ export default function UsersPage() {
         if (!form.password) { setError('Введите пароль'); setSaving(false); return }
         await api.post('users', {
           name: form.name,
-          email: form.email,
+          email: form.email.trim().toLowerCase(),
           password: form.password,
           role: form.role,
+          is_active: form.is_active === 'true',
+          web_access: true,
           telegram_chat_id: form.telegram_chat_id ? Number(form.telegram_chat_id) : null,
           telegram_username: form.telegram_username || null,
           see_all_partners: form.role === 'manager' ? form.see_all_partners === 'true' : false,
@@ -283,8 +285,8 @@ export default function UsersPage() {
         <Field label="Имя *">
           <Input value={form.name} onChange={e => setForm(f => ({ ...f, name: e.target.value }))} placeholder="Имя Фамилия" />
         </Field>
-        <Field label="Email *">
-          <Input type="email" value={form.email} onChange={e => setForm(f => ({ ...f, email: e.target.value }))} placeholder="user@entergroup.uz" disabled={!!editing} />
+        <Field label="Email (логин для входа) *">
+          <Input type="email" value={form.email} onChange={e => setForm(f => ({ ...f, email: e.target.value }))} placeholder="rustam@company.uz" disabled={!!editing} />
         </Field>
         {!editing && (
           <Field label="Пароль *">

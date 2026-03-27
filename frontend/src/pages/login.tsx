@@ -33,8 +33,12 @@ export default function LoginPage() {
       router.push('/')
     } catch (err: any) {
       const status = err?.response?.status
+      const detail = err?.response?.data?.detail
+      const msg = typeof detail === 'string' ? detail : Array.isArray(detail) ? detail.map((x: { msg?: string }) => x?.msg).filter(Boolean).join(' ') : ''
       if (status === 500 || status === 503 || !status) {
         setError('Сервер недоступен. Попробуйте позже.')
+      } else if (msg) {
+        setError(msg)
       } else {
         setError('Неверный email или пароль')
       }
@@ -60,14 +64,18 @@ export default function LoginPage() {
 
         <form onSubmit={handleSubmit}>
           <div style={{ marginBottom: 14 }}>
-            <label style={{ display: 'block', fontSize: 11, fontWeight: 600, color: '#8a8fa8', textTransform: 'uppercase', letterSpacing: '.05em', marginBottom: 5 }}>Email</label>
+            <label style={{ display: 'block', fontSize: 11, fontWeight: 600, color: '#8a8fa8', textTransform: 'uppercase', letterSpacing: '.05em', marginBottom: 5 }}>Email (логин)</label>
             <input
               type="text"
               value={email}
               onChange={e => setEmail(e.target.value)}
               placeholder="email@example.com"
+              autoComplete="username"
               style={{ width: '100%', border: '1px solid #e8e9ef', borderRadius: 9, padding: '10px 13px', fontSize: 14, outline: 'none', color: '#1a1d23', boxSizing: 'border-box' }}
             />
+            <div style={{ fontSize: 11, color: '#8a8fa8', marginTop: 6, lineHeight: 1.4 }}>
+              Используйте тот же email, что указан при создании пользователя (не имя).
+            </div>
           </div>
           <div style={{ marginBottom: 16 }}>
             <label style={{ display: 'block', fontSize: 11, fontWeight: 600, color: '#8a8fa8', textTransform: 'uppercase', letterSpacing: '.05em', marginBottom: 5 }}>Пароль</label>

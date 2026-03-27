@@ -1,11 +1,12 @@
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
+from sqlalchemy import func
 from typing import List
 from app.db.database import get_db
 from app.models.user import User
 from app.models.partner import Partner
 from app.schemas.schemas import UserOut, UserCreate, UserUpdate, AssignedPartnersBody
-from app.core.security import get_password_hash, get_current_user, require_admin
+from app.core.security import get_password_hash, get_current_user, require_admin, normalize_email
 
 router = APIRouter(prefix="/api/users", tags=["users"])
 
@@ -27,11 +28,12 @@ def managers_for_select(db: Session = Depends(get_db), current_user: User = Depe
 
 @router.post("", response_model=UserOut)
 def create_user(data: UserCreate, db: Session = Depends(get_db), _=Depends(require_admin)):
-    if db.query(User).filter(User.email == data.email).first():
+    email_norm = normalize_email(str(data.email))
+    if db.query(User).filter(func.lower(User.email) == email_norm).first():
         raise HTTPException(status_code=400, detail="Email уже зарегистрирован")
     user = User(
         name=data.name,
-        email=data.email,
+        email=email_norm,
         role=data.role,
         telegram_id=data.telegram_id,
         telegram_chat_id=data.telegram_chat_id,
@@ -56,6 +58,8 @@ def _apply_update(user: User, data: UserUpdate):
     for field, value in data.model_dump(exclude_none=True).items():
         if field == "password":
             setattr(user, "hashed_password", get_password_hash(value))
+        elif field == "email" and value is not None:
+            setattr(user, "email", normalize_email(str(value)))
         else:
             setattr(user, field, value)
 

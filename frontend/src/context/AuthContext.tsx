@@ -52,10 +52,11 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   }, [])
 
   const login = async (email: string, password: string, remember: boolean) => {
-    const r = await api.post('auth/login', { email, password })
+    const emailKey = email.trim().toLowerCase()
+    const r = await api.post('auth/login', { email: emailKey, password })
     saveToken(r.data.access_token, remember)
     if (remember) {
-      localStorage.setItem('saved_email', email)
+      localStorage.setItem('saved_email', emailKey)
     } else {
       localStorage.removeItem('saved_email')
     }

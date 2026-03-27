@@ -4,7 +4,8 @@ from pydantic import BaseModel
 from sqlalchemy.orm import Session
 from app.db.database import get_db
 from app.models.user import User
-from app.core.security import verify_password, create_access_token, get_current_user
+from sqlalchemy import func
+from app.core.security import verify_password, create_access_token, get_current_user, normalize_email
 from app.schemas.schemas import Token, UserOut
 
 router = APIRouter(prefix="/api/auth", tags=["auth"])
@@ -16,7 +17,8 @@ class LoginRequest(BaseModel):
 
 
 def authenticate_user(email: str, password: str, db: Session):
-    user = db.query(User).filter(User.email == email).first()
+    email_key = normalize_email(email)
+    user = db.query(User).filter(func.lower(User.email) == email_key).first()
     if not user or not verify_password(password, user.hashed_password):
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
