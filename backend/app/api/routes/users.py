@@ -31,6 +31,9 @@ def create_user(data: UserCreate, db: Session = Depends(get_db), _=Depends(requi
     email_norm = normalize_email(str(data.email))
     if db.query(User).filter(func.lower(User.email) == email_norm).first():
         raise HTTPException(status_code=400, detail="Email уже зарегистрирован")
+    plain = (data.password or "").strip()
+    if len(plain) < 4:
+        raise HTTPException(status_code=400, detail="Пароль: минимум 4 символа")
     user = User(
         name=data.name,
         email=email_norm,
@@ -41,7 +44,7 @@ def create_user(data: UserCreate, db: Session = Depends(get_db), _=Depends(requi
         is_active=data.is_active,
         web_access=data.web_access,
         see_all_partners=data.see_all_partners if data.role == "manager" else False,
-        hashed_password=get_password_hash(data.password),
+        hashed_password=get_password_hash(plain),
     )
     db.add(user)
     db.commit()
@@ -57,7 +60,12 @@ def create_user(data: UserCreate, db: Session = Depends(get_db), _=Depends(requi
 def _apply_update(user: User, data: UserUpdate):
     for field, value in data.model_dump(exclude_none=True).items():
         if field == "password":
-            setattr(user, "hashed_password", get_password_hash(value))
+            pv = (value or "").strip()
+            if not pv:
+                continue
+            if len(pv) < 4:
+                raise HTTPException(status_code=400, detail="Пароль: минимум 4 символа")
+            setattr(user, "hashed_password", get_password_hash(pv))
         elif field == "email" and value is not None:
             setattr(user, "email", normalize_email(str(value)))
         else:

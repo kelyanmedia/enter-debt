@@ -5,11 +5,12 @@ import { useAuth } from '@/context/AuthContext'
 import { NotificationBell } from '@/components/NotificationDrawer'
 
 const NAV = [
-  { href: '/', label: 'Дашборд', icon: '▦' },
-  { href: '/ceo', label: 'CEO Dashboard', icon: '📊' },
-  { href: '/payments', label: 'Проекты', icon: '₽', badge: 'overdue' },
-  { href: '/partners', label: 'Партнёры', icon: '🤝' },
+  { href: '/', label: 'Дашборд', icon: '▦', managerHidden: true },
+  { href: '/ceo', label: 'CEO Dashboard', icon: '📊', managerHidden: true },
   { href: '/debitor', label: 'Дебиторка', icon: '📒' },
+  { href: '/payments', label: 'Проекты', icon: '📁', badge: 'overdue' },
+  { href: '/partners', label: 'Партнёры', icon: '🤝' },
+  { href: '/profile', label: 'Профиль', icon: '👤' },
   { href: '/users', label: 'Пользователи', icon: '👥', adminOnly: true },
   { href: '/notifications', label: 'Уведомления', icon: '🔔' },
   { href: '/archive', label: 'Архив', icon: '🗄️', adminOnly: true },
@@ -52,7 +53,11 @@ export default function Layout({ children }: { children: ReactNode }) {
         {/* Nav */}
         <nav style={{ padding: '14px 10px', flex: 1 }}>
           <div style={{ fontSize: 10, fontWeight: 600, color: '#8a8fa8', letterSpacing: '.07em', textTransform: 'uppercase', padding: '6px 10px 8px' }}>Меню</div>
-          {NAV.filter(n => !n.adminOnly || user.role === 'admin').map(n => {
+          {NAV.filter(n => {
+            if (n.adminOnly && user.role !== 'admin') return false
+            if (n.managerHidden && user.role === 'manager') return false
+            return true
+          }).map(n => {
             const active = router.pathname === n.href
             return (
               <Link key={n.href} href={n.href} style={{ textDecoration: 'none' }}>

@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import dynamic from 'next/dynamic'
 import Link from 'next/link'
+import { useRouter } from 'next/router'
 import Layout from '@/components/Layout'
 import { PageHeader, Card } from '@/components/ui'
 import { CeoEditPencil, CeoMetricEditModal } from '@/components/CeoMetricEditor'
@@ -172,8 +173,13 @@ function CeoCard({
 const YEAR_OPTIONS = Array.from({ length: 8 }, (_, i) => new Date().getFullYear() - i)
 
 export default function CeoDashboardPage() {
-  const { user } = useAuth()
+  const { user, loading } = useAuth()
+  const router = useRouter()
   const isAdmin = user?.role === 'admin'
+
+  useEffect(() => {
+    if (!loading && user && user.role === 'manager') router.replace('/')
+  }, [user, loading, router])
 
   const [stats, setStats] = useState<CeoStats | null>(null)
   const [turnover, setTurnover] = useState<TurnoverPoint[]>([])
@@ -229,6 +235,8 @@ export default function CeoDashboardPage() {
       : editMetric === 'turnover'
         ? turnoverYear ?? new Date().getFullYear()
         : ltvYear ?? new Date().getFullYear()
+
+  if (loading || !user || user.role === 'manager') return null
 
   return (
     <Layout>

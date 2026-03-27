@@ -18,7 +18,12 @@ def normalize_email(email: str) -> str:
 
 
 def verify_password(plain_password: str, hashed_password: str) -> bool:
-    return pwd_context.verify(plain_password, hashed_password)
+    if not plain_password or not hashed_password:
+        return False
+    try:
+        return pwd_context.verify(plain_password, hashed_password)
+    except (ValueError, TypeError):
+        return False
 
 
 def get_password_hash(password: str) -> str:
@@ -62,4 +67,11 @@ def require_admin(current_user=Depends(get_current_user)):
 def require_manager_or_admin(current_user=Depends(get_current_user)):
     if current_user.role not in ("admin", "manager"):
         raise HTTPException(status_code=403, detail="Manager or admin access required")
+    return current_user
+
+
+def require_admin_or_accountant(current_user=Depends(get_current_user)):
+    """CEO Dashboard и агрегированная аналитика — только админ и бухгалтерия, не менеджеры."""
+    if current_user.role not in ("admin", "accountant"):
+        raise HTTPException(status_code=403, detail="Доступ запрещён")
     return current_user

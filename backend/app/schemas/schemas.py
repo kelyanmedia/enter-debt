@@ -15,6 +15,14 @@ class TokenData(BaseModel):
     user_id: Optional[int] = None
 
 
+class ProfileSelfUpdate(BaseModel):
+    """Смена своего email и/или пароля; текущий пароль обязателен."""
+
+    current_password: str
+    email: EmailStr
+    new_password: Optional[str] = None
+
+
 # ── USERS ─────────────────────────────────────────────────────────────────────
 class UserBase(BaseModel):
     name: str

@@ -20,7 +20,7 @@ from app.schemas.schemas import (
     CeoClientHistoryPoint,
     CeoOverridePut,
 )
-from app.core.security import get_current_user, require_admin
+from app.core.security import get_current_user, require_admin, require_admin_or_accountant
 from app.core.access import accessible_partner_ids, filter_payments_query, filter_partners_query
 from app.models.user import User
 
@@ -132,7 +132,7 @@ def get_dashboard(
     date_from: Optional[date] = None,
     date_to: Optional[date] = None,
     db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_user),
+    current_user: User = Depends(require_admin_or_accountant),
 ):
     today = date.today()
     ids = accessible_partner_ids(db, current_user)
@@ -221,7 +221,7 @@ def get_dashboard(
 @router.get("/ceo", response_model=CeoStats)
 def get_ceo_stats(
     db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_user),
+    current_user: User = Depends(require_admin_or_accountant),
 ):
     """Все неархивные проекты (платежи) по линиям Web / SEO / PPC для CEO Dashboard."""
     ids = accessible_partner_ids(db, current_user)
@@ -249,7 +249,7 @@ def get_ceo_turnover(
     year: Optional[int] = Query(None, description="Календарный год (янв–дек). Если не задан — скользящие 12 мес."),
     months: int = 12,
     db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_user),
+    current_user: User = Depends(require_admin_or_accountant),
 ):
     """
     Оборот по месяцам: сумма оплаченных проектов (status=paid) по дате paid_at.
@@ -327,7 +327,7 @@ def _ltv_buckets_live(db: Session, current_user: User) -> List[CeoLtvBucket]:
 def get_partner_ltv(
     year: Optional[int] = Query(None, description="Год среза; ручные значения по году или live для текущего"),
     db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_user),
+    current_user: User = Depends(require_admin_or_accountant),
 ):
     """
     Распределение активных компаний по «возрасту» с даты добавления (LTV по времени сотрудничества).
@@ -358,7 +358,7 @@ def get_partner_ltv(
 def get_client_history(
     year: Optional[int] = Query(None, description="Календарный год (по умолчанию текущий)"),
     db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_user),
+    current_user: User = Depends(require_admin_or_accountant),
 ):
     """
     Число новых компаний (партнёров) по месяцам за год — по дате добавления в систему (created_at).

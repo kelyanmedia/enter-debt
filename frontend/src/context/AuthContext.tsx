@@ -15,6 +15,7 @@ interface AuthCtx {
   loading: boolean
   login: (email: string, password: string, remember: boolean) => Promise<void>
   logout: () => void
+  refreshUser: () => Promise<void>
 }
 
 const Ctx = createContext<AuthCtx>({} as AuthCtx)
@@ -53,7 +54,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
   const login = async (email: string, password: string, remember: boolean) => {
     const emailKey = email.trim().toLowerCase()
-    const r = await api.post('auth/login', { email: emailKey, password })
+    const r = await api.post('auth/login', { email: emailKey, password: password.trim() })
     saveToken(r.data.access_token, remember)
     if (remember) {
       localStorage.setItem('saved_email', emailKey)
@@ -69,7 +70,18 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     setUser(null)
   }
 
-  return <Ctx.Provider value={{ user, loading, login, logout }}>{children}</Ctx.Provider>
+  const refreshUser = async () => {
+    const token = getToken()
+    if (!token) return
+    try {
+      const r = await api.get('auth/me')
+      setUser(r.data)
+    } catch {
+      /* ignore */
+    }
+  }
+
+  return <Ctx.Provider value={{ user, loading, login, logout, refreshUser }}>{children}</Ctx.Provider>
 }
 
 export const useAuth = () => useContext(Ctx)

@@ -1,6 +1,8 @@
 import { useEffect, useState, useMemo } from 'react'
 import Link from 'next/link'
+import { useRouter } from 'next/router'
 import Layout from '@/components/Layout'
+import { useAuth } from '@/context/AuthContext'
 import { StatCard, Card, CardHeader, CardTitle, Th, Td, PartnerAvatar, Badge, statusBadge, formatDate, daysLeft, formatAmount, formatMoneyNumber } from '@/components/ui'
 import api from '@/lib/api'
 
@@ -50,6 +52,13 @@ const DATE_INPUT_STYLE: React.CSSProperties = {
 }
 
 export default function Dashboard() {
+  const { user, loading } = useAuth()
+  const router = useRouter()
+
+  useEffect(() => {
+    if (!loading && user && user.role === 'manager') router.replace('/debitor')
+  }, [user, loading, router])
+
   const [stats, setStats] = useState<Stats | null>(null)
   const [allPayments, setAllPayments] = useState<Payment[]>([])
   const [logs, setLogs] = useState<NotifLog[]>([])
@@ -73,6 +82,7 @@ export default function Dashboard() {
   }
 
   useEffect(() => {
+    if (!user || user.role === 'manager') return
     loadStats(dateFrom, dateTo)
     Promise.all([
       api.get('payments?status=overdue'),
@@ -87,7 +97,7 @@ export default function Dashboard() {
     api.get('notifications')
       .then(r => setLogs(r.data.slice(0, 5)))
       .catch(() => setLogs([]))
-  }, [])
+  }, [user])
 
   const handleDateChange = (from: string, to: string) => {
     setDateFrom(from)
@@ -108,6 +118,8 @@ export default function Dashboard() {
   const periodLabel = dateFrom || dateTo
     ? `${dateFrom ? new Date(dateFrom).toLocaleDateString('ru-RU', { day: 'numeric', month: 'short' }) : '...'} — ${dateTo ? new Date(dateTo).toLocaleDateString('ru-RU', { day: 'numeric', month: 'short' }) : '...'}`
     : 'Весь период'
+
+  if (loading || !user || user.role === 'manager') return null
 
   return (
     <Layout>
