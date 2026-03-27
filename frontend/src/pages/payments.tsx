@@ -2,7 +2,7 @@ import { useEffect, useState, useCallback } from 'react'
 import { useRouter } from 'next/router'
 import { useAuth } from '@/context/AuthContext'
 import Layout from '@/components/Layout'
-import { PageHeader, Card, Th, Td, PartnerAvatar, statusBadge, formatAmount, formatMoneyNumber, formatDate, daysLeft, BtnPrimary, BtnOutline, Modal, ConfirmModal, Field, Input, Select, Empty } from '@/components/ui'
+import { PageHeader, Card, Th, Td, PartnerAvatar, statusBadge, formatAmount, formatMoneyNumber, formatDate, daysLeft, BtnPrimary, BtnOutline, BtnIconEdit, Modal, ConfirmModal, Field, Input, Select, Empty } from '@/components/ui'
 import api from '@/lib/api'
 
 interface Partner { id: number; name: string }
@@ -378,11 +378,11 @@ export default function PaymentsPage() {
                     <Td><span style={{ fontWeight: 600, color: dl.color }}>{dl.label}</span></Td>
                     <Td>{statusBadge(p.status)}</Td>
                     <Td>
-                      <div style={{ display: 'flex', gap: 6 }} onClick={e => e.stopPropagation()}>
+                      <div style={{ display: 'flex', gap: 6, alignItems: 'center' }} onClick={e => e.stopPropagation()}>
                         {p.status !== 'paid' && (
                           <BtnOutline onClick={() => { setPostponeDays(0); setConfirmModal(p) }} style={{ padding: '5px 10px', fontSize: 12 }}>✅ Оплачено</BtnOutline>
                         )}
-                        <BtnOutline onClick={() => openEdit(p)} style={{ padding: '5px 10px', fontSize: 12 }}>✏️</BtnOutline>
+                        <BtnIconEdit onClick={() => openEdit(p)} />
                         <BtnOutline onClick={() => setDeletePaymentId(p.id)} style={{ padding: '5px 10px', fontSize: 12, color: '#e84040' }}>✕</BtnOutline>
                       </div>
                     </Td>

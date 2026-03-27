@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react'
 import { useRouter } from 'next/router'
 import Layout from '@/components/Layout'
-import { PageHeader, Card, Th, Td, statusBadge, BtnPrimary, BtnOutline, Modal, ConfirmModal, Field, Input, Select, Empty, Badge } from '@/components/ui'
+import { PageHeader, Card, Th, Td, statusBadge, BtnPrimary, BtnOutline, BtnIconEdit, Modal, ConfirmModal, Field, Input, Select, Empty, Badge } from '@/components/ui'
 import { useAuth } from '@/context/AuthContext'
 import api from '@/lib/api'
 
@@ -256,8 +256,8 @@ export default function UsersPage() {
                   </Td>
                   <Td><Badge variant={u.is_active ? 'green' : 'gray'}>{u.is_active ? 'Да' : 'Нет'}</Badge></Td>
                   <Td>
-                    <div style={{ display: 'flex', gap: 6, justifyContent: 'flex-end' }}>
-                      <BtnOutline onClick={() => openEdit(u)} style={{ padding: '5px 12px', fontSize: 12 }}>Ред.</BtnOutline>
+                    <div style={{ display: 'flex', gap: 6, justifyContent: 'flex-end', alignItems: 'center' }}>
+                      <BtnIconEdit onClick={() => openEdit(u)} />
                       {user?.role === 'admin' && user.id !== u.id && u.is_active && (
                         <BtnOutline
                           onClick={() => setDeleteUserId(u.id)}

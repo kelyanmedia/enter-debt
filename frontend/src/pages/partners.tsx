@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react'
 import { useAuth } from '@/context/AuthContext'
 import Layout from '@/components/Layout'
-import { PageHeader, Card, Th, Td, PartnerAvatar, statusBadge, BtnPrimary, BtnOutline, Modal, ConfirmModal, Field, Input, Select, Empty } from '@/components/ui'
+import { PageHeader, Card, Th, Td, PartnerAvatar, statusBadge, BtnPrimary, BtnOutline, BtnIconEdit, Modal, ConfirmModal, Field, Input, Select, Empty } from '@/components/ui'
 import api from '@/lib/api'
 
 interface User { id: number; name: string }
@@ -128,8 +128,8 @@ export default function PartnersPage() {
                   <Td>{p.manager?.name || '—'}</Td>
                   <Td>{statusBadge(p.status)}</Td>
                   <Td>
-                    <div style={{ display: 'flex', gap: 6 }}>
-                      <BtnOutline onClick={() => openEdit(p)} style={{ padding: '5px 12px', fontSize: 12 }}>Ред.</BtnOutline>
+                    <div style={{ display: 'flex', gap: 6, alignItems: 'center' }}>
+                      <BtnIconEdit onClick={() => openEdit(p)} />
                       <BtnOutline onClick={() => setDeleteConfirmId(p.id)} style={{ padding: '5px 10px', fontSize: 12, color: '#e84040' }}>✕</BtnOutline>
                     </div>
                   </Td>

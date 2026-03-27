@@ -1,4 +1,4 @@
-import { ReactNode, CSSProperties, useState } from 'react'
+import { ReactNode, CSSProperties, useState, MouseEvent } from 'react'
 
 // ── Badge ─────────────────────────────────────────────────────────────────────
 
@@ -177,6 +177,59 @@ export function BtnOutline({ children, onClick, style }: { children: ReactNode; 
       background: '#fff', color: '#1a1d23', border: '1px solid #e8e9ef',
       cursor: 'pointer', fontFamily: 'inherit', ...style,
     }}>{children}</button>
+  )
+}
+
+/** Иконка карандаша для строк таблиц (партнёры, пользователи, проекты) */
+export function BtnIconEdit({
+  onClick,
+  title = 'Редактировать',
+}: {
+  onClick: (e: MouseEvent<HTMLButtonElement>) => void
+  title?: string
+}) {
+  return (
+    <button
+      type="button"
+      title={title}
+      aria-label={title}
+      onClick={onClick}
+      style={{
+        display: 'inline-flex',
+        alignItems: 'center',
+        justifyContent: 'center',
+        width: 32,
+        height: 30,
+        borderRadius: 8,
+        border: '1px solid #e8e9ef',
+        background: '#fff',
+        cursor: 'pointer',
+        color: '#64748b',
+        flexShrink: 0,
+        transition: 'background .15s, color .15s, border-color .15s, box-shadow .15s',
+        boxShadow: '0 1px 2px rgba(0,0,0,.04)',
+        fontFamily: 'inherit',
+      }}
+      onMouseEnter={e => {
+        const t = e.currentTarget
+        t.style.background = '#eff6ff'
+        t.style.color = '#2563eb'
+        t.style.borderColor = '#93c5fd'
+        t.style.boxShadow = '0 2px 6px rgba(37,99,235,.12)'
+      }}
+      onMouseLeave={e => {
+        const t = e.currentTarget
+        t.style.background = '#fff'
+        t.style.color = '#64748b'
+        t.style.borderColor = '#e8e9ef'
+        t.style.boxShadow = '0 1px 2px rgba(0,0,0,.04)'
+      }}
+    >
+      <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
+        <path d="M12 20h9" />
+        <path d="M16.5 3.5a2.121 2.121 0 0 1 3 3L7 19l-4 1 1-4L16.5 3.5z" />
+      </svg>
+    </button>
   )
 }
 
