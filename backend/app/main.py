@@ -59,6 +59,11 @@ def _migrate():
         "ALTER TABLE payment_months ADD COLUMN IF NOT EXISTS act_issued_at TIMESTAMP WITH TIME ZONE",
     ]
     for sql in migrations:
+        # Защита от случайного удаления данных
+        forbidden = any(kw in sql.upper() for kw in ("DROP", "TRUNCATE", "DELETE", "ALTER TABLE users SET"))
+        if forbidden:
+            log.error(f"MIGRATION BLOCKED (destructive SQL): {sql[:80]}")
+            continue
         try:
             with engine.connect() as conn:
                 conn.execute(text(sql))
