@@ -58,8 +58,11 @@ class AssignedPartnersBody(BaseModel):
 
 
 class UserOut(UserBase):
+    """Ответ API: email как str — в БД может быть любая строка, иначе EmailStr даёт 500 при сериализации."""
+
     id: int
     created_at: datetime
+    email: str
 
     class Config:
         from_attributes = True

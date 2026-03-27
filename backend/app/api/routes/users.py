@@ -49,11 +49,8 @@ def create_user(data: UserCreate, db: Session = Depends(get_db), _=Depends(requi
     db.add(user)
     db.commit()
     db.refresh(user)
-    try:
-        from app.services.feed_events import emit_user_created
-        emit_user_created(db, user)
-    except Exception:
-        pass
+    from app.services.feed_events import emit_user_created
+    emit_user_created(user.id, user.name, user.email)
     return user
 
 

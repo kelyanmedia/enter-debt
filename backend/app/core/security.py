@@ -70,6 +70,13 @@ def require_manager_or_admin(current_user=Depends(get_current_user)):
     return current_user
 
 
+def require_payment_write(current_user=Depends(get_current_user)):
+    """Создание/изменение проектов (платежей): админ, менеджер, бухгалтерия."""
+    if current_user.role not in ("admin", "manager", "accountant"):
+        raise HTTPException(status_code=403, detail="Недостаточно прав для изменения проектов")
+    return current_user
+
+
 def require_admin_or_accountant(current_user=Depends(get_current_user)):
     """CEO Dashboard и агрегированная аналитика — только админ и бухгалтерия, не менеджеры."""
     if current_user.role not in ("admin", "accountant"):

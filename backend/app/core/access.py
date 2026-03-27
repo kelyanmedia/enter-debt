@@ -31,11 +31,23 @@ def accessible_partner_ids(db: Session, user: User) -> Optional[Set[int]]:
 
 
 def assert_partner_access(db: Session, user: User, partner_id: int) -> None:
+    partner = db.query(Partner).filter(Partner.id == partner_id, Partner.is_deleted == False).first()
+    if not partner:
+        raise HTTPException(status_code=404, detail="Компания не найдена или удалена")
+
     ids = accessible_partner_ids(db, user)
     if ids is None:
         return
+    if len(ids) == 0:
+        raise HTTPException(
+            status_code=403,
+            detail="Вам не назначены компании. Обратитесь к администратору, чтобы привязать партнёров к вашему профилю.",
+        )
     if partner_id not in ids:
-        raise HTTPException(status_code=404, detail="Not found")
+        raise HTTPException(
+            status_code=403,
+            detail="Нет доступа к этой компании. Выберите партнёра из списка или обратитесь к администратору.",
+        )
 
 
 def assert_payment_access(db: Session, user: User, payment: Payment) -> None:

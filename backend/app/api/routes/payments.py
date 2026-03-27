@@ -1,4 +1,5 @@
 from fastapi import APIRouter, Depends, HTTPException
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session, joinedload
 from typing import List, Optional
 from datetime import date, datetime
@@ -6,7 +7,7 @@ from app.db.database import get_db
 from app.models.payment import Payment, PaymentMonth
 from app.models.partner import Partner
 from app.schemas.schemas import PaymentOut, PaymentCreate, PaymentUpdate, PaymentConfirm
-from app.core.security import get_current_user, require_manager_or_admin
+from app.core.security import get_current_user, require_payment_write
 from app.core.access import assert_partner_access, filter_payments_query
 from app.models.user import User
 
@@ -20,10 +21,18 @@ def compute_days_until_due(p: Payment) -> Optional[int]:
     if p.deadline_date:
         return (p.deadline_date - today).days
     if p.day_of_month:
-        d = today.replace(day=p.day_of_month) if p.day_of_month >= today.day else \
-            (today.replace(month=today.month % 12 + 1, day=p.day_of_month) if today.month < 12
-             else today.replace(year=today.year + 1, month=1, day=p.day_of_month))
-        return (d - today).days
+        try:
+            dom = int(p.day_of_month)
+            if dom < 1 or dom > 31:
+                return None
+            d = today.replace(day=dom) if dom >= today.day else (
+                today.replace(month=today.month % 12 + 1, day=dom)
+                if today.month < 12
+                else today.replace(year=today.year + 1, month=1, day=dom)
+            )
+            return (d - today).days
+        except (ValueError, OverflowError):
+            return None
     return None
 
 
@@ -84,18 +93,25 @@ def get_payment(payment_id: int, db: Session = Depends(get_db), current_user: Us
 def create_payment(
     data: PaymentCreate,
     db: Session = Depends(get_db),
-    current_user: User = Depends(require_manager_or_admin),
+    current_user: User = Depends(require_payment_write),
 ):
     assert_partner_access(db, current_user, data.partner_id)
     payment = Payment(**data.model_dump())
     db.add(payment)
-    db.commit()
-    p = load_payment(db, payment.id)
     try:
-        from app.services.feed_events import emit_payment_created
-        emit_payment_created(db, p)
-    except Exception:
-        pass
+        db.commit()
+    except IntegrityError:
+        db.rollback()
+        raise HTTPException(
+            status_code=400,
+            detail="Не удалось сохранить проект (конфликт данных). Обновите страницу и выберите партнёра из списка.",
+        )
+    p = load_payment(db, payment.id)
+    if not p:
+        raise HTTPException(status_code=500, detail="Проект создан, но не удалось загрузить ответ. Обновите страницу.")
+    # emit в отдельной сессии — не трогает текущую db
+    from app.services.feed_events import emit_payment_created
+    emit_payment_created(payment.id, payment.partner_id, data.description)
     return enrich(p)
 
 
@@ -104,7 +120,7 @@ def update_payment(
     payment_id: int,
     data: PaymentUpdate,
     db: Session = Depends(get_db),
-    current_user: User = Depends(require_manager_or_admin),
+    current_user: User = Depends(require_payment_write),
 ):
     p = db.query(Payment).filter(Payment.id == payment_id).first()
     if not p:
@@ -149,7 +165,7 @@ def confirm_payment(
 def delete_payment(
     payment_id: int,
     db: Session = Depends(get_db),
-    current_user: User = Depends(require_manager_or_admin),
+    current_user: User = Depends(require_payment_write),
 ):
     p = db.query(Payment).filter(Payment.id == payment_id).first()
     if not p:

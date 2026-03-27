@@ -41,6 +41,19 @@ function currentYM() {
   return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`
 }
 
+function formatApiError(e: unknown): string {
+  const err = e as { response?: { status?: number; data?: { detail?: unknown } }; message?: string }
+  const d = err.response?.data?.detail
+  if (typeof d === 'string') return d
+  if (Array.isArray(d)) {
+    return d.map((x: { msg?: string }) => x.msg || JSON.stringify(x)).filter(Boolean).join(', ')
+  }
+  if (d != null && typeof d === 'object') return JSON.stringify(d)
+  const st = err.response?.status
+  if (st) return `Ошибка сервера (${st}). Проверьте связь с сервером или обратитесь к администратору.`
+  return err.message || 'Ошибка сохранения'
+}
+
 function generateMonths(startYM: string, count: number): string[] {
   const [y, m] = startYM.split('-').map(Number)
   return Array.from({ length: count }, (_, i) => {
@@ -131,9 +144,16 @@ export default function PaymentsPage() {
     if (user?.role === 'manager') setFilterManager(String(user.id))
   }, [user])
 
-  const openAdd = () => { setForm({ ...EMPTY_FORM }); setEditingId(null); setError(''); setModal(true) }
+  const openAdd = () => {
+    setForm({ ...EMPTY_FORM })
+    setEditingId(null)
+    setError('')
+    api.get('partners').then(r => setPartners(r.data)).catch(() => {})
+    setModal(true)
+  }
 
   const openEdit = (p: Payment) => {
+    api.get('partners').then(r => setPartners(r.data)).catch(() => {})
     setForm({
       partner_id: String(p.partner_id),
       payment_type: p.payment_type,
@@ -178,9 +198,8 @@ export default function PaymentsPage() {
       }
       setModal(false)
       load()
-    } catch (e: any) {
-      const detail = e.response?.data?.detail
-      setError(typeof detail === 'string' ? detail : detail ? JSON.stringify(detail) : 'Ошибка сохранения')
+    } catch (e: unknown) {
+      setError(formatApiError(e))
     } finally {
       setSaving(false)
     }
