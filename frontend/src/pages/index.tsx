@@ -119,10 +119,10 @@ export default function Dashboard() {
     ? `${dateFrom ? new Date(dateFrom).toLocaleDateString('ru-RU', { day: 'numeric', month: 'short' }) : '...'} — ${dateTo ? new Date(dateTo).toLocaleDateString('ru-RU', { day: 'numeric', month: 'short' }) : '...'}`
     : 'Весь период'
 
-  if (loading || !user || user.role === 'manager') return null
-
   return (
     <Layout>
+      {/* Layout обрабатывает редирект на /login и spinner; контент только для admin/accountant */}
+      {!loading && user && user.role !== 'manager' && <>
       {/* Header with global date filter */}
       <div style={{ background: '#fff', borderBottom: '1px solid #e8e9ef', padding: '0 24px', minHeight: 60, display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexShrink: 0, flexWrap: 'wrap', gap: 12 }}>
         <div>
@@ -264,6 +264,7 @@ export default function Dashboard() {
           </Card>
         </div>
       </div>
+      </>}
     </Layout>
   )
 }

@@ -236,10 +236,9 @@ export default function CeoDashboardPage() {
         ? turnoverYear ?? new Date().getFullYear()
         : ltvYear ?? new Date().getFullYear()
 
-  if (loading || !user || user.role === 'manager') return null
-
   return (
     <Layout>
+      {!loading && user && user.role !== 'manager' && <>
       <PageHeader
         title="CEO Dashboard"
         subtitle="Проекты по линиям, новые компании по месяцам, оборот и LTV."
@@ -489,6 +488,7 @@ export default function CeoDashboardPage() {
           onSaved={bumpData}
         />
       )}
+      </>}
     </Layout>
   )
 }
