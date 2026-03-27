@@ -166,7 +166,7 @@ export default function CommissionsPage() {
   const curMonth = new Date().getMonth() + 1
 
   const [year,  setYear]  = useState(curYear)
-  const [month, setMonth] = useState(0)          // 0 = все месяцы
+  const [month, setMonth] = useState(curMonth)   // текущий месяц по умолчанию
   const [filterMgr, setFilterMgr] = useState(0)  // 0 = все
 
   const [commissions, setCommissions] = useState<Commission[]>([])
@@ -191,8 +191,8 @@ export default function CommissionsPage() {
       if (filterMgr) params.manager_id = filterMgr
 
       const [cRes, sRes] = await Promise.all([
-        api.get('/api/commissions',       { params }),
-        api.get('/api/commissions/stats', { params }),
+        api.get('commissions',       { params }),
+        api.get('commissions/stats', { params }),
       ])
       setCommissions(cRes.data)
       setStats(sRes.data)
@@ -205,7 +205,7 @@ export default function CommissionsPage() {
 
   useEffect(() => {
     if (isAdmin) {
-      api.get('/api/users').then(r => setManagers(r.data.filter(
+      api.get('users').then(r => setManagers(r.data.filter(
         (u: Manager & { role: string }) => u.role === 'manager'
       )))
     }
@@ -223,15 +223,16 @@ export default function CommissionsPage() {
 
   function openEdit(c: Commission) {
     setEditItem(c)
+    const pf = (v: number | string | null) => v != null ? String(parseFloat(String(v))) : ''
     setForm({
       project_name: c.project_name,
       project_type: c.project_type,
-      project_cost: String(c.project_cost),
-      production_cost: String(c.production_cost),
-      manager_percent: String(c.manager_percent),
-      actual_payment: c.actual_payment != null ? String(c.actual_payment) : '',
-      received_amount_1: c.received_amount_1 != null ? String(c.received_amount_1) : '',
-      received_amount_2: c.received_amount_2 != null ? String(c.received_amount_2) : '',
+      project_cost: pf(c.project_cost),
+      production_cost: pf(c.production_cost),
+      manager_percent: pf(c.manager_percent),
+      actual_payment: c.actual_payment != null ? pf(c.actual_payment) : '',
+      received_amount_1: c.received_amount_1 != null ? pf(c.received_amount_1) : '',
+      received_amount_2: c.received_amount_2 != null ? pf(c.received_amount_2) : '',
       commission_paid_full: c.commission_paid_full,
       project_date: c.project_date,
       note: c.note || '',
@@ -270,9 +271,9 @@ export default function CommissionsPage() {
       if (isAdmin && form.manager_id) body.manager_id = parseInt(form.manager_id)
 
       if (editItem) {
-        await api.put(`/api/commissions/${editItem.id}`, body)
-      } else {
-        await api.post('/api/commissions', body)
+        await api.put(`commissions/${editItem.id}`, body)
+        } else {
+        await api.post('commissions', body)
       }
       setModalOpen(false)
       await load()
@@ -285,7 +286,7 @@ export default function CommissionsPage() {
 
   async function doDelete() {
     if (!deleteId) return
-    await api.delete(`/api/commissions/${deleteId}`)
+    await api.delete(`commissions/${deleteId}`)
     setDeleteId(null)
     await load()
   }
@@ -368,8 +369,8 @@ export default function CommissionsPage() {
                 </td></tr>
               )}
               {commissions.map(c => (
-                <tr key={c.id} style={{ borderBottom: '1px solid #f8fafc' }}
-                  onMouseEnter={e => (e.currentTarget.style.background = '#f8fafc')}
+                <tr key={c.id} style={{ borderBottom: '1px solid #f1f5f9', transition: 'background .12s' }}
+                  onMouseEnter={e => (e.currentTarget.style.background = '#f0fdf4')}
                   onMouseLeave={e => (e.currentTarget.style.background = '')}>
                   <Td>
                     <div style={{ fontWeight: 600, fontSize: 14, marginBottom: 3 }}>
@@ -434,24 +435,33 @@ export default function CommissionsPage() {
 
       {/* Dashboard stats */}
       {stats && (
-        <div style={{ marginTop: 32 }}>
-          <div style={{ fontSize: 15, fontWeight: 700, color: '#1e293b', marginBottom: 16 }}>
+        <div style={{ marginTop: 28 }}>
+          <div style={{ fontSize: 14, fontWeight: 700, color: '#64748b', marginBottom: 12,
+            textTransform: 'uppercase', letterSpacing: 0.5 }}>
             Итого за период
           </div>
-          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(180px, 1fr))', gap: 16 }}>
-            <StatCard label="Проектов" value={String(stats.total_projects)} />
-            <StatCard label="Общая стоимость" value={`${formatMoneyNumber(stats.total_cost)} сум`} />
-            <StatCard label="Общая прибыль"   value={`${formatMoneyNumber(stats.total_profit)} сум`}
-              subColor="#059669" />
-            <StatCard label="Доход менеджеров (план)"
-              value={`${formatMoneyNumber(stats.total_manager_income)} сум`}
-              subColor="#2563eb" featured />
-            <StatCard label="Выплачено менеджерам"
-              value={`${formatMoneyNumber(stats.total_received)} сум`}
-              subColor="#059669" />
-            <StatCard label="Долг менеджерам"
-              value={`${formatMoneyNumber(stats.total_pending)} сум`}
-              subColor={stats.total_pending > 0 ? '#ef4444' : '#059669'} />
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(6, 1fr)', gap: 12 }}>
+            {([
+              { label: 'Проектов',               val: String(stats.total_projects),                   unit: '',     color: '#1e293b',  bg: '#fff',     featured: false },
+              { label: 'Общая стоимость',         val: formatMoneyNumber(stats.total_cost),            unit: ' сум', color: '#1e293b',  bg: '#fff',     featured: false },
+              { label: 'Общая прибыль',           val: formatMoneyNumber(stats.total_profit),          unit: ' сум', color: '#059669',  bg: '#fff',     featured: false },
+              { label: 'Доход менеджеров (план)', val: formatMoneyNumber(stats.total_manager_income),  unit: ' сум', color: '#fff',     bg: '#1a6b3c',  featured: true  },
+              { label: 'Выплачено',               val: formatMoneyNumber(stats.total_received),        unit: ' сум', color: '#059669',  bg: '#fff',     featured: false },
+              { label: 'Долг менеджерам',         val: formatMoneyNumber(stats.total_pending),         unit: ' сум', color: stats.total_pending > 0 ? '#ef4444' : '#059669', bg: '#fff', featured: false },
+            ] as const).map(({ label, val, unit, color, bg, featured }) => (
+              <div key={label} style={{
+                background: bg, border: `1px solid ${featured ? 'transparent' : '#e2e8f0'}`,
+                borderRadius: 12, padding: '16px 18px',
+              }}>
+                <div style={{ fontSize: 11, fontWeight: 600, color: featured ? 'rgba(255,255,255,.7)' : '#94a3b8',
+                  marginBottom: 8, textTransform: 'uppercase', letterSpacing: 0.4 }}>{label}</div>
+                <div style={{ fontSize: 22, fontWeight: 700, color, letterSpacing: '-0.02em',
+                  whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+                  {val}<span style={{ fontSize: 13, fontWeight: 500, marginLeft: 3,
+                    color: featured ? 'rgba(255,255,255,.8)' : color }}>{unit}</span>
+                </div>
+              </div>
+            ))}
           </div>
         </div>
       )}
@@ -507,14 +517,14 @@ export default function CommissionsPage() {
           <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 14 }}>
             <Field label="Стоимость проекта">
               <Input
-                type="number" placeholder="1 000 000"
+                type="number" placeholder="1 000 000" step="1" min="0"
                 value={form.project_cost}
                 onChange={e => f('project_cost', e.target.value)}
               />
             </Field>
             <Field label="Себестоимость производства">
               <Input
-                type="number" placeholder="0"
+                type="number" placeholder="0" step="1" min="0"
                 value={form.production_cost}
                 onChange={e => f('production_cost', e.target.value)}
               />
@@ -524,14 +534,14 @@ export default function CommissionsPage() {
           <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 14 }}>
             <Field label="% менеджера (1–20)">
               <Input
-                type="number" placeholder="10" min={1} max={20}
+                type="number" placeholder="10" min={1} max={20} step="0.5"
                 value={form.manager_percent}
                 onChange={e => f('manager_percent', e.target.value)}
               />
             </Field>
             <Field label="Оплата фактическая">
               <Input
-                type="number" placeholder="0"
+                type="number" placeholder="0" step="1" min="0"
                 value={form.actual_payment}
                 onChange={e => f('actual_payment', e.target.value)}
               />
@@ -541,14 +551,14 @@ export default function CommissionsPage() {
           <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 14 }}>
             <Field label="Полученный % (1)">
               <Input
-                type="number" placeholder="0"
+                type="number" placeholder="0" step="1" min="0"
                 value={form.received_amount_1}
                 onChange={e => f('received_amount_1', e.target.value)}
               />
             </Field>
             <Field label="Полученный % (2)">
               <Input
-                type="number" placeholder="0"
+                type="number" placeholder="0" step="1" min="0"
                 value={form.received_amount_2}
                 onChange={e => f('received_amount_2', e.target.value)}
               />

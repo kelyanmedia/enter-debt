@@ -267,7 +267,7 @@ export function PageHeader({ title, subtitle, action }: { title: string; subtitl
         <div style={{ fontSize: 18, fontWeight: 700 }}>{title}</div>
         {subtitle && <div style={{ fontSize: 13, color: '#8a8fa8' }}>{subtitle}</div>}
       </div>
-      {action}
+      {action && <div style={{ marginRight: 48 }}>{action}</div>}
     </div>
   )
 }
