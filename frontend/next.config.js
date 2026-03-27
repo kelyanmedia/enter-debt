@@ -2,6 +2,7 @@
 const nextConfig = {
   reactStrictMode: false,
   allowedDevOrigins: [
+    'http://localhost:3000',
     'http://localhost:6000',
     '*.pike.replit.dev',
     '*.replit.dev',

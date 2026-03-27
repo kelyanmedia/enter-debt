@@ -2,12 +2,16 @@ import { useState, FormEvent, useEffect } from 'react'
 import { useRouter } from 'next/router'
 import { useAuth } from '@/context/AuthContext'
 
+/** Совпадает с backend/app/core/config.py (ADMIN_EMAIL / ADMIN_PASSWORD) и seed в main.py */
+const DEV_LOGIN_EMAIL = 'agasi@gmail.com'
+const DEV_LOGIN_PASSWORD = 'KM2026admin_controlpanel'
+
 export default function LoginPage() {
   const { login } = useAuth()
   const router = useRouter()
   const isDev = process.env.NODE_ENV === 'development'
-  const [email, setEmail] = useState(isDev ? 'admin@entergroup.uz' : '')
-  const [password, setPassword] = useState(isDev ? 'admin123' : '')
+  const [email, setEmail] = useState(isDev ? DEV_LOGIN_EMAIL : '')
+  const [password, setPassword] = useState(isDev ? DEV_LOGIN_PASSWORD : '')
   const [remember, setRemember] = useState(false)
   const [error, setError] = useState('')
   const [loading, setLoading] = useState(false)

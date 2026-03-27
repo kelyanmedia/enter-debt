@@ -36,7 +36,7 @@ services:
       BACKEND_URL: http://backend:8000
       NEXT_TELEMETRY_DISABLED: "1"
     ports:
-      - "6000:6000"
+      - "3000:3000"
     depends_on:
       - backend
     volumes:

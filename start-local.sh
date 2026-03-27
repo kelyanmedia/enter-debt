@@ -32,7 +32,7 @@ docker-compose -f docker-compose.local.yml ps
 echo ""
 echo "✅ Готово!"
 echo ""
-echo "   🌐 Фронтенд:  http://localhost:6000"
+echo "   🌐 Фронтенд:  http://localhost:3000"
 echo "   🔧 Backend:   http://localhost:8000"
 echo "   📦 База:      localhost:5432"
 echo ""
