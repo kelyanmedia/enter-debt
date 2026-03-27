@@ -29,14 +29,19 @@ services:
       - ./backend:/app
 
   frontend:
-    build: ./frontend
-    restart: always
+    image: node:20-alpine
+    working_dir: /app
+    command: sh -c "npm install --prefer-offline && npm run dev"
     environment:
       BACKEND_URL: http://backend:8000
+      NEXT_TELEMETRY_DISABLED: "1"
     ports:
       - "3000:3000"
     depends_on:
       - backend
+    volumes:
+      - ./frontend:/app
+      - /app/node_modules
 
 volumes:
   pgdata_local:

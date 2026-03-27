@@ -19,6 +19,7 @@ class User(Base):
     web_access = Column(Boolean, nullable=False, default=True)  # False = только Telegram (бухгалтерия)
     see_all_partners = Column(Boolean, nullable=False, default=False)  # менеджер: True = видит всех партнёров
     created_at = Column(DateTime(timezone=True), server_default=func.now())
+    feed_cleared_at = Column(DateTime(timezone=True), nullable=True)
 
     # Relationships
     managed_partners = relationship("Partner", back_populates="manager")

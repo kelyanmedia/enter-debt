@@ -46,6 +46,7 @@ def list_payments(
     status: Optional[str] = None,
     partner_id: Optional[int] = None,
     payment_type: Optional[str] = None,
+    project_category: Optional[str] = None,
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
@@ -61,6 +62,8 @@ def list_payments(
         q = q.filter(Payment.partner_id == partner_id)
     if payment_type:
         q = q.filter(Payment.payment_type == payment_type)
+    if project_category:
+        q = q.filter(Payment.project_category == project_category)
     payments = q.order_by(Payment.created_at.desc()).all()
     return [enrich(p) for p in payments]
 
@@ -88,6 +91,11 @@ def create_payment(
     db.add(payment)
     db.commit()
     p = load_payment(db, payment.id)
+    try:
+        from app.services.feed_events import emit_payment_created
+        emit_payment_created(db, p)
+    except Exception:
+        pass
     return enrich(p)
 
 

@@ -108,6 +108,7 @@ class PaymentBase(BaseModel):
     notify_accounting: bool = True
     contract_url: Optional[str] = None
     service_period: Optional[str] = None  # monthly / yearly
+    project_category: Optional[str] = None  # web | seo | ppc
 
 
 class PaymentCreate(PaymentBase):
@@ -153,6 +154,7 @@ class PaymentUpdate(BaseModel):
     notify_accounting: Optional[bool] = None
     contract_url: Optional[str] = None
     service_period: Optional[str] = None
+    project_category: Optional[str] = None
 
 
 class PaymentConfirm(BaseModel):
@@ -190,7 +192,60 @@ class DashboardStats(BaseModel):
     partners_count: int
 
 
+class CeoStats(BaseModel):
+    total_projects: int
+    web_projects: int
+    seo_projects: int
+    ppc_projects: int
+
+
+class CeoTurnoverPoint(BaseModel):
+    month: str  # YYYY-MM
+    label: str
+    amount: Decimal
+    previous_year_amount: Decimal
+
+
+class CeoTurnoverOut(BaseModel):
+    points: List[CeoTurnoverPoint]
+
+
+class CeoLtvBucket(BaseModel):
+    key: str
+    label: str
+    count: int
+
+
+class CeoLtvOut(BaseModel):
+    buckets: List[CeoLtvBucket]
+
+
+class CeoClientHistoryPoint(BaseModel):
+    month: str  # YYYY-MM
+    label: str
+    count: int
+
+
+class CeoClientHistoryOut(BaseModel):
+    year: int
+    points: List[CeoClientHistoryPoint]
+
+
 # ── NOTIFICATIONS ─────────────────────────────────────────────────────────────
+class FeedNotificationOut(BaseModel):
+    id: int
+    kind: str
+    title: str
+    subtitle: Optional[str] = None
+    entity_type: str
+    entity_id: int
+    created_at: datetime
+    read: bool = False
+
+    class Config:
+        from_attributes = True
+
+
 class NotificationLogOut(BaseModel):
     id: int
     payment_id: int

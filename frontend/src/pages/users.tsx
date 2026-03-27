@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react'
 import { useRouter } from 'next/router'
 import Layout from '@/components/Layout'
-import { PageHeader, Card, Th, Td, statusBadge, BtnPrimary, BtnOutline, Modal, Field, Input, Select, Empty, Badge } from '@/components/ui'
+import { PageHeader, Card, Th, Td, statusBadge, BtnPrimary, BtnOutline, Modal, ConfirmModal, Field, Input, Select, Empty, Badge } from '@/components/ui'
 import { useAuth } from '@/context/AuthContext'
 import api from '@/lib/api'
 
@@ -42,6 +42,8 @@ export default function UsersPage() {
   const [approveSaving, setApproveSaving] = useState(false)
   const [allPartners, setAllPartners] = useState<PartnerRow[]>([])
   const [assignedPartnerIds, setAssignedPartnerIds] = useState<number[]>([])
+  const [rejectJoinId, setRejectJoinId] = useState<number | null>(null)
+  const [deleteUserId, setDeleteUserId] = useState<number | null>(null)
 
   const loadAll = () => {
     api.get('users').then(r => setUsers(r.data))
@@ -166,15 +168,28 @@ export default function UsersPage() {
     }
   }
 
-  const rejectReq = async (id: number) => {
-    if (!confirm('Отклонить заявку? Пользователь получит уведомление в Telegram.')) return
+  const runRejectJoin = async () => {
+    if (rejectJoinId === null) return
     try {
-      await api.post(`telegram-join/${id}/reject`)
+      await api.post(`telegram-join/${rejectJoinId}/reject`)
       loadAll()
     } catch (e: any) {
       alert(e.response?.data?.detail || 'Ошибка')
     }
   }
+
+  const runDeleteUser = async () => {
+    if (deleteUserId === null) return
+    try {
+      await api.delete(`users/${deleteUserId}`)
+      loadAll()
+    } catch (e: any) {
+      const d = e.response?.data?.detail
+      alert(typeof d === 'string' ? d : d ? JSON.stringify(d) : 'Ошибка удаления')
+    }
+  }
+
+  const deleteUserTarget = deleteUserId != null ? users.find(x => x.id === deleteUserId) : null
 
   return (
     <Layout>
@@ -194,7 +209,7 @@ export default function UsersPage() {
                   </div>
                   <div style={{ display: 'flex', gap: 8 }}>
                     <BtnPrimary onClick={() => openApprove(r)} style={{ padding: '6px 14px', fontSize: 12 }}>Одобрить</BtnPrimary>
-                    <BtnOutline onClick={() => rejectReq(r.id)} style={{ padding: '6px 14px', fontSize: 12 }}>Отклонить</BtnOutline>
+                    <BtnOutline onClick={() => setRejectJoinId(r.id)} style={{ padding: '6px 14px', fontSize: 12 }}>Отклонить</BtnOutline>
                   </div>
                 </div>
               ))}
@@ -240,7 +255,19 @@ export default function UsersPage() {
                     {u.role === 'manager' ? (u.see_all_partners ? 'Все партнёры' : 'Только назначенные') : '—'}
                   </Td>
                   <Td><Badge variant={u.is_active ? 'green' : 'gray'}>{u.is_active ? 'Да' : 'Нет'}</Badge></Td>
-                  <Td><BtnOutline onClick={() => openEdit(u)} style={{ padding: '5px 12px', fontSize: 12 }}>Ред.</BtnOutline></Td>
+                  <Td>
+                    <div style={{ display: 'flex', gap: 6, justifyContent: 'flex-end' }}>
+                      <BtnOutline onClick={() => openEdit(u)} style={{ padding: '5px 12px', fontSize: 12 }}>Ред.</BtnOutline>
+                      {user?.role === 'admin' && user.id !== u.id && u.is_active && (
+                        <BtnOutline
+                          onClick={() => setDeleteUserId(u.id)}
+                          style={{ padding: '5px 10px', fontSize: 12, color: '#e84040' }}
+                        >
+                          ✕
+                        </BtnOutline>
+                      )}
+                    </div>
+                  </Td>
                 </tr>
               ))}
             </tbody>
@@ -360,6 +387,34 @@ export default function UsersPage() {
           </Field>
         )}
       </Modal>
+
+      <ConfirmModal
+        open={rejectJoinId !== null}
+        onClose={() => setRejectJoinId(null)}
+        title="Отклонить заявку?"
+        message="Пользователь получит уведомление в Telegram."
+        confirmLabel="Отклонить"
+        onConfirm={runRejectJoin}
+      />
+      <ConfirmModal
+        open={deleteUserId !== null}
+        onClose={() => setDeleteUserId(null)}
+        title="Удалить пользователя?"
+        message={
+          deleteUserTarget ? (
+            <>
+              <span style={{ display: 'block', marginBottom: 8 }}>
+                <b>{deleteUserTarget.name}</b> ({deleteUserTarget.email})
+              </span>
+              Аккаунт будет деактивирован, вход в веб-панель станет невозможен.
+            </>
+          ) : (
+            'Аккаунт будет деактивирован.'
+          )
+        }
+        confirmLabel="Удалить"
+        onConfirm={runDeleteUser}
+      />
     </Layout>
   )
 }

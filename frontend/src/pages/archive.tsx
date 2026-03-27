@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react'
 import { useRouter } from 'next/router'
 import Layout from '@/components/Layout'
-import { PageHeader, Card, Th, Td, PartnerAvatar, statusBadge, formatAmount, formatDate, BtnOutline, Empty } from '@/components/ui'
+import { PageHeader, Card, Th, Td, PartnerAvatar, statusBadge, formatMoneyNumber, formatDate, BtnOutline, ConfirmModal, Empty } from '@/components/ui'
 import api from '@/lib/api'
 import { useAuth } from '@/context/AuthContext'
 
@@ -43,6 +43,7 @@ export default function ArchivePage() {
   const [dateFrom, setDateFrom] = useState('')
   const [dateTo, setDateTo] = useState('')
   const [fetching, setFetching] = useState(false)
+  const [restorePartnerId, setRestorePartnerId] = useState<number | null>(null)
 
   useEffect(() => {
     if (!loading && user && user.role !== 'admin') router.replace('/')
@@ -69,9 +70,9 @@ export default function ArchivePage() {
 
   useEffect(() => { load() }, [tab, dateFrom, dateTo, user])
 
-  const restorePartner = async (id: number) => {
-    if (!confirm('Восстановить партнёра в активные?')) return
-    await api.post(`archive/partners/${id}/restore`)
+  const runRestorePartner = async () => {
+    if (restorePartnerId === null) return
+    await api.post(`archive/partners/${restorePartnerId}/restore`)
     load()
   }
 
@@ -89,17 +90,17 @@ export default function ArchivePage() {
     <Layout>
       <PageHeader
         title="Архив"
-        subtitle="История архивных записей — только для администратора"
+        subtitle="Два раздела: архивные проекты и архивные партнёры. Фильтр по датам — только для администратора."
       />
 
       <div style={{ padding: '22px 24px', overflowY: 'auto', flex: 1 }}>
-        {/* Tabs */}
-        <div style={{ display: 'flex', gap: 8, marginBottom: 20 }}>
-          <button style={tabStyle('payments')} onClick={() => setTab('payments')}>Платежи</button>
+        {/* Раздел: проекты | партнёры */}
+        <div style={{ display: 'flex', gap: 8, marginBottom: 20, flexWrap: 'wrap' }}>
+          <button style={tabStyle('payments')} onClick={() => setTab('payments')}>Проекты</button>
           <button style={tabStyle('partners')} onClick={() => setTab('partners')}>Партнёры</button>
         </div>
 
-        {/* Date filters */}
+        {/* Фильтр по датам (для обоих разделов) */}
         <div style={{ display: 'flex', gap: 12, alignItems: 'center', marginBottom: 20, flexWrap: 'wrap' }}>
           <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
             <label style={{ fontSize: 12, fontWeight: 600, color: '#8a8fa8', textTransform: 'uppercase', letterSpacing: '.05em' }}>С</label>
@@ -125,11 +126,11 @@ export default function ArchivePage() {
             </BtnOutline>
           )}
           <div style={{ marginLeft: 'auto', fontSize: 12, color: '#8a8fa8' }}>
-            {fetching ? 'Загрузка...' : `${tab === 'payments' ? payments.length : partners.length} записей`}
+            {fetching ? 'Загрузка...' : `${tab === 'payments' ? payments.length : partners.length} ${tab === 'payments' ? 'проектов' : 'партнёров'}`}
           </div>
         </div>
 
-        {/* Payments table */}
+        {/* Архивные проекты */}
         {tab === 'payments' && (
           <Card>
             <table style={{ width: '100%', borderCollapse: 'collapse' }}>
@@ -159,7 +160,7 @@ export default function ArchivePage() {
                     </Td>
                     <Td style={{ color: '#6b7280', maxWidth: 200 }}>{p.description}</Td>
                     <Td>{statusBadge(p.payment_type)}</Td>
-                    <Td><span style={{ fontWeight: 700 }}>{Number(p.amount).toLocaleString('ru-RU')}</span></Td>
+                    <Td><span style={{ fontWeight: 700 }}>{formatMoneyNumber(p.amount)}</span></Td>
                     <Td>{statusBadge(p.status)}</Td>
                     <Td style={{ color: '#6b7280', fontSize: 12 }}>{p.paid_at ? formatDate(p.paid_at) : '—'}</Td>
                     <Td style={{ color: '#6b7280', fontSize: 12 }}>{p.confirmed_by_user?.name || '—'}</Td>
@@ -168,11 +169,11 @@ export default function ArchivePage() {
                 ))}
               </tbody>
             </table>
-            {payments.length === 0 && !fetching && <Empty text="Архивных платежей нет" />}
+            {payments.length === 0 && !fetching && <Empty text="Архивных проектов нет" />}
           </Card>
         )}
 
-        {/* Partners table */}
+        {/* Архивные партнёры */}
         {tab === 'partners' && (
           <Card>
             <table style={{ width: '100%', borderCollapse: 'collapse' }}>
@@ -207,7 +208,7 @@ export default function ArchivePage() {
                     </Td>
                     <Td style={{ color: '#6b7280', fontSize: 12 }}>{formatDate(p.created_at)}</Td>
                     <Td>
-                      <BtnOutline onClick={() => restorePartner(p.id)} style={{ padding: '5px 12px', fontSize: 12, color: '#1a6b3c' }}>
+                      <BtnOutline onClick={() => setRestorePartnerId(p.id)} style={{ padding: '5px 12px', fontSize: 12, color: '#1a6b3c' }}>
                         ↩ Восстановить
                       </BtnOutline>
                     </Td>
@@ -219,6 +220,16 @@ export default function ArchivePage() {
           </Card>
         )}
       </div>
+
+      <ConfirmModal
+        open={restorePartnerId !== null}
+        onClose={() => setRestorePartnerId(null)}
+        title="Восстановить партнёра?"
+        message="Партнёр снова появится в списке активных."
+        confirmLabel="Восстановить"
+        danger={false}
+        onConfirm={runRestorePartner}
+      />
     </Layout>
   )
 }

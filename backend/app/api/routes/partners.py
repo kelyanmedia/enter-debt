@@ -63,6 +63,11 @@ def create_partner(data: PartnerCreate, db: Session = Depends(get_db), current_u
     db.add(partner)
     db.commit()
     db.refresh(partner)
+    try:
+        from app.services.feed_events import emit_partner_created
+        emit_partner_created(db, partner)
+    except Exception:
+        pass
     return enrich_partner(partner, db)
 
 

@@ -1,6 +1,6 @@
 import { useEffect, useState, useMemo } from 'react'
 import Layout from '@/components/Layout'
-import { StatCard, Card, CardHeader, CardTitle, Th, Td, PartnerAvatar, Badge, statusBadge, formatDate, daysLeft } from '@/components/ui'
+import { StatCard, Card, CardHeader, CardTitle, Th, Td, PartnerAvatar, Badge, statusBadge, formatDate, daysLeft, formatAmount, formatMoneyNumber } from '@/components/ui'
 import api from '@/lib/api'
 
 interface Stats {
@@ -91,8 +91,6 @@ export default function Dashboard() {
     return list
   }, [allPayments, dateFrom, dateTo])
 
-  const fmtM = (n: number) => n >= 1_000_000 ? (n / 1_000_000).toFixed(1) + 'M' : n >= 1000 ? (n / 1000).toFixed(0) + 'K' : String(n)
-
   const periodLabel = dateFrom || dateTo
     ? `${dateFrom ? new Date(dateFrom).toLocaleDateString('ru-RU', { day: 'numeric', month: 'short' }) : '...'} — ${dateTo ? new Date(dateTo).toLocaleDateString('ru-RU', { day: 'numeric', month: 'short' }) : '...'}`
     : 'Весь период'
@@ -137,7 +135,7 @@ export default function Dashboard() {
           <StatCard
             featured
             label="Дебиторка за период"
-            value={stats ? fmtM(stats.total_receivable) + ' UZS' : '—'}
+            value={stats ? formatAmount(stats.total_receivable) : '—'}
             sub={`${stats?.partners_count ?? 0} активных партнёров`}
           />
           <StatCard
@@ -155,7 +153,7 @@ export default function Dashboard() {
           <StatCard
             label="Оплачено за период"
             value={String(stats?.paid_this_month ?? '—')}
-            sub={stats ? fmtM(stats.paid_amount_this_month) + ' UZS получено' : ''}
+            sub={stats ? `${formatAmount(stats.paid_amount_this_month)} получено` : ''}
             subColor="#1a6b3c"
           />
         </div>
@@ -164,7 +162,7 @@ export default function Dashboard() {
         <div style={{ display: 'grid', gridTemplateColumns: '1fr 360px', gap: 14, marginBottom: 20 }}>
           <Card>
             <CardHeader>
-              <CardTitle>Активные платежи · <span style={{ fontWeight: 400, color: '#8a8fa8', fontSize: 12 }}>{periodLabel}</span></CardTitle>
+              <CardTitle>Активные проекты · <span style={{ fontWeight: 400, color: '#8a8fa8', fontSize: 12 }}>{periodLabel}</span></CardTitle>
               <a href="/payments" style={{ fontSize: 12, color: '#2d9b5a', fontWeight: 600, textDecoration: 'none', whiteSpace: 'nowrap' }}>Все →</a>
             </CardHeader>
             <table style={{ width: '100%', borderCollapse: 'collapse' }}>
@@ -193,7 +191,7 @@ export default function Dashboard() {
                         </div>
                       </Td>
                       <Td style={{ color: '#8a8fa8' }}>{p.description}</Td>
-                      <Td><span style={{ fontWeight: 700 }}>{Number(p.amount).toLocaleString('ru-RU')}</span></Td>
+                      <Td><span style={{ fontWeight: 700 }}>{formatMoneyNumber(p.amount)}</span></Td>
                       <Td style={{ color: '#8a8fa8', fontSize: 12 }}>{formatDate(p.created_at)}</Td>
                       <Td><span style={{ fontWeight: 600, color: dl.color }}>{dl.label}</span></Td>
                       <Td>{statusBadge(p.status)}</Td>
@@ -202,7 +200,7 @@ export default function Dashboard() {
                 })}
                 {payments.length === 0 && (
                   <tr><td colSpan={6} style={{ padding: '32px', textAlign: 'center', color: '#8a8fa8', fontSize: 13 }}>
-                    Нет активных платежей за выбранный период
+                    Нет активных проектов за выбранный период
                   </td></tr>
                 )}
               </tbody>

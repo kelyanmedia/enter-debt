@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react'
 import { useAuth } from '@/context/AuthContext'
 import Layout from '@/components/Layout'
-import { PageHeader, Card, Th, Td, PartnerAvatar, statusBadge, BtnPrimary, BtnOutline, Modal, Field, Input, Select, Empty } from '@/components/ui'
+import { PageHeader, Card, Th, Td, PartnerAvatar, statusBadge, BtnPrimary, BtnOutline, Modal, ConfirmModal, Field, Input, Select, Empty } from '@/components/ui'
 import api from '@/lib/api'
 
 interface User { id: number; name: string }
@@ -23,6 +23,7 @@ export default function PartnersPage() {
   const [form, setForm] = useState({ ...EMPTY })
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState('')
+  const [deleteConfirmId, setDeleteConfirmId] = useState<number | null>(null)
 
   const load = () => {
     const params = filterStatus ? `?status=${filterStatus}` : ''
@@ -72,9 +73,9 @@ export default function PartnersPage() {
     }
   }
 
-  const del = async (id: number) => {
-    if (!confirm('Удалить партнёра и все его платежи?')) return
-    await api.delete(`partners/${id}`)
+  const confirmDeletePartner = async () => {
+    if (deleteConfirmId === null) return
+    await api.delete(`partners/${deleteConfirmId}`)
     load()
   }
 
@@ -129,7 +130,7 @@ export default function PartnersPage() {
                   <Td>
                     <div style={{ display: 'flex', gap: 6 }}>
                       <BtnOutline onClick={() => openEdit(p)} style={{ padding: '5px 12px', fontSize: 12 }}>Ред.</BtnOutline>
-                      <BtnOutline onClick={() => del(p.id)} style={{ padding: '5px 10px', fontSize: 12, color: '#e84040' }}>✕</BtnOutline>
+                      <BtnOutline onClick={() => setDeleteConfirmId(p.id)} style={{ padding: '5px 10px', fontSize: 12, color: '#e84040' }}>✕</BtnOutline>
                     </div>
                   </Td>
                 </tr>
@@ -190,6 +191,15 @@ export default function PartnersPage() {
           <Input value={form.comment} onChange={e => setForm(f => ({ ...f, comment: e.target.value }))} placeholder="Любые заметки..." />
         </Field>
       </Modal>
+
+      <ConfirmModal
+        open={deleteConfirmId !== null}
+        onClose={() => setDeleteConfirmId(null)}
+        title="Удалить партнёра?"
+        message="Будут удалены партнёр и все связанные платежи. Это действие нельзя отменить."
+        confirmLabel="Удалить"
+        onConfirm={confirmDeletePartner}
+      />
     </Layout>
   )
 }

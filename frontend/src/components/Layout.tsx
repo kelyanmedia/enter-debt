@@ -2,10 +2,12 @@ import { ReactNode, useEffect } from 'react'
 import { useRouter } from 'next/router'
 import Link from 'next/link'
 import { useAuth } from '@/context/AuthContext'
+import { NotificationBell } from '@/components/NotificationDrawer'
 
 const NAV = [
   { href: '/', label: 'Дашборд', icon: '▦' },
-  { href: '/payments', label: 'Платежи', icon: '₽', badge: 'overdue' },
+  { href: '/ceo', label: 'CEO Dashboard', icon: '📊' },
+  { href: '/payments', label: 'Проекты', icon: '₽', badge: 'overdue' },
   { href: '/partners', label: 'Партнёры', icon: '🤝' },
   { href: '/users', label: 'Пользователи', icon: '👥', adminOnly: true },
   { href: '/notifications', label: 'Уведомления', icon: '🔔' },
@@ -83,7 +85,10 @@ export default function Layout({ children }: { children: ReactNode }) {
       </aside>
 
       {/* Main */}
-      <div style={{ flex: 1, display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
+      <div style={{ flex: 1, display: 'flex', flexDirection: 'column', overflow: 'hidden', position: 'relative' }}>
+        <div style={{ position: 'fixed', top: 12, right: 20, zIndex: 50 }}>
+          <NotificationBell />
+        </div>
         {children}
       </div>
     </div>

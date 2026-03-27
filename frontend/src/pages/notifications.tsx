@@ -17,7 +17,7 @@ export default function NotificationsPage() {
 
   return (
     <Layout>
-      <PageHeader title="Уведомления" subtitle="Лог всех отправленных Telegram-пушей" />
+      <PageHeader title="Уведомления" subtitle="Лог Telegram-пушей по платежам. События (новые проекты, компании, сотрудники) — в колокольчике справа вверху." />
       <div style={{ padding: '22px 24px', overflowY: 'auto', flex: 1 }}>
         <Card>
           <table style={{ width: '100%', borderCollapse: 'collapse' }}>

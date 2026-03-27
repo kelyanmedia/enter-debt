@@ -1,4 +1,4 @@
-import { ReactNode, CSSProperties } from 'react'
+import { ReactNode, CSSProperties, useState } from 'react'
 
 // ── Badge ─────────────────────────────────────────────────────────────────────
 
@@ -35,7 +35,8 @@ export function statusBadge(status: string) {
     admin:    { label: 'Администратор', variant: 'green' },
     manager:  { label: 'Менеджер',  variant: 'blue'  },
     accountant:{ label: 'Бухгалтерия', variant: 'gray' },
-    regular:  { label: 'Регулярный', variant: 'blue' },
+    regular:   { label: 'Рекуррентный', variant: 'blue' },
+    recurring: { label: 'Рекуррентный', variant: 'blue' },
     one_time: { label: 'Разовый',   variant: 'gray'  },
     service:  { label: 'Сервисный', variant: 'amber' },
   }
@@ -62,6 +63,94 @@ export function Modal({ open, onClose, title, children, footer }: {
         </div>
         <div style={{ padding: '20px 24px', overflowY: 'auto', flex: 1 }}>{children}</div>
         {footer && <div style={{ padding: '16px 24px', borderTop: '1px solid #e8e9ef', display: 'flex', justifyContent: 'flex-end', gap: 10, flexShrink: 0 }}>{footer}</div>}
+      </div>
+    </div>
+  )
+}
+
+// ── ConfirmModal (centered; replaces window.confirm) ──────────────────────────
+
+export function ConfirmModal({
+  open,
+  onClose,
+  title,
+  message,
+  confirmLabel = 'Подтвердить',
+  cancelLabel = 'Отмена',
+  onConfirm,
+  danger = true,
+}: {
+  open: boolean
+  onClose: () => void
+  title: string
+  message: ReactNode
+  confirmLabel?: string
+  cancelLabel?: string
+  onConfirm: () => void | Promise<void>
+  danger?: boolean
+}) {
+  const [busy, setBusy] = useState(false)
+  if (!open) return null
+  const confirmBg = danger ? '#e84040' : '#1f7a46'
+  const handleConfirm = async () => {
+    setBusy(true)
+    try {
+      await onConfirm()
+      onClose()
+    } finally {
+      setBusy(false)
+    }
+  }
+  return (
+    <div
+      onClick={e => { if (e.target === e.currentTarget && !busy) onClose() }}
+      style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,.4)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 200, padding: 16 }}
+    >
+      <div
+        onClick={e => e.stopPropagation()}
+        role="dialog"
+        aria-modal="true"
+        style={{
+          background: '#fff',
+          borderRadius: 16,
+          width: 420,
+          maxWidth: '100%',
+          boxShadow: '0 12px 48px rgba(0,0,0,.22)',
+          padding: '24px 24px 20px',
+        }}
+      >
+        <div style={{ fontSize: 16, fontWeight: 700, marginBottom: 10, color: '#1a1d23' }}>{title}</div>
+        <div style={{ fontSize: 14, color: '#4b5563', lineHeight: 1.55, marginBottom: 22 }}>{message}</div>
+        <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 10, flexWrap: 'wrap' }}>
+          <BtnOutline
+            onClick={() => { if (!busy) onClose() }}
+            style={{ opacity: busy ? 0.65 : 1, pointerEvents: busy ? 'none' : 'auto' }}
+          >
+            {cancelLabel}
+          </BtnOutline>
+          <button
+            type="button"
+            disabled={busy}
+            onClick={handleConfirm}
+            style={{
+              display: 'inline-flex',
+              alignItems: 'center',
+              gap: 6,
+              padding: '8px 16px',
+              borderRadius: 9,
+              fontSize: 13,
+              fontWeight: 600,
+              background: confirmBg,
+              color: '#fff',
+              border: 'none',
+              cursor: busy ? 'not-allowed' : 'pointer',
+              opacity: busy ? 0.75 : 1,
+              fontFamily: 'inherit',
+            }}
+          >
+            {busy ? '…' : confirmLabel}
+          </button>
+        </div>
       </div>
     </div>
   )
@@ -194,8 +283,14 @@ export function PartnerAvatar({ name }: { name: string }) {
   )
 }
 
+/** Группы разрядов с пробелами (ru-RU), без валюты */
+export function formatMoneyNumber(n: number | string) {
+  return Number(n).toLocaleString('ru-RU').replace(/[\u00A0\u202F]/g, ' ')
+}
+
+/** Полная сумма: «100 000 000 Uzs» */
 export function formatAmount(n: number | string) {
-  return Number(n).toLocaleString('ru-RU') + ' UZS'
+  return `${formatMoneyNumber(n)} Uzs`
 }
 
 export function formatDate(d?: string | null) {

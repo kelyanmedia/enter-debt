@@ -28,6 +28,7 @@ class Payment(Base):
     notify_accounting = Column(Boolean, default=True)
     contract_url = Column(String(500), nullable=True)
     service_period = Column(String(20), nullable=True)  # monthly / yearly — for service_expiry type
+    project_category = Column(String(20), nullable=True)  # web | seo | ppc — линия для CEO Dashboard
     created_at = Column(DateTime(timezone=True), server_default=func.now())
     updated_at = Column(DateTime(timezone=True), onupdate=func.now())
 

@@ -1,7 +1,8 @@
 import { useEffect, useState, useCallback } from 'react'
+import { useRouter } from 'next/router'
 import { useAuth } from '@/context/AuthContext'
 import Layout from '@/components/Layout'
-import { PageHeader, Card, Th, Td, PartnerAvatar, statusBadge, formatAmount, formatDate, daysLeft, BtnPrimary, BtnOutline, Modal, Field, Input, Select, Empty } from '@/components/ui'
+import { PageHeader, Card, Th, Td, PartnerAvatar, statusBadge, formatAmount, formatMoneyNumber, formatDate, daysLeft, BtnPrimary, BtnOutline, Modal, ConfirmModal, Field, Input, Select, Empty } from '@/components/ui'
 import api from '@/lib/api'
 
 interface Partner { id: number; name: string }
@@ -16,6 +17,7 @@ interface Payment {
   payment_type: string; status: string; deadline_date?: string; day_of_month?: number
   contract_months?: number; remind_days_before: number; created_at: string; postponed_until?: string
   notify_accounting: boolean; contract_url?: string; service_period?: string
+  project_category?: string | null
   partner: { id: number; name: string; manager?: { id: number; name: string } }
   months?: PaymentMonth[]
 }
@@ -23,7 +25,7 @@ interface Payment {
 const EMPTY_FORM = {
   partner_id: '', payment_type: 'recurring', description: '', amount: '',
   day_of_month: '', deadline_date: '', remind_days_before: '3', contract_months: '',
-  notify_accounting: true, contract_url: '', service_period: 'yearly'
+  notify_accounting: true, contract_url: '', service_period: 'yearly', project_category: '' as string,
 }
 
 const MONTHS_RU = ['Январь','Февраль','Март','Апрель','Май','Июнь',
@@ -49,12 +51,21 @@ function generateMonths(startYM: string, count: number): string[] {
   })
 }
 
+function lineBadge(cat?: string | null) {
+  if (cat === 'web') return <span style={{ fontSize: 11, fontWeight: 700, color: '#2563eb', background: '#eff4ff', padding: '3px 8px', borderRadius: 6 }}>Web</span>
+  if (cat === 'seo') return <span style={{ fontSize: 11, fontWeight: 700, color: '#b45309', background: '#fff8ee', padding: '3px 8px', borderRadius: 6 }}>SEO</span>
+  if (cat === 'ppc') return <span style={{ fontSize: 11, fontWeight: 700, color: '#6b7280', background: '#f3f4f6', padding: '3px 8px', borderRadius: 6 }}>PPC</span>
+  return <span style={{ color: '#c5c8d4', fontSize: 12 }}>—</span>
+}
+
 export default function PaymentsPage() {
   const { user } = useAuth()
+  const router = useRouter()
   const [payments, setPayments] = useState<Payment[]>([])
   const [partners, setPartners] = useState<Partner[]>([])
   const [filterStatus, setFilterStatus] = useState('')
   const [filterType, setFilterType] = useState('')
+  const [filterCategory, setFilterCategory] = useState('')
   const [filterManager, setFilterManager] = useState('')
   const [users, setUsers] = useState<User[]>([])
   const [modal, setModal] = useState(false)
@@ -74,23 +85,45 @@ export default function PaymentsPage() {
   const [confirmingMonth, setConfirmingMonth] = useState<number | null>(null)
   const [confirmingAct, setConfirmingAct] = useState<number | null>(null)
   const [monthSaved, setMonthSaved] = useState<number | null>(null)
+  const [deletePaymentId, setDeletePaymentId] = useState<number | null>(null)
+  const [deleteMonthId, setDeleteMonthId] = useState<number | null>(null)
 
   const load = useCallback(() => {
     const params = new URLSearchParams()
     if (filterStatus) params.append('status', filterStatus)
     if (filterType) params.append('payment_type', filterType)
+    if (filterCategory) params.append('project_category', filterCategory)
     api.get(`payments?${params}`).then(r => {
       let data = r.data
       if (filterManager) data = data.filter((p: Payment) => String(p.partner?.manager?.id) === filterManager)
       setPayments(data)
     })
-  }, [filterStatus, filterType, filterManager])
+  }, [filterStatus, filterType, filterCategory, filterManager])
+
+  useEffect(() => {
+    if (!router.isReady) return
+    const raw = router.query.category
+    const c = Array.isArray(raw) ? raw[0] : raw
+    if (typeof c === 'string' && ['web', 'seo', 'ppc'].includes(c)) setFilterCategory(c)
+    else if (!c) setFilterCategory('')
+  }, [router.isReady, router.query.category])
+
+  const setCategoryFilter = (v: string) => {
+    setFilterCategory(v)
+    const q: Record<string, string | string[] | undefined> = { ...router.query }
+    if (v) q.category = v
+    else delete q.category
+    router.replace({ pathname: '/payments', query: q }, undefined, { shallow: true })
+  }
 
   useEffect(() => {
     load()
+  }, [load])
+
+  useEffect(() => {
     api.get('partners').then(r => setPartners(r.data))
     api.get('users/managers-for-select').then(r => setUsers(r.data)).catch(() => {})
-  }, [filterStatus, filterType, filterManager])
+  }, [])
 
   useEffect(() => {
     if (user?.role === 'manager') setFilterManager(String(user.id))
@@ -111,6 +144,7 @@ export default function PaymentsPage() {
       notify_accounting: p.notify_accounting ?? true,
       contract_url: p.contract_url || '',
       service_period: p.service_period || 'yearly',
+      project_category: p.project_category || '',
     })
     setEditingId(p.id)
     setError('')
@@ -133,6 +167,7 @@ export default function PaymentsPage() {
         notify_accounting: form.notify_accounting,
         contract_url: form.contract_url || null,
         service_period: form.payment_type === 'service_expiry' ? form.service_period : null,
+        project_category: form.project_category || null,
       }
       if (editingId) {
         await api.put(`payments/${editingId}`, payload)
@@ -155,8 +190,9 @@ export default function PaymentsPage() {
     load()
   }
 
-  const deletePayment = async (id: number) => {
-    if (!confirm('Удалить проект?')) return
+  const runDeletePayment = async () => {
+    if (deletePaymentId === null) return
+    const id = deletePaymentId
     await api.delete(`payments/${id}`)
     load()
     if (drawer?.id === id) setDrawer(null)
@@ -227,10 +263,10 @@ export default function PaymentsPage() {
     }
   }
 
-  const deleteMonth = async (monthId: number) => {
-    if (!drawer || !confirm('Удалить месяц?')) return
-    await api.delete(`payments/${drawer.id}/months/${monthId}`)
-    setDrawerMonths(prev => prev.filter(m => m.id !== monthId))
+  const runDeleteMonth = async () => {
+    if (!drawer || deleteMonthId === null) return
+    await api.delete(`payments/${drawer.id}/months/${deleteMonthId}`)
+    setDrawerMonths(prev => prev.filter(m => m.id !== deleteMonthId))
   }
 
   const bulkAddMonths = async () => {
@@ -283,6 +319,12 @@ export default function PaymentsPage() {
             <option value="one_time">Разовый</option>
             <option value="service_expiry">Сервисный</option>
           </Select>
+          <Select value={filterCategory} onChange={e => setCategoryFilter(e.target.value)} style={{ maxWidth: 180 }}>
+            <option value="">Все линии</option>
+            <option value="web">Web</option>
+            <option value="seo">SEO</option>
+            <option value="ppc">PPC</option>
+          </Select>
         </div>
 
         <Card>
@@ -291,6 +333,7 @@ export default function PaymentsPage() {
               <tr>
                 <Th>Партнёр</Th>
                 <Th>Услуга</Th>
+                <Th>Линия</Th>
                 <Th>Тип</Th>
                 <Th>Сумма</Th>
                 <Th>Окончание договора</Th>
@@ -326,8 +369,9 @@ export default function PaymentsPage() {
                       </div>
                     </Td>
                     <Td style={{ color: '#8a8fa8' }}>{p.description}</Td>
+                    <Td>{lineBadge(p.project_category)}</Td>
                     <Td>{statusBadge(p.payment_type)}</Td>
-                    <Td><span style={{ fontWeight: 700 }}>{Number(p.amount).toLocaleString('ru-RU')}</span></Td>
+                    <Td><span style={{ fontWeight: 700 }}>{formatMoneyNumber(p.amount)}</span></Td>
                     <Td>{p.deadline_date ? formatDate(p.deadline_date) : p.day_of_month ? `${p.day_of_month}-е число` : '—'}</Td>
                     <Td><span style={{ fontWeight: 600, color: dl.color }}>{dl.label}</span></Td>
                     <Td>{statusBadge(p.status)}</Td>
@@ -337,7 +381,7 @@ export default function PaymentsPage() {
                           <BtnOutline onClick={() => { setPostponeDays(0); setConfirmModal(p) }} style={{ padding: '5px 10px', fontSize: 12 }}>✅ Оплачено</BtnOutline>
                         )}
                         <BtnOutline onClick={() => openEdit(p)} style={{ padding: '5px 10px', fontSize: 12 }}>✏️</BtnOutline>
-                        <BtnOutline onClick={() => deletePayment(p.id)} style={{ padding: '5px 10px', fontSize: 12, color: '#e84040' }}>✕</BtnOutline>
+                        <BtnOutline onClick={() => setDeletePaymentId(p.id)} style={{ padding: '5px 10px', fontSize: 12, color: '#e84040' }}>✕</BtnOutline>
                       </div>
                     </Td>
                   </tr>
@@ -375,10 +419,11 @@ export default function PaymentsPage() {
                 </div>
                 <div style={{ fontSize: 13, color: '#444', marginTop: 8 }}>{drawer.description}</div>
                 <div style={{ display: 'flex', gap: 8, marginTop: 8, flexWrap: 'wrap', alignItems: 'center' }}>
+                  {lineBadge(drawer.project_category)}
                   {statusBadge(drawer.payment_type)}
                   {statusBadge(drawer.status)}
                   <span style={{ fontWeight: 700, fontSize: 14, color: '#1a6b3c' }}>
-                    {Number(drawer.amount).toLocaleString('ru-RU')} UZS
+                    {formatAmount(drawer.amount)}
                   </span>
                   {drawer.contract_months && (
                     <span style={{ fontSize: 12, background: '#eef2ff', color: '#4361ee', borderRadius: 6, padding: '2px 8px', fontWeight: 600 }}>
@@ -582,7 +627,7 @@ export default function PaymentsPage() {
                     </div>
                     <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-end', gap: 6, flexShrink: 0 }}>
                       <span style={{ fontWeight: 700, fontSize: 13, color: isPaid ? '#1a6b3c' : '#1a1d23' }}>
-                        {Number(effAmount).toLocaleString('ru-RU')}
+                        {formatMoneyNumber(effAmount)}
                       </span>
                       <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6, justifyContent: 'flex-end' }}>
                         {!actOk && (
@@ -611,7 +656,7 @@ export default function PaymentsPage() {
                       )}
                       <button
                         type="button"
-                        onClick={() => deleteMonth(m.id)}
+                        onClick={() => setDeleteMonthId(m.id)}
                         style={{
                           background: 'none', border: 'none', color: '#ccc',
                           fontSize: 15, cursor: 'pointer', lineHeight: 1, padding: 2,
@@ -628,7 +673,7 @@ export default function PaymentsPage() {
               <div style={{ padding: '14px 24px', borderTop: '1px solid #e8e9ef', display: 'flex', justifyContent: 'space-between', fontSize: 13 }}>
                 <span style={{ color: '#8a8fa8' }}>Итого оплачено</span>
                 <span style={{ fontWeight: 700, color: '#1a6b3c' }}>
-                  {drawerMonths.filter(m => m.status === 'paid').reduce((s, m) => s + Number(m.amount ?? drawer.amount), 0).toLocaleString('ru-RU')} UZS
+                  {formatAmount(drawerMonths.filter(m => m.status === 'paid').reduce((s, m) => s + Number(m.amount ?? drawer.amount), 0))}
                 </span>
               </div>
             )}
@@ -647,6 +692,14 @@ export default function PaymentsPage() {
             {partners.map(p => <option key={p.id} value={p.id}>{p.name}</option>)}
           </Select>
         </Field>
+        <Field label="Линия (CEO): Web / SEO / PPC">
+          <Select value={form.project_category} onChange={e => setForm(f => ({ ...f, project_category: e.target.value }))}>
+            <option value="">Не указано</option>
+            <option value="web">Web — сайты и веб</option>
+            <option value="seo">SEO</option>
+            <option value="ppc">PPC</option>
+          </Select>
+        </Field>
         <Field label="Услуга *">
           <Input value={form.description} onChange={e => setForm(f => ({ ...f, description: e.target.value }))} placeholder="Абон. SEO, март 2026" />
         </Field>
@@ -658,7 +711,7 @@ export default function PaymentsPage() {
               <option value="service_expiry">Сервисный</option>
             </Select>
           </Field>
-          <Field label="Сумма (UZS) *">
+          <Field label="Сумма (Uzs) *">
             <Input type="number" value={form.amount} onChange={e => setForm(f => ({ ...f, amount: e.target.value }))} placeholder="0" />
           </Field>
         </div>
@@ -761,7 +814,7 @@ export default function PaymentsPage() {
           <div>
             <div style={{ marginBottom: 16, padding: '14px', background: '#f5f6fa', borderRadius: 10, fontSize: 13 }}>
               <div><b>{confirmModal.partner.name}</b> · {confirmModal.description}</div>
-              <div style={{ marginTop: 4, fontWeight: 700, color: '#1a6b3c' }}>{Number(confirmModal.amount).toLocaleString('ru-RU')} UZS</div>
+              <div style={{ marginTop: 4, fontWeight: 700, color: '#1a6b3c' }}>{formatAmount(confirmModal.amount)}</div>
             </div>
             <Field label="Или отложить напоминание">
               <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
@@ -777,6 +830,23 @@ export default function PaymentsPage() {
           </div>
         )}
       </Modal>
+
+      <ConfirmModal
+        open={deletePaymentId !== null}
+        onClose={() => setDeletePaymentId(null)}
+        title="Удалить проект?"
+        message="Проект и связанные данные будут удалены без возможности восстановления."
+        confirmLabel="Удалить"
+        onConfirm={runDeletePayment}
+      />
+      <ConfirmModal
+        open={deleteMonthId !== null}
+        onClose={() => setDeleteMonthId(null)}
+        title="Удалить месяц?"
+        message="Запись месяца будет удалена из проекта."
+        confirmLabel="Удалить"
+        onConfirm={runDeleteMonth}
+      />
     </Layout>
   )
 }

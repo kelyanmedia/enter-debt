@@ -3,7 +3,8 @@ from fastapi.middleware.cors import CORSMiddleware
 from app.db.database import init_db, engine, Base
 from app.models import user, partner, payment
 import app.models.telegram_join  # noqa: F401 — таблица telegram_join_requests
-from app.api.routes import auth, users, partners, payments, dashboard, notifications, archive, payment_months, telegram_join
+import app.models.feed_notification  # noqa: F401 — лента событий
+from app.api.routes import auth, users, partners, payments, dashboard, notifications, archive, payment_months, telegram_join, feed_notifications
 from app.core.config import settings
 from app.core.security import get_password_hash
 
@@ -23,6 +24,7 @@ app.include_router(partners.router)
 app.include_router(payments.router)
 app.include_router(dashboard.router)
 app.include_router(notifications.router)
+app.include_router(feed_notifications.router)
 app.include_router(archive.router)
 app.include_router(payment_months.router)
 app.include_router(telegram_join.router)
@@ -50,6 +52,8 @@ def _migrate():
         "ALTER TABLE payments ADD COLUMN IF NOT EXISTS contract_url VARCHAR(500)",
         "ALTER TABLE payments ADD COLUMN IF NOT EXISTS service_period VARCHAR(20)",
         "ALTER TABLE payment_months ADD COLUMN IF NOT EXISTS description VARCHAR(300)",
+        "ALTER TABLE users ADD COLUMN IF NOT EXISTS feed_cleared_at TIMESTAMP WITH TIME ZONE",
+        "ALTER TABLE payments ADD COLUMN IF NOT EXISTS project_category VARCHAR(20)",
     ]
     for sql in migrations:
         try:
