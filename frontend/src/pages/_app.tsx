@@ -1,12 +1,14 @@
 import type { AppProps } from 'next/app'
 import { useEffect } from 'react'
+import axios from 'axios'
 import { AuthProvider } from '@/context/AuthContext'
 import '@/styles/globals.css'
 
 export default function App({ Component, pageProps }: AppProps) {
   useEffect(() => {
     const handler = (e: PromiseRejectionEvent) => {
-      if (e.reason?.isAxiosError || e.reason?.name === 'AxiosError') {
+      const r = e.reason
+      if (axios.isAxiosError(r)) {
         e.preventDefault()
       }
     }

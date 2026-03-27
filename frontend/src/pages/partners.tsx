@@ -27,7 +27,7 @@ export default function PartnersPage() {
 
   const load = () => {
     const params = filterStatus ? `?status=${filterStatus}` : ''
-    api.get(`partners${params}`).then(r => setPartners(r.data))
+    api.get(`partners${params}`).then(r => setPartners(r.data)).catch(() => setPartners([]))
   }
 
   useEffect(() => {

@@ -46,7 +46,7 @@ export default function UsersPage() {
   const [deleteUserId, setDeleteUserId] = useState<number | null>(null)
 
   const loadAll = () => {
-    api.get('users').then(r => setUsers(r.data))
+    api.get('users').then(r => setUsers(r.data)).catch(() => setUsers([]))
     api.get('telegram-join/pending').then(r => setPending(r.data)).catch(() => setPending([]))
   }
 

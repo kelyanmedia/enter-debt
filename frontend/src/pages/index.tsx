@@ -53,6 +53,7 @@ export default function Dashboard() {
   const [stats, setStats] = useState<Stats | null>(null)
   const [allPayments, setAllPayments] = useState<Payment[]>([])
   const [logs, setLogs] = useState<NotifLog[]>([])
+  const [dashboardError, setDashboardError] = useState(false)
   const [dateFrom, setDateFrom] = useState(firstOfMonth)
   const [dateTo, setDateTo] = useState(today)
 
@@ -60,7 +61,15 @@ export default function Dashboard() {
     const params = new URLSearchParams()
     if (from) params.append('date_from', from)
     if (to) params.append('date_to', to)
-    api.get(`dashboard?${params}`).then(r => setStats(r.data))
+    api.get(`dashboard?${params}`)
+      .then(r => {
+        setStats(r.data)
+        setDashboardError(false)
+      })
+      .catch(() => {
+        setStats(null)
+        setDashboardError(true)
+      })
   }
 
   useEffect(() => {
@@ -68,12 +77,16 @@ export default function Dashboard() {
     Promise.all([
       api.get('payments?status=overdue'),
       api.get('payments?status=pending'),
-    ]).then(([r1, r2]) => {
-      const combined = [...r1.data, ...r2.data]
-      const seen = new Set<number>()
-      setAllPayments(combined.filter(p => { if (seen.has(p.id)) return false; seen.add(p.id); return true }))
-    })
-    api.get('notifications').then(r => setLogs(r.data.slice(0, 5)))
+    ])
+      .then(([r1, r2]) => {
+        const combined = [...r1.data, ...r2.data]
+        const seen = new Set<number>()
+        setAllPayments(combined.filter(p => { if (seen.has(p.id)) return false; seen.add(p.id); return true }))
+      })
+      .catch(() => setAllPayments([]))
+    api.get('notifications')
+      .then(r => setLogs(r.data.slice(0, 5)))
+      .catch(() => setLogs([]))
   }, [])
 
   const handleDateChange = (from: string, to: string) => {
@@ -129,6 +142,16 @@ export default function Dashboard() {
           >Всё время</button>
         </div>
       </div>
+
+      {dashboardError && (
+        <div style={{ padding: '12px 24px 0', flexShrink: 0 }}>
+          <div style={{ padding: '11px 14px', background: '#fff8f0', border: '1px solid #f0d9c0', borderRadius: 10, fontSize: 13, color: '#8a4a00', lineHeight: 1.45 }}>
+            Не удалось связаться с API (сервер выключен или неверный BACKEND_URL). Запустите backend и проверьте{' '}
+            <code style={{ fontSize: 12, background: '#fff', padding: '1px 6px', borderRadius: 4 }}>frontend/.env.local</code>
+            {' — '}часто нужно <code style={{ fontSize: 12, background: '#fff', padding: '1px 6px', borderRadius: 4 }}>BACKEND_URL=http://127.0.0.1:8001</code>
+          </div>
+        </div>
+      )}
 
       <div style={{ padding: '22px 24px', overflowY: 'auto', flex: 1 }}>
         {/* Stats row */}

@@ -93,11 +93,13 @@ export default function PaymentsPage() {
     if (filterStatus) params.append('status', filterStatus)
     if (filterType) params.append('payment_type', filterType)
     if (filterCategory) params.append('project_category', filterCategory)
-    api.get(`payments?${params}`).then(r => {
-      let data = r.data
-      if (filterManager) data = data.filter((p: Payment) => String(p.partner?.manager?.id) === filterManager)
-      setPayments(data)
-    })
+    api.get(`payments?${params}`)
+      .then(r => {
+        let data = r.data
+        if (filterManager) data = data.filter((p: Payment) => String(p.partner?.manager?.id) === filterManager)
+        setPayments(data)
+      })
+      .catch(() => setPayments([]))
   }, [filterStatus, filterType, filterCategory, filterManager])
 
   useEffect(() => {
@@ -121,7 +123,7 @@ export default function PaymentsPage() {
   }, [load])
 
   useEffect(() => {
-    api.get('partners').then(r => setPartners(r.data))
+    api.get('partners').then(r => setPartners(r.data)).catch(() => setPartners([]))
     api.get('users/managers-for-select').then(r => setUsers(r.data)).catch(() => {})
   }, [])
 

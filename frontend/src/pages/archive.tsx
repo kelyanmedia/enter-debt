@@ -63,6 +63,9 @@ export default function ArchivePage() {
         const r = await api.get(`archive/partners?${params}`)
         setPartners(r.data)
       }
+    } catch {
+      setPayments([])
+      setPartners([])
     } finally {
       setFetching(false)
     }

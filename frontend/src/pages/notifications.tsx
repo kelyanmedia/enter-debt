@@ -12,7 +12,7 @@ export default function NotificationsPage() {
   const [logs, setLogs] = useState<Log[]>([])
 
   useEffect(() => {
-    api.get('notifications').then(r => setLogs(r.data))
+    api.get('notifications').then(r => setLogs(r.data)).catch(() => setLogs([]))
   }, [])
 
   return (

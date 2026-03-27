@@ -72,15 +72,19 @@ export default function DebitorPage() {
     const params = new URLSearchParams()
     if (from) params.append('date_from', from)
     if (to) params.append('date_to', to)
-    api.get(`dashboard?${params}`).then(r => setStats(r.data))
+    api.get(`dashboard?${params}`)
+      .then(r => setStats(r.data))
+      .catch(() => setStats(null))
   }, [])
 
   const loadPayments = useCallback(() => {
-    Promise.all([api.get('payments?status=overdue'), api.get('payments?status=pending')]).then(([r1, r2]) => {
-      const combined = [...r1.data, ...r2.data]
-      const seen = new Set<number>()
-      setAllPayments(combined.filter(p => (seen.has(p.id) ? false : (seen.add(p.id), true))))
-    })
+    Promise.all([api.get('payments?status=overdue'), api.get('payments?status=pending')])
+      .then(([r1, r2]) => {
+        const combined = [...r1.data, ...r2.data]
+        const seen = new Set<number>()
+        setAllPayments(combined.filter(p => (seen.has(p.id) ? false : (seen.add(p.id), true))))
+      })
+      .catch(() => setAllPayments([]))
   }, [])
 
   useEffect(() => {
