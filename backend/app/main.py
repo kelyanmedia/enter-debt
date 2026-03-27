@@ -55,6 +55,8 @@ def _migrate():
         "ALTER TABLE payment_months ADD COLUMN IF NOT EXISTS description VARCHAR(300)",
         "ALTER TABLE users ADD COLUMN IF NOT EXISTS feed_cleared_at TIMESTAMP WITH TIME ZONE",
         "ALTER TABLE payments ADD COLUMN IF NOT EXISTS project_category VARCHAR(20)",
+        "ALTER TABLE payment_months ADD COLUMN IF NOT EXISTS act_issued BOOLEAN NOT NULL DEFAULT FALSE",
+        "ALTER TABLE payment_months ADD COLUMN IF NOT EXISTS act_issued_at TIMESTAMP WITH TIME ZONE",
     ]
     for sql in migrations:
         try:
