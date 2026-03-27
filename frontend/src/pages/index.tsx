@@ -1,4 +1,5 @@
 import { useEffect, useState, useMemo } from 'react'
+import Link from 'next/link'
 import Layout from '@/components/Layout'
 import { StatCard, Card, CardHeader, CardTitle, Th, Td, PartnerAvatar, Badge, statusBadge, formatDate, daysLeft, formatAmount, formatMoneyNumber } from '@/components/ui'
 import api from '@/lib/api'
@@ -132,12 +133,14 @@ export default function Dashboard() {
       <div style={{ padding: '22px 24px', overflowY: 'auto', flex: 1 }}>
         {/* Stats row */}
         <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: 14, marginBottom: 20 }}>
-          <StatCard
-            featured
-            label="Дебиторка за период"
-            value={stats ? formatAmount(stats.total_receivable) : '—'}
-            sub={`${stats?.partners_count ?? 0} активных партнёров`}
-          />
+          <Link href="/debitor" style={{ textDecoration: 'none', color: 'inherit', display: 'block' }}>
+            <StatCard
+              featured
+              label="Дебиторка за период"
+              value={stats ? formatAmount(stats.total_receivable) : '—'}
+              sub={`${stats?.partners_count ?? 0} активных партнёров · подробнее`}
+            />
+          </Link>
           <StatCard
             label="Просрочено"
             value={String(stats?.overdue_count ?? '—')}
