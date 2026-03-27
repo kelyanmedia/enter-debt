@@ -14,7 +14,9 @@ import {
   formatAmount,
   formatMoneyNumber,
   Empty,
+  Select,
 } from '@/components/ui'
+import { useAuth } from '@/context/AuthContext'
 import api from '@/lib/api'
 
 interface Stats {
@@ -35,7 +37,7 @@ interface Payment {
   deadline_date?: string
   day_of_month?: number
   created_at: string
-  partner: { name: string; manager?: { name: string } }
+  partner: { name: string; manager?: { id: number; name: string } }
 }
 
 function firstOfMonth() {
@@ -60,10 +62,18 @@ const DATE_INPUT_STYLE: React.CSSProperties = {
   fontFamily: 'inherit',
 }
 
+interface ManagerOption {
+  id: number
+  name: string
+}
+
 export default function DebitorPage() {
   const router = useRouter()
+  const { user } = useAuth()
   const [stats, setStats] = useState<Stats | null>(null)
   const [allPayments, setAllPayments] = useState<Payment[]>([])
+  const [managers, setManagers] = useState<ManagerOption[]>([])
+  const [filterManager, setFilterManager] = useState('')
   const [dateFrom, setDateFrom] = useState(firstOfMonth)
   const [dateTo, setDateTo] = useState(today)
   const [statusFilter, setStatusFilter] = useState<'all' | 'overdue' | 'pending'>('all')
@@ -95,6 +105,14 @@ export default function DebitorPage() {
     loadPayments()
   }, [loadPayments])
 
+  useEffect(() => {
+    api.get<ManagerOption[]>('users/managers-for-select').then(r => setManagers(r.data)).catch(() => setManagers([]))
+  }, [])
+
+  useEffect(() => {
+    if (user?.role === 'manager') setFilterManager(String(user.id))
+  }, [user])
+
   const handleDateChange = (from: string, to: string) => {
     setDateFrom(from)
     setDateTo(to)
@@ -103,6 +121,9 @@ export default function DebitorPage() {
 
   const payments = useMemo(() => {
     let list = allPayments
+    if (filterManager) {
+      list = list.filter(p => String(p.partner?.manager?.id) === filterManager)
+    }
     if (statusFilter === 'overdue') list = list.filter(p => p.status === 'overdue')
     if (statusFilter === 'pending') list = list.filter(p => p.status === 'pending')
     if (dateFrom) list = list.filter(p => new Date(p.created_at) >= new Date(dateFrom))
@@ -116,7 +137,7 @@ export default function DebitorPage() {
       if (a.status !== 'overdue' && b.status === 'overdue') return 1
       return 0
     })
-  }, [allPayments, dateFrom, dateTo, statusFilter])
+  }, [allPayments, dateFrom, dateTo, statusFilter, filterManager])
 
   const periodLabel =
     dateFrom || dateTo
@@ -193,7 +214,25 @@ export default function DebitorPage() {
             Всё время
           </button>
 
-          <span style={{ marginLeft: 12, fontSize: 12, color: '#8a8fa8' }}>В таблице:</span>
+          {user?.role === 'admin' && (
+            <>
+              <span style={{ marginLeft: 12, fontSize: 12, color: '#8a8fa8' }}>Менеджер:</span>
+              <Select
+                value={filterManager}
+                onChange={e => setFilterManager(e.target.value)}
+                style={{ ...DATE_INPUT_STYLE, cursor: 'pointer', maxWidth: 220 }}
+              >
+                <option value="">Все менеджеры</option>
+                {managers.map(m => (
+                  <option key={m.id} value={m.id}>
+                    {m.name}
+                  </option>
+                ))}
+              </Select>
+            </>
+          )}
+
+          <span style={{ marginLeft: user?.role === 'admin' ? 8 : 12, fontSize: 12, color: '#8a8fa8' }}>В таблице:</span>
           <select
             value={statusFilter}
             onChange={e => setStatusFilter(e.target.value as 'all' | 'overdue' | 'pending')}
@@ -266,6 +305,7 @@ export default function DebitorPage() {
             <thead>
               <tr>
                 <Th>Партнёр</Th>
+                <Th>Менеджер</Th>
                 <Th>Проект</Th>
                 <Th>Сумма</Th>
                 <Th>Добавлен</Th>
@@ -285,12 +325,10 @@ export default function DebitorPage() {
                     <Td>
                       <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
                         <PartnerAvatar name={p.partner.name} />
-                        <div>
-                          <div style={{ fontWeight: 600 }}>{p.partner.name}</div>
-                          <div style={{ fontSize: 11, color: '#8a8fa8' }}>{p.partner.manager?.name}</div>
-                        </div>
+                        <div style={{ fontWeight: 600 }}>{p.partner.name}</div>
                       </div>
                     </Td>
+                    <Td style={{ color: '#5b6470', fontSize: 13 }}>{p.partner.manager?.name || '—'}</Td>
                     <Td style={{ color: '#5b6470', maxWidth: 280 }}>{p.description}</Td>
                     <Td>
                       <span style={{ fontWeight: 700 }}>{formatMoneyNumber(p.amount)}</span>
