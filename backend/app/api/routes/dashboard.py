@@ -1,13 +1,14 @@
-from fastapi import APIRouter, Depends, Query
+from fastapi import APIRouter, Depends, Query, HTTPException
 from sqlalchemy.orm import Session
 from sqlalchemy import func, extract
 from datetime import date, datetime
-from typing import Optional, List, Tuple
+from typing import Optional, List, Tuple, Dict, Any
 from decimal import Decimal
 from calendar import monthrange
 from app.db.database import get_db
 from app.models.payment import Payment
 from app.models.partner import Partner
+from app.models.ceo_metric_override import CeoMetricOverride
 from app.schemas.schemas import (
     DashboardStats,
     CeoStats,
@@ -17,8 +18,9 @@ from app.schemas.schemas import (
     CeoLtvBucket,
     CeoClientHistoryOut,
     CeoClientHistoryPoint,
+    CeoOverridePut,
 )
-from app.core.security import get_current_user
+from app.core.security import get_current_user, require_admin
 from app.core.access import accessible_partner_ids, filter_payments_query, filter_partners_query
 from app.models.user import User
 
@@ -63,6 +65,66 @@ def _rolling_months(n: int) -> List[Tuple[int, int]]:
             m -= 1
     months.reverse()
     return months
+
+
+def _get_override_dict(db: Session, metric: str, year: int) -> Dict[str, Any]:
+    row = (
+        db.query(CeoMetricOverride)
+        .filter(CeoMetricOverride.metric == metric, CeoMetricOverride.year == year)
+        .first()
+    )
+    if not row or not row.data:
+        return {}
+    return dict(row.data)
+
+
+def _turnover_points_for_roll(
+    db: Session,
+    current_user: User,
+    roll: List[Tuple[int, int]],
+) -> List[CeoTurnoverPoint]:
+    if not roll:
+        return []
+    y0, m0 = roll[0]
+    y1, m1 = roll[-1]
+    start_date = date(y0 - 1, m0, 1)
+    end_date = date(y1, m1, monthrange(y1, m1)[1])
+
+    q = (
+        db.query(
+            extract("year", Payment.paid_at).label("yy"),
+            extract("month", Payment.paid_at).label("mm"),
+            func.coalesce(func.sum(Payment.amount), 0).label("total"),
+        )
+        .filter(
+            Payment.is_archived == False,
+            Payment.status == "paid",
+            Payment.paid_at.isnot(None),
+            func.date(Payment.paid_at) >= start_date,
+            func.date(Payment.paid_at) <= end_date,
+        )
+    )
+    q = filter_payments_query(q, db, current_user)
+    q = q.group_by(extract("year", Payment.paid_at), extract("month", Payment.paid_at))
+    rows = q.all()
+    agg: dict[Tuple[int, int], Decimal] = {}
+    for r in rows:
+        yy, mm = int(r.yy), int(r.mm)
+        agg[(yy, mm)] = Decimal(str(r.total)) if r.total is not None else Decimal(0)
+
+    points: List[CeoTurnoverPoint] = []
+    for y, m in roll:
+        amt = agg.get((y, m), Decimal(0))
+        prev = agg.get((y - 1, m), Decimal(0))
+        points.append(
+            CeoTurnoverPoint(
+                month=f"{y}-{m:02d}",
+                label=f"{_MONTHS_RU[m - 1]} {y}",
+                amount=amt,
+                previous_year_amount=prev,
+            )
+        )
+    return points
 
 
 @router.get("", response_model=DashboardStats)
@@ -184,60 +246,41 @@ def get_ceo_stats(
 
 @router.get("/ceo/turnover", response_model=CeoTurnoverOut)
 def get_ceo_turnover(
+    year: Optional[int] = Query(None, description="Календарный год (янв–дек). Если не задан — скользящие 12 мес."),
     months: int = 12,
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
     """
     Оборот по месяцам: сумма оплаченных проектов (status=paid) по дате paid_at.
-    Пунктир — тот же месяц год назад (для сравнения).
+    Пунктир — тот же месяц год назад. Ручные правки (админ) подмешиваются для выбранного года.
     """
-    n = max(1, min(int(months), 36))
     ids = accessible_partner_ids(db, current_user)
     if ids is not None and len(ids) == 0:
-        return CeoTurnoverOut(points=[])
+        return CeoTurnoverOut(year=year, points=[])
 
+    if year is not None:
+        y = year if 2000 <= year <= 2100 else date.today().year
+        roll = [(y, m) for m in range(1, 13)]
+        points = _turnover_points_for_roll(db, current_user, roll)
+        ov = _get_override_dict(db, "turnover", y)
+        if ov:
+            for i in range(len(points)):
+                k = str(i + 1)
+                if k in ov:
+                    m = i + 1
+                    points[i] = CeoTurnoverPoint(
+                        month=f"{y}-{m:02d}",
+                        label=f"{_MONTHS_RU[m - 1]} {y}",
+                        amount=Decimal(str(ov[k])),
+                        previous_year_amount=points[i].previous_year_amount,
+                    )
+        return CeoTurnoverOut(year=y, points=points)
+
+    n = max(1, min(int(months), 36))
     roll = _rolling_months(n)
-    y0, m0 = roll[0]
-    y1, m1 = roll[-1]
-    start_date = date(y0 - 1, m0, 1)
-    end_date = date(y1, m1, monthrange(y1, m1)[1])
-
-    q = (
-        db.query(
-            extract("year", Payment.paid_at).label("yy"),
-            extract("month", Payment.paid_at).label("mm"),
-            func.coalesce(func.sum(Payment.amount), 0).label("total"),
-        )
-        .filter(
-            Payment.is_archived == False,
-            Payment.status == "paid",
-            Payment.paid_at.isnot(None),
-            func.date(Payment.paid_at) >= start_date,
-            func.date(Payment.paid_at) <= end_date,
-        )
-    )
-    q = filter_payments_query(q, db, current_user)
-    q = q.group_by(extract("year", Payment.paid_at), extract("month", Payment.paid_at))
-    rows = q.all()
-    agg: dict[Tuple[int, int], Decimal] = {}
-    for r in rows:
-        yy, mm = int(r.yy), int(r.mm)
-        agg[(yy, mm)] = Decimal(str(r.total)) if r.total is not None else Decimal(0)
-
-    points: List[CeoTurnoverPoint] = []
-    for y, m in roll:
-        amt = agg.get((y, m), Decimal(0))
-        prev = agg.get((y - 1, m), Decimal(0))
-        points.append(
-            CeoTurnoverPoint(
-                month=f"{y}-{m:02d}",
-                label=f"{_MONTHS_RU[m - 1]} {y}",
-                amount=amt,
-                previous_year_amount=prev,
-            )
-        )
-    return CeoTurnoverOut(points=points)
+    points = _turnover_points_for_roll(db, current_user, roll)
+    return CeoTurnoverOut(year=None, points=points)
 
 
 def _tenure_months(created_at) -> int:
@@ -252,20 +295,10 @@ def _tenure_months(created_at) -> int:
     return max(0, months)
 
 
-@router.get("/ceo/partner-ltv", response_model=CeoLtvOut)
-def get_partner_ltv(
-    db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_user),
-):
-    """
-    Распределение активных компаний по «возрасту» с даты добавления (LTV по времени сотрудничества).
-    Учитываются только партнёры со статусом active и не удалённые.
-    """
+def _ltv_buckets_live(db: Session, current_user: User) -> List[CeoLtvBucket]:
     ids = accessible_partner_ids(db, current_user)
     if ids is not None and len(ids) == 0:
-        return CeoLtvOut(
-            buckets=[CeoLtvBucket(key=k, label=lab, count=0) for k, lab in _LTV_BUCKET_SPEC]
-        )
+        return [CeoLtvBucket(key=k, label=lab, count=0) for k, lab in _LTV_BUCKET_SPEC]
 
     q = db.query(Partner).filter(Partner.is_deleted == False, Partner.status == "active")
     q = filter_partners_query(q, db, current_user)
@@ -287,8 +320,38 @@ def get_partner_ltv(
         else:
             c[5] += 1
 
-    buckets = [CeoLtvBucket(key=k, label=lab, count=n) for (k, lab), n in zip(_LTV_BUCKET_SPEC, c)]
-    return CeoLtvOut(buckets=buckets)
+    return [CeoLtvBucket(key=k, label=lab, count=n) for (k, lab), n in zip(_LTV_BUCKET_SPEC, c)]
+
+
+@router.get("/ceo/partner-ltv", response_model=CeoLtvOut)
+def get_partner_ltv(
+    year: Optional[int] = Query(None, description="Год среза; ручные значения по году или live для текущего"),
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """
+    Распределение активных компаний по «возрасту» с даты добавления (LTV по времени сотрудничества).
+    Учитываются только партнёры со статусом active и не удалённые.
+    Для прошлых лет без ручного среза — нули; для текущего года без ручного среза — расчёт из базы.
+    """
+    today_y = date.today().year
+
+    if year is not None:
+        y = year if 2000 <= year <= 2100 else today_y
+        ov = _get_override_dict(db, "ltv", y)
+        if ov:
+            buckets = []
+            for k, lab in _LTV_BUCKET_SPEC:
+                buckets.append(CeoLtvBucket(key=k, label=lab, count=int(ov.get(k, 0))))
+            return CeoLtvOut(year=y, buckets=buckets)
+        if y == today_y:
+            return CeoLtvOut(year=y, buckets=_ltv_buckets_live(db, current_user))
+        return CeoLtvOut(
+            year=y,
+            buckets=[CeoLtvBucket(key=k, label=lab, count=0) for k, lab in _LTV_BUCKET_SPEC],
+        )
+
+    return CeoLtvOut(year=None, buckets=_ltv_buckets_live(db, current_user))
 
 
 @router.get("/ceo/client-history", response_model=CeoClientHistoryOut)
@@ -337,4 +400,83 @@ def get_client_history(
         )
         for m in range(1, 13)
     ]
+    ov = _get_override_dict(db, "client_history", y)
+    if ov:
+        for i in range(12):
+            k = str(i + 1)
+            if k in ov:
+                m = i + 1
+                points[i] = CeoClientHistoryPoint(
+                    month=f"{y}-{m:02d}",
+                    label=f"{_MONTHS_RU[m - 1]} {y}",
+                    count=int(ov[k]),
+                )
     return CeoClientHistoryOut(year=y, points=points)
+
+
+def _validate_override_payload(metric: str, data: Dict[str, Any]) -> None:
+    if metric == "client_history" or metric == "turnover":
+        for k, v in data.items():
+            if k not in {str(i) for i in range(1, 13)}:
+                raise HTTPException(status_code=400, detail=f"Неверный ключ месяца: {k}")
+        if metric == "client_history":
+            for k, v in data.items():
+                if int(v) < 0:
+                    raise HTTPException(status_code=400, detail="Количество не может быть отрицательным")
+        else:
+            for k, v in data.items():
+                if Decimal(str(v)) < 0:
+                    raise HTTPException(status_code=400, detail="Сумма не может быть отрицательной")
+    elif metric == "ltv":
+        allowed = {k for k, _ in _LTV_BUCKET_SPEC}
+        for k in data:
+            if k not in allowed:
+                raise HTTPException(status_code=400, detail=f"Неверная корзина LTV: {k}")
+        for k, v in data.items():
+            if int(v) < 0:
+                raise HTTPException(status_code=400, detail="Количество не может быть отрицательным")
+    else:
+        raise HTTPException(status_code=400, detail="Неизвестный metric")
+
+
+@router.put("/ceo/overrides", response_model=dict)
+def put_ceo_override(
+    body: CeoOverridePut,
+    db: Session = Depends(get_db),
+    _: User = Depends(require_admin),
+):
+    if body.year < 2000 or body.year > 2100:
+        raise HTTPException(status_code=400, detail="Неверный год")
+    _validate_override_payload(body.metric, body.data)
+
+    row = (
+        db.query(CeoMetricOverride)
+        .filter(CeoMetricOverride.metric == body.metric, CeoMetricOverride.year == body.year)
+        .first()
+    )
+    if row:
+        row.data = body.data
+    else:
+        db.add(CeoMetricOverride(metric=body.metric, year=body.year, data=body.data))
+    db.commit()
+    return {"ok": True}
+
+
+@router.delete("/ceo/overrides/{metric}/{year}", response_model=dict)
+def delete_ceo_override(
+    metric: str,
+    year: int,
+    db: Session = Depends(get_db),
+    _: User = Depends(require_admin),
+):
+    if metric not in ("client_history", "turnover", "ltv"):
+        raise HTTPException(status_code=400, detail="Неизвестный metric")
+    row = (
+        db.query(CeoMetricOverride)
+        .filter(CeoMetricOverride.metric == metric, CeoMetricOverride.year == year)
+        .first()
+    )
+    if row:
+        db.delete(row)
+        db.commit()
+    return {"ok": True}

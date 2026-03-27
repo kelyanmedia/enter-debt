@@ -1,5 +1,5 @@
 from pydantic import BaseModel, EmailStr
-from typing import Optional, List
+from typing import Optional, List, Literal, Dict, Any
 from datetime import datetime, date
 from decimal import Decimal
 
@@ -207,6 +207,7 @@ class CeoTurnoverPoint(BaseModel):
 
 
 class CeoTurnoverOut(BaseModel):
+    year: Optional[int] = None
     points: List[CeoTurnoverPoint]
 
 
@@ -217,6 +218,7 @@ class CeoLtvBucket(BaseModel):
 
 
 class CeoLtvOut(BaseModel):
+    year: Optional[int] = None
     buckets: List[CeoLtvBucket]
 
 
@@ -229,6 +231,12 @@ class CeoClientHistoryPoint(BaseModel):
 class CeoClientHistoryOut(BaseModel):
     year: int
     points: List[CeoClientHistoryPoint]
+
+
+class CeoOverridePut(BaseModel):
+    metric: Literal["client_history", "turnover", "ltv"]
+    year: int
+    data: Dict[str, Any]
 
 
 # ── NOTIFICATIONS ─────────────────────────────────────────────────────────────

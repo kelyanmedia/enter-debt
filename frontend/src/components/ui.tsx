@@ -46,9 +46,9 @@ export function statusBadge(status: string) {
 
 // ── Modal ─────────────────────────────────────────────────────────────────────
 
-export function Modal({ open, onClose, title, children, footer }: {
+export function Modal({ open, onClose, title, children, footer, width = 480 }: {
   open: boolean; onClose: () => void; title: string;
-  children: ReactNode; footer?: ReactNode
+  children: ReactNode; footer?: ReactNode; width?: number
 }) {
   if (!open) return null
   return (
@@ -56,7 +56,7 @@ export function Modal({ open, onClose, title, children, footer }: {
       onClick={e => { if (e.target === e.currentTarget) onClose() }}
       style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,.35)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 100 }}
     >
-      <div style={{ background: '#fff', borderRadius: 16, width: 480, maxWidth: '95vw', boxShadow: '0 8px 40px rgba(0,0,0,.18)', display: 'flex', flexDirection: 'column', maxHeight: '90vh' }}>
+      <div style={{ background: '#fff', borderRadius: 16, width, maxWidth: '95vw', boxShadow: '0 8px 40px rgba(0,0,0,.18)', display: 'flex', flexDirection: 'column', maxHeight: '90vh' }}>
         <div style={{ padding: '20px 24px 16px', borderBottom: '1px solid #e8e9ef', display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexShrink: 0 }}>
           <div style={{ fontSize: 15, fontWeight: 700 }}>{title}</div>
           <button onClick={onClose} style={{ width: 28, height: 28, borderRadius: 7, background: '#f5f6fa', border: 'none', cursor: 'pointer', fontSize: 16, color: '#8a8fa8', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>✕</button>

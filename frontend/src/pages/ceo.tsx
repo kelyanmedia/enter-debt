@@ -1,8 +1,10 @@
-import { useEffect, useState } from 'react'
+import { useCallback, useEffect, useMemo, useState } from 'react'
 import dynamic from 'next/dynamic'
 import Link from 'next/link'
 import Layout from '@/components/Layout'
 import { PageHeader, Card } from '@/components/ui'
+import { CeoEditPencil, CeoMetricEditModal } from '@/components/CeoMetricEditor'
+import { useAuth } from '@/context/AuthContext'
 import api from '@/lib/api'
 
 const CeoTurnoverChart = dynamic(() => import('@/components/CeoTurnoverChart'), { ssr: false })
@@ -33,6 +35,30 @@ interface ClientHistoryPoint {
   month: string
   label: string
   count: number
+}
+
+function buildMonthRecord(
+  points: { count?: number; amount?: number | string }[],
+  kind: 'count' | 'amount',
+): Record<string, string> {
+  const out: Record<string, string> = {}
+  for (let i = 1; i <= 12; i++) {
+    const k = String(i)
+    const p = points[i - 1]
+    if (!p) {
+      out[k] = '0'
+      continue
+    }
+    if (kind === 'count') out[k] = String(p.count ?? 0)
+    else out[k] = String(p.amount ?? 0)
+  }
+  return out
+}
+
+function ltvRecordFromBuckets(buckets: LtvBucket[]): Record<string, string> {
+  const out: Record<string, string> = {}
+  for (const b of buckets) out[b.key] = String(b.count ?? 0)
+  return out
 }
 
 function ArrowIcon() {
@@ -143,28 +169,66 @@ function CeoCard({
   )
 }
 
+const YEAR_OPTIONS = Array.from({ length: 8 }, (_, i) => new Date().getFullYear() - i)
+
 export default function CeoDashboardPage() {
+  const { user } = useAuth()
+  const isAdmin = user?.role === 'admin'
+
   const [stats, setStats] = useState<CeoStats | null>(null)
   const [turnover, setTurnover] = useState<TurnoverPoint[]>([])
+  const [turnoverYear, setTurnoverYear] = useState<number | null>(() => new Date().getFullYear())
   const [ltvBuckets, setLtvBuckets] = useState<LtvBucket[]>([])
+  const [ltvYear, setLtvYear] = useState<number | null>(() => new Date().getFullYear())
   const [clientYear, setClientYear] = useState(() => new Date().getFullYear())
   const [clientPoints, setClientPoints] = useState<ClientHistoryPoint[]>([])
 
+  const [editMetric, setEditMetric] = useState<null | 'client_history' | 'turnover' | 'ltv'>(null)
+  const [dataTick, setDataTick] = useState(0)
+  const bumpData = useCallback(() => setDataTick(t => t + 1), [])
+
   useEffect(() => {
     api.get<CeoStats>('dashboard/ceo').then(r => setStats(r.data)).catch(() => setStats(null))
-    api.get<{ points: TurnoverPoint[] }>('dashboard/ceo/turnover')
+  }, [dataTick])
+
+  useEffect(() => {
+    const url =
+      turnoverYear === null ? 'dashboard/ceo/turnover' : `dashboard/ceo/turnover?year=${turnoverYear}`
+    api.get<{ points: TurnoverPoint[] }>(url)
       .then(r => setTurnover(r.data.points || []))
       .catch(() => setTurnover([]))
-    api.get<{ buckets: LtvBucket[] }>('dashboard/ceo/partner-ltv')
+  }, [turnoverYear, dataTick])
+
+  useEffect(() => {
+    const url = ltvYear === null ? 'dashboard/ceo/partner-ltv' : `dashboard/ceo/partner-ltv?year=${ltvYear}`
+    api.get<{ buckets: LtvBucket[] }>(url)
       .then(r => setLtvBuckets(r.data.buckets || []))
       .catch(() => setLtvBuckets([]))
-  }, [])
+  }, [ltvYear, dataTick])
 
   useEffect(() => {
     api.get<{ points: ClientHistoryPoint[] }>(`dashboard/ceo/client-history?year=${clientYear}`)
       .then(r => setClientPoints(r.data.points || []))
       .catch(() => setClientPoints([]))
-  }, [clientYear])
+  }, [clientYear, dataTick])
+
+  const editInitialMonths = useMemo(() => {
+    if (editMetric === 'client_history') return buildMonthRecord(clientPoints, 'count')
+    if (editMetric === 'turnover') return buildMonthRecord(turnover, 'amount')
+    return {}
+  }, [editMetric, clientPoints, turnover])
+
+  const editInitialLtv = useMemo(() => {
+    if (editMetric !== 'ltv') return {}
+    return ltvRecordFromBuckets(ltvBuckets)
+  }, [editMetric, ltvBuckets])
+
+  const editYear =
+    editMetric === 'client_history'
+      ? clientYear
+      : editMetric === 'turnover'
+        ? turnoverYear ?? new Date().getFullYear()
+        : ltvYear ?? new Date().getFullYear()
 
   return (
     <Layout>
@@ -228,39 +292,96 @@ export default function CeoDashboardPage() {
                 числа за месяц.
               </div>
             </div>
-            <label style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 13, color: '#6b7280' }}>
-              <span style={{ fontWeight: 600 }}>Год</span>
-              <select
-                value={clientYear}
-                onChange={e => setClientYear(Number(e.target.value))}
-                style={{
-                  border: '1px solid #e8e9ef',
-                  borderRadius: 9,
-                  padding: '8px 12px',
-                  fontSize: 13,
-                  fontFamily: 'inherit',
-                  color: '#1a1d23',
-                  background: '#fff',
-                  cursor: 'pointer',
-                }}
-              >
-                {Array.from({ length: 8 }, (_, i) => new Date().getFullYear() - i).map(y => (
-                  <option key={y} value={y}>
-                    {y}
-                  </option>
-                ))}
-              </select>
-            </label>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>
+              <label style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 13, color: '#6b7280' }}>
+                <span style={{ fontWeight: 600 }}>Год</span>
+                <select
+                  value={clientYear}
+                  onChange={e => setClientYear(Number(e.target.value))}
+                  style={{
+                    border: '1px solid #e8e9ef',
+                    borderRadius: 9,
+                    padding: '8px 12px',
+                    fontSize: 13,
+                    fontFamily: 'inherit',
+                    color: '#1a1d23',
+                    background: '#fff',
+                    cursor: 'pointer',
+                  }}
+                >
+                  {YEAR_OPTIONS.map(y => (
+                    <option key={y} value={y}>
+                      {y}
+                    </option>
+                  ))}
+                </select>
+              </label>
+              {isAdmin && (
+                <CeoEditPencil
+                  onClick={() => setEditMetric('client_history')}
+                  title="Ручной ввод: новые компании по месяцам"
+                />
+              )}
+            </div>
           </div>
           <CeoClientHistoryChart data={clientPoints} year={clientYear} />
         </Card>
 
         <Card style={{ marginBottom: 20, padding: '4px 4px 8px' }}>
-          <div style={{ padding: '16px 18px 8px' }}>
-            <div style={{ fontSize: 15, fontWeight: 700, color: '#1a1d23' }}>Динамика оборота</div>
-            <div style={{ fontSize: 12, color: '#8a8fa8', marginTop: 4 }}>
-              Сумма оплаченных проектов по месяцу оплаты (последние 12 месяцев). Синяя зона — текущий период, пунктир — тот же месяц год назад.
-              Наведите курсор на график для точных сумм.
+          <div
+            style={{
+              padding: '16px 18px 8px',
+              display: 'flex',
+              flexWrap: 'wrap',
+              alignItems: 'flex-start',
+              justifyContent: 'space-between',
+              gap: 12,
+            }}
+          >
+            <div style={{ flex: 1, minWidth: 220 }}>
+              <div style={{ fontSize: 15, fontWeight: 700, color: '#1a1d23' }}>Динамика оборота</div>
+              <div style={{ fontSize: 12, color: '#8a8fa8', marginTop: 4, lineHeight: 1.5 }}>
+                {turnoverYear === null
+                  ? 'Сумма оплаченных по месяцу оплаты — скользящие 12 месяцев. Пунктир — тот же месяц год назад.'
+                  : `Календарный год ${turnoverYear}: суммы по месяцам. Пунктир — ${turnoverYear - 1}. Ручной ввод доступен для выбранного года.`}{' '}
+                Наведите курсор на график для сумм.
+              </div>
+            </div>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>
+              <label style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 13, color: '#6b7280' }}>
+                <span style={{ fontWeight: 600 }}>Период</span>
+                <select
+                  value={turnoverYear === null ? '' : turnoverYear}
+                  onChange={e => {
+                    const v = e.target.value
+                    setTurnoverYear(v === '' ? null : Number(v))
+                  }}
+                  style={{
+                    border: '1px solid #e8e9ef',
+                    borderRadius: 9,
+                    padding: '8px 12px',
+                    fontSize: 13,
+                    fontFamily: 'inherit',
+                    color: '#1a1d23',
+                    background: '#fff',
+                    cursor: 'pointer',
+                    minWidth: 160,
+                  }}
+                >
+                  <option value="">Последние 12 месяцев</option>
+                  {YEAR_OPTIONS.map(y => (
+                    <option key={y} value={y}>
+                      Календарный {y}
+                    </option>
+                  ))}
+                </select>
+              </label>
+              {isAdmin && turnoverYear !== null && (
+                <CeoEditPencil
+                  onClick={() => setEditMetric('turnover')}
+                  title="Ручной ввод оборота по месяцам за год"
+                />
+              )}
             </div>
           </div>
           <CeoTurnoverChart
@@ -274,11 +395,59 @@ export default function CeoDashboardPage() {
         </Card>
 
         <Card style={{ marginBottom: 20, padding: '4px 4px 12px', overflow: 'hidden' }}>
-          <div style={{ padding: '16px 18px 4px' }}>
-            <div style={{ fontSize: 15, fontWeight: 700, color: '#1a1d23' }}>LTV · срок сотрудничества</div>
-            <div style={{ fontSize: 12, color: '#8a8fa8', marginTop: 4, lineHeight: 1.5 }}>
-              Сколько месяцев компания с вами с момента добавления в систему. Учитываются только{' '}
-              <strong style={{ color: '#5b6478' }}>активные</strong> партнёры. Наведите на столбец — точное число компаний.
+          <div
+            style={{
+              padding: '16px 18px 4px',
+              display: 'flex',
+              flexWrap: 'wrap',
+              alignItems: 'flex-start',
+              justifyContent: 'space-between',
+              gap: 12,
+            }}
+          >
+            <div style={{ flex: 1, minWidth: 220 }}>
+              <div style={{ fontSize: 15, fontWeight: 700, color: '#1a1d23' }}>LTV · срок сотрудничества</div>
+              <div style={{ fontSize: 12, color: '#8a8fa8', marginTop: 4, lineHeight: 1.5 }}>
+                {ltvYear === null
+                  ? 'Распределение активных компаний по длительности сотрудничества — расчёт из базы сейчас.'
+                  : ltvYear === new Date().getFullYear()
+                    ? 'Текущий год: те же данные, что и «из базы», плюс можно задать ручной срез.'
+                    : `Год ${ltvYear}: показываются только ручные значения, если вы их задали; иначе нули.`}{' '}
+                Наведите на столбец — число компаний.
+              </div>
+            </div>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>
+              <label style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 13, color: '#6b7280' }}>
+                <span style={{ fontWeight: 600 }}>Год</span>
+                <select
+                  value={ltvYear === null ? '' : ltvYear}
+                  onChange={e => {
+                    const v = e.target.value
+                    setLtvYear(v === '' ? null : Number(v))
+                  }}
+                  style={{
+                    border: '1px solid #e8e9ef',
+                    borderRadius: 9,
+                    padding: '8px 12px',
+                    fontSize: 13,
+                    fontFamily: 'inherit',
+                    color: '#1a1d23',
+                    background: '#fff',
+                    cursor: 'pointer',
+                    minWidth: 140,
+                  }}
+                >
+                  <option value="">Сейчас (из базы)</option>
+                  {YEAR_OPTIONS.map(y => (
+                    <option key={y} value={y}>
+                      {y}
+                    </option>
+                  ))}
+                </select>
+              </label>
+              {isAdmin && ltvYear !== null && (
+                <CeoEditPencil onClick={() => setEditMetric('ltv')} title="Ручной ввод LTV по корзинам" />
+              )}
             </div>
           </div>
           <CeoLtvChart data={ltvBuckets} />
@@ -300,6 +469,18 @@ export default function CeoDashboardPage() {
           учитывается только в «Всего проектов».
         </div>
       </div>
+
+      {editMetric && (
+        <CeoMetricEditModal
+          open
+          onClose={() => setEditMetric(null)}
+          metric={editMetric}
+          year={editYear}
+          initialMonths={editInitialMonths}
+          initialLtv={editInitialLtv}
+          onSaved={bumpData}
+        />
+      )}
     </Layout>
   )
 }
