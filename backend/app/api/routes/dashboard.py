@@ -1,12 +1,12 @@
 from fastapi import APIRouter, Depends, Query, HTTPException
 from sqlalchemy.orm import Session
-from sqlalchemy import func, extract
+from sqlalchemy import func, extract, select
 from datetime import date, datetime
 from typing import Optional, List, Tuple, Dict, Any
 from decimal import Decimal
 from calendar import monthrange
 from app.db.database import get_db
-from app.models.payment import Payment
+from app.models.payment import Payment, PaymentMonth
 from app.models.partner import Partner
 from app.models.ceo_metric_override import CeoMetricOverride
 from app.schemas.schemas import (
@@ -78,19 +78,50 @@ def _get_override_dict(db: Session, metric: str, year: int) -> Dict[str, Any]:
     return dict(row.data)
 
 
-def _turnover_points_for_roll(
+def _build_paid_agg(
     db: Session,
     current_user: User,
-    roll: List[Tuple[int, int]],
-) -> List[CeoTurnoverPoint]:
-    if not roll:
-        return []
-    y0, m0 = roll[0]
-    y1, m1 = roll[-1]
-    start_date = date(y0 - 1, m0, 1)
-    end_date = date(y1, m1, monthrange(y1, m1)[1])
+    start_date: date,
+    end_date: date,
+) -> Dict[Tuple[int, int], Decimal]:
+    """
+    Агрегирует фактические оплаты по (год, месяц) из двух источников:
+    1. PaymentMonth.paid_at — помесячные оплаты (кнопка «Оплата прошла» в ящике).
+    2. Payment.paid_at — разовые проекты без месяцев, подтверждённые кнопкой «✅ Оплачено».
+    Двойного счёта нет: источник 2 исключает проекты, у которых есть хотя бы один PaymentMonth.
+    """
+    agg: Dict[Tuple[int, int], Decimal] = {}
 
-    q = (
+    # --- Источник 1: подтверждённые месяцы ---
+    q1 = (
+        db.query(
+            extract("year", PaymentMonth.paid_at).label("yy"),
+            extract("month", PaymentMonth.paid_at).label("mm"),
+            func.coalesce(
+                func.sum(func.coalesce(PaymentMonth.amount, Payment.amount)), 0
+            ).label("total"),
+        )
+        .join(Payment, Payment.id == PaymentMonth.payment_id)
+        .filter(
+            Payment.is_archived == False,
+            PaymentMonth.status == "paid",
+            PaymentMonth.paid_at.isnot(None),
+            func.date(PaymentMonth.paid_at) >= start_date,
+            func.date(PaymentMonth.paid_at) <= end_date,
+        )
+    )
+    q1 = filter_payments_query(q1, db, current_user)
+    q1 = q1.group_by(
+        extract("year", PaymentMonth.paid_at),
+        extract("month", PaymentMonth.paid_at),
+    )
+    for r in q1.all():
+        k = (int(r.yy), int(r.mm))
+        agg[k] = agg.get(k, Decimal(0)) + (Decimal(str(r.total)) if r.total else Decimal(0))
+
+    # --- Источник 2: проекты без месяцев, подтверждённые напрямую ---
+    has_months_sq = select(PaymentMonth.payment_id).distinct()
+    q2 = (
         db.query(
             extract("year", Payment.paid_at).label("yy"),
             extract("month", Payment.paid_at).label("mm"),
@@ -100,17 +131,37 @@ def _turnover_points_for_roll(
             Payment.is_archived == False,
             Payment.status == "paid",
             Payment.paid_at.isnot(None),
+            ~Payment.id.in_(has_months_sq),
             func.date(Payment.paid_at) >= start_date,
             func.date(Payment.paid_at) <= end_date,
         )
     )
-    q = filter_payments_query(q, db, current_user)
-    q = q.group_by(extract("year", Payment.paid_at), extract("month", Payment.paid_at))
-    rows = q.all()
-    agg: dict[Tuple[int, int], Decimal] = {}
-    for r in rows:
-        yy, mm = int(r.yy), int(r.mm)
-        agg[(yy, mm)] = Decimal(str(r.total)) if r.total is not None else Decimal(0)
+    q2 = filter_payments_query(q2, db, current_user)
+    q2 = q2.group_by(
+        extract("year", Payment.paid_at),
+        extract("month", Payment.paid_at),
+    )
+    for r in q2.all():
+        k = (int(r.yy), int(r.mm))
+        agg[k] = agg.get(k, Decimal(0)) + (Decimal(str(r.total)) if r.total else Decimal(0))
+
+    return agg
+
+
+def _turnover_points_for_roll(
+    db: Session,
+    current_user: User,
+    roll: List[Tuple[int, int]],
+) -> List[CeoTurnoverPoint]:
+    if not roll:
+        return []
+    y0, m0 = roll[0]
+    y1, m1 = roll[-1]
+    # Нужен год назад для «прошлого года» на графике
+    start_date = date(y0 - 1, m0, 1)
+    end_date = date(y1, m1, monthrange(y1, m1)[1])
+
+    agg = _build_paid_agg(db, current_user, start_date, end_date)
 
     points: List[CeoTurnoverPoint] = []
     for y, m in roll:
@@ -156,21 +207,6 @@ def get_dashboard(
             q = q.filter(func.date(Payment.created_at) <= date_to)
         return q
 
-    def paid_period_filter(q):
-        q = q.filter(Payment.is_archived == False)
-        q = filter_payments_query(q, db, current_user)
-        if date_from:
-            q = q.filter(func.date(Payment.paid_at) >= date_from)
-        if date_to:
-            q = q.filter(func.date(Payment.paid_at) <= date_to)
-        else:
-            # Default: current month
-            q = q.filter(
-                func.extract("month", Payment.paid_at) == today.month,
-                func.extract("year", Payment.paid_at) == today.year
-            )
-        return q
-
     total_receivable = period_filter(
         db.query(func.sum(Payment.amount)).filter(Payment.status.in_(["pending", "overdue"]))
     ).scalar() or Decimal(0)
@@ -183,23 +219,72 @@ def get_dashboard(
         db.query(func.count(Payment.id)).filter(Payment.status == "pending")
     ).scalar() or 0
 
-    paid_q = db.query(func.count(Payment.id)).filter(Payment.status == "paid")
-    paid_q = filter_payments_query(paid_q, db, current_user)
-    paid_amount_q = db.query(func.sum(Payment.amount)).filter(Payment.status == "paid")
-    paid_amount_q = filter_payments_query(paid_amount_q, db, current_user)
-
+    # ── Оплаченные: берём из PaymentMonth + Payment без месяцев ─────────────
+    # Определяем диапазон дат для фильтра
     if date_from or date_to:
-        paid_this_month = paid_period_filter(paid_q).scalar() or 0
-        paid_amount_this_month = paid_period_filter(paid_amount_q).scalar() or Decimal(0)
+        _df = date_from or date(2000, 1, 1)
+        _dt = date_to or date(2100, 12, 31)
     else:
-        paid_this_month = paid_q.filter(
-            func.extract("month", Payment.paid_at) == today.month,
-            func.extract("year", Payment.paid_at) == today.year
-        ).scalar() or 0
-        paid_amount_this_month = paid_amount_q.filter(
-            func.extract("month", Payment.paid_at) == today.month,
-            func.extract("year", Payment.paid_at) == today.year
-        ).scalar() or Decimal(0)
+        _df = date(today.year, today.month, 1)
+        _dt = date(today.year, today.month, monthrange(today.year, today.month)[1])
+
+    # Источник 1: подтверждённые месяцы
+    pm_cnt_q = (
+        db.query(func.count(PaymentMonth.id))
+        .join(Payment, Payment.id == PaymentMonth.payment_id)
+        .filter(
+            Payment.is_archived == False,
+            PaymentMonth.status == "paid",
+            PaymentMonth.paid_at.isnot(None),
+            func.date(PaymentMonth.paid_at) >= _df,
+            func.date(PaymentMonth.paid_at) <= _dt,
+        )
+    )
+    pm_cnt_q = filter_payments_query(pm_cnt_q, db, current_user)
+
+    pm_sum_q = (
+        db.query(func.coalesce(func.sum(func.coalesce(PaymentMonth.amount, Payment.amount)), 0))
+        .join(Payment, Payment.id == PaymentMonth.payment_id)
+        .filter(
+            Payment.is_archived == False,
+            PaymentMonth.status == "paid",
+            PaymentMonth.paid_at.isnot(None),
+            func.date(PaymentMonth.paid_at) >= _df,
+            func.date(PaymentMonth.paid_at) <= _dt,
+        )
+    )
+    pm_sum_q = filter_payments_query(pm_sum_q, db, current_user)
+
+    # Источник 2: разовые проекты без месяцев, подтверждённые напрямую
+    has_months_sq = select(PaymentMonth.payment_id).distinct()
+    p_cnt_q = (
+        db.query(func.count(Payment.id))
+        .filter(
+            Payment.is_archived == False,
+            Payment.status == "paid",
+            Payment.paid_at.isnot(None),
+            ~Payment.id.in_(has_months_sq),
+            func.date(Payment.paid_at) >= _df,
+            func.date(Payment.paid_at) <= _dt,
+        )
+    )
+    p_cnt_q = filter_payments_query(p_cnt_q, db, current_user)
+
+    p_sum_q = (
+        db.query(func.coalesce(func.sum(Payment.amount), 0))
+        .filter(
+            Payment.is_archived == False,
+            Payment.status == "paid",
+            Payment.paid_at.isnot(None),
+            ~Payment.id.in_(has_months_sq),
+            func.date(Payment.paid_at) >= _df,
+            func.date(Payment.paid_at) <= _dt,
+        )
+    )
+    p_sum_q = filter_payments_query(p_sum_q, db, current_user)
+
+    paid_this_month = (pm_cnt_q.scalar() or 0) + (p_cnt_q.scalar() or 0)
+    paid_amount_this_month = (pm_sum_q.scalar() or Decimal(0)) + (p_sum_q.scalar() or Decimal(0))
 
     pcq = db.query(func.count(Partner.id)).filter(
         Partner.status == "active",
