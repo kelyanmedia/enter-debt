@@ -304,5 +304,64 @@ class TelegramJoinInternalRequest(BaseModel):
     access_password: str
 
 
+# ── COMMISSIONS ───────────────────────────────────────────────────────────────
+class CommissionBase(BaseModel):
+    project_name: str
+    project_type: str                           # site | seo | ppc
+    project_cost: Decimal
+    production_cost: Decimal = Decimal(0)
+    manager_percent: Decimal                    # 1–20
+    actual_payment: Optional[Decimal] = None
+    received_amount_1: Optional[Decimal] = None
+    received_amount_2: Optional[Decimal] = None
+    commission_paid_full: bool = False
+    project_date: date
+    note: Optional[str] = None
+
+
+class CommissionCreate(CommissionBase):
+    manager_id: Optional[int] = None           # admin may override
+
+
+class CommissionUpdate(BaseModel):
+    project_name: Optional[str] = None
+    project_type: Optional[str] = None
+    project_cost: Optional[Decimal] = None
+    production_cost: Optional[Decimal] = None
+    manager_percent: Optional[Decimal] = None
+    actual_payment: Optional[Decimal] = None
+    received_amount_1: Optional[Decimal] = None
+    received_amount_2: Optional[Decimal] = None
+    commission_paid_full: Optional[bool] = None
+    project_date: Optional[date] = None
+    note: Optional[str] = None
+    manager_id: Optional[int] = None
+
+
+class CommissionOut(CommissionBase):
+    id: int
+    manager_id: int
+    manager: Optional["UserOut"] = None
+    created_at: datetime
+    # Computed fields (filled in route)
+    profit: Decimal = Decimal(0)
+    total_manager_income: Decimal = Decimal(0)
+    manager_income_from_actual: Decimal = Decimal(0)
+    total_received: Decimal = Decimal(0)
+
+    class Config:
+        from_attributes = True
+
+
+class CommissionStatsOut(BaseModel):
+    total_projects: int
+    total_cost: Decimal
+    total_profit: Decimal
+    total_manager_income: Decimal
+    total_received: Decimal
+    total_pending: Decimal
+
+
 Token.model_rebuild()
 PaymentOut.model_rebuild()
+CommissionOut.model_rebuild()

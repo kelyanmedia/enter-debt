@@ -6,6 +6,8 @@ import app.models.telegram_join  # noqa: F401 — таблица telegram_join_r
 import app.models.feed_notification  # noqa: F401 — лента событий
 import app.models.ceo_metric_override  # noqa: F401 — ручные значения CEO dashboard
 from app.api.routes import auth, users, partners, payments, dashboard, notifications, archive, payment_months, telegram_join, feed_notifications
+from app.api.routes import commissions
+import app.models.commission  # noqa: F401
 from app.core.config import settings
 from app.core.security import get_password_hash
 
@@ -29,6 +31,7 @@ app.include_router(feed_notifications.router)
 app.include_router(archive.router)
 app.include_router(payment_months.router)
 app.include_router(telegram_join.router)
+app.include_router(commissions.router)
 
 
 @app.on_event("startup")
@@ -57,6 +60,24 @@ def _migrate():
         "ALTER TABLE payments ADD COLUMN IF NOT EXISTS project_category VARCHAR(20)",
         "ALTER TABLE payment_months ADD COLUMN IF NOT EXISTS act_issued BOOLEAN NOT NULL DEFAULT FALSE",
         "ALTER TABLE payment_months ADD COLUMN IF NOT EXISTS act_issued_at TIMESTAMP WITH TIME ZONE",
+        # Commissions table
+        """CREATE TABLE IF NOT EXISTS commissions (
+            id SERIAL PRIMARY KEY,
+            project_name VARCHAR(300) NOT NULL,
+            project_type VARCHAR(20) NOT NULL,
+            project_cost NUMERIC(15,2) NOT NULL,
+            production_cost NUMERIC(15,2) NOT NULL DEFAULT 0,
+            manager_percent NUMERIC(5,2) NOT NULL,
+            actual_payment NUMERIC(15,2),
+            received_amount_1 NUMERIC(15,2),
+            received_amount_2 NUMERIC(15,2),
+            commission_paid_full BOOLEAN NOT NULL DEFAULT FALSE,
+            project_date DATE NOT NULL,
+            note VARCHAR(500),
+            manager_id INTEGER NOT NULL REFERENCES users(id),
+            created_at TIMESTAMP WITH TIME ZONE DEFAULT now(),
+            updated_at TIMESTAMP WITH TIME ZONE
+        )""",
     ]
     for sql in migrations:
         # Защита от случайного удаления данных

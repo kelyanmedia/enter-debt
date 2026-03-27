@@ -9,6 +9,7 @@ const NAV = [
   { href: '/ceo', label: 'CEO Dashboard', icon: '📊', managerHidden: true },
   { href: '/debitor', label: 'Дебиторка', icon: '📒' },
   { href: '/payments', label: 'Проекты', icon: '📁', badge: 'overdue' },
+  { href: '/commissions', label: 'Комиссия', icon: '💰' },
   { href: '/partners', label: 'Партнёры', icon: '🤝' },
   { href: '/profile', label: 'Профиль', icon: '👤' },
   { href: '/users', label: 'Пользователи', icon: '👥', adminOnly: true },
