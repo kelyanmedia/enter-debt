@@ -10,7 +10,10 @@ services:
       - ./backend:/app
 
   frontend:
-    build: ./frontend
+    build:
+      context: ./frontend
+      args:
+        BACKEND_URL: http://127.0.0.1:8000
     restart: always
     env_file: .env
     environment:
