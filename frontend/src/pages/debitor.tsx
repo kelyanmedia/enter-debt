@@ -34,10 +34,27 @@ interface Payment {
   amount: number
   status: string
   payment_type: string
+  project_category?: string | null
   deadline_date?: string
   day_of_month?: number
   created_at: string
   partner: { name: string; manager?: { id: number; name: string } }
+}
+
+function categoryBadge(cat?: string | null) {
+  if (cat === 'web')
+    return (
+      <span style={{ fontSize: 11, fontWeight: 700, color: '#2563eb', background: '#eff4ff', padding: '3px 8px', borderRadius: 6 }}>Web</span>
+    )
+  if (cat === 'seo')
+    return (
+      <span style={{ fontSize: 11, fontWeight: 700, color: '#b45309', background: '#fff8ee', padding: '3px 8px', borderRadius: 6 }}>SEO</span>
+    )
+  if (cat === 'ppc')
+    return (
+      <span style={{ fontSize: 11, fontWeight: 700, color: '#6b7280', background: '#f3f4f6', padding: '3px 8px', borderRadius: 6 }}>PPC</span>
+    )
+  return <span style={{ color: '#c5c8d4', fontSize: 12 }}>—</span>
 }
 
 function firstOfMonth() {
@@ -77,15 +94,21 @@ export default function DebitorPage() {
   const [dateFrom, setDateFrom] = useState(firstOfMonth)
   const [dateTo, setDateTo] = useState(today)
   const [statusFilter, setStatusFilter] = useState<'all' | 'overdue' | 'pending'>('all')
+  const [filterCategory, setFilterCategory] = useState('')
 
-  const loadStats = useCallback((from: string, to: string) => {
-    const params = new URLSearchParams()
-    if (from) params.append('date_from', from)
-    if (to) params.append('date_to', to)
-    api.get(`dashboard?${params}`)
-      .then(r => setStats(r.data))
-      .catch(() => setStats(null))
-  }, [])
+  const loadStats = useCallback(
+    (from: string, to: string, mgr: string) => {
+      const params = new URLSearchParams()
+      if (from) params.append('date_from', from)
+      if (to) params.append('date_to', to)
+      if ((user?.role === 'admin' || user?.role === 'accountant') && mgr) params.append('manager_id', mgr)
+      api
+        .get(`dashboard?${params}`)
+        .then(r => setStats(r.data))
+        .catch(() => setStats(null))
+    },
+    [user?.role]
+  )
 
   const loadPayments = useCallback(() => {
     Promise.all([api.get('payments?status=overdue'), api.get('payments?status=pending')])
@@ -98,8 +121,8 @@ export default function DebitorPage() {
   }, [])
 
   useEffect(() => {
-    loadStats(dateFrom, dateTo)
-  }, [dateFrom, dateTo, loadStats])
+    loadStats(dateFrom, dateTo, filterManager)
+  }, [dateFrom, dateTo, filterManager, loadStats])
 
   useEffect(() => {
     loadPayments()
@@ -116,7 +139,7 @@ export default function DebitorPage() {
   const handleDateChange = (from: string, to: string) => {
     setDateFrom(from)
     setDateTo(to)
-    loadStats(from, to)
+    loadStats(from, to, filterManager)
   }
 
   const payments = useMemo(() => {
@@ -126,6 +149,7 @@ export default function DebitorPage() {
     }
     if (statusFilter === 'overdue') list = list.filter(p => p.status === 'overdue')
     if (statusFilter === 'pending') list = list.filter(p => p.status === 'pending')
+    if (filterCategory) list = list.filter(p => (p.project_category || '') === filterCategory)
     if (dateFrom) list = list.filter(p => new Date(p.created_at) >= new Date(dateFrom))
     if (dateTo) {
       const to = new Date(dateTo)
@@ -137,7 +161,7 @@ export default function DebitorPage() {
       if (a.status !== 'overdue' && b.status === 'overdue') return 1
       return 0
     })
-  }, [allPayments, dateFrom, dateTo, statusFilter, filterManager])
+  }, [allPayments, dateFrom, dateTo, statusFilter, filterManager, filterCategory])
 
   const periodLabel =
     dateFrom || dateTo
@@ -246,6 +270,18 @@ export default function DebitorPage() {
             <option value="overdue">Только просрочено</option>
             <option value="pending">Только ожидается</option>
           </select>
+
+          <span style={{ marginLeft: 8, fontSize: 12, color: '#8a8fa8' }}>Категория:</span>
+          <select
+            value={filterCategory}
+            onChange={e => setFilterCategory(e.target.value)}
+            style={{ ...DATE_INPUT_STYLE, cursor: 'pointer', maxWidth: 160 }}
+          >
+            <option value="">Все</option>
+            <option value="web">Web</option>
+            <option value="seo">SEO</option>
+            <option value="ppc">PPC</option>
+          </select>
         </div>
 
         <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))', gap: 14, marginBottom: 22 }}>
@@ -268,7 +304,7 @@ export default function DebitorPage() {
             subColor="#f0900a"
           />
           <StatCard
-            label="Оплачено за период"
+            label={dateFrom || dateTo ? 'Оплачено за период' : 'Оплачено (всего)'}
             value={String(stats?.paid_this_month ?? '—')}
             sub={stats ? `${formatAmount(stats.paid_amount_this_month)} получено` : ''}
             subColor="#1a6b3c"
@@ -306,6 +342,7 @@ export default function DebitorPage() {
               <tr>
                 <Th>Партнёр</Th>
                 <Th>Менеджер</Th>
+                <Th>Категория</Th>
                 <Th>Проект</Th>
                 <Th>Сумма</Th>
                 <Th>Добавлен</Th>
@@ -329,6 +366,7 @@ export default function DebitorPage() {
                       </div>
                     </Td>
                     <Td style={{ color: '#5b6470', fontSize: 13 }}>{p.partner.manager?.name || '—'}</Td>
+                    <Td>{categoryBadge(p.project_category)}</Td>
                     <Td style={{ color: '#5b6470', maxWidth: 280 }}>{p.description}</Td>
                     <Td>
                       <span style={{ fontWeight: 700 }}>{formatMoneyNumber(p.amount)}</span>

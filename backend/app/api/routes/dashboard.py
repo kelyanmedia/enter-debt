@@ -178,14 +178,27 @@ def _turnover_points_for_roll(
     return points
 
 
+def _debitor_filter_by_manager(manager_id: Optional[int], current_user: User) -> bool:
+    """Админ/бухгалтерия могут сузить дебиторку до одного менеджера."""
+    return manager_id is not None and current_user.role in ("admin", "accountant")
+
+
 @router.get("", response_model=DashboardStats)
 def get_dashboard(
     date_from: Optional[date] = None,
     date_to: Optional[date] = None,
+    manager_id: Optional[int] = Query(
+        None,
+        description="Только партнёры и проекты выбранного менеджера (только для админа и бухгалтерии)",
+    ),
     db: Session = Depends(get_db),
-    current_user: User = Depends(require_admin_or_accountant),
+    current_user: User = Depends(get_current_user),
 ):
-    today = date.today()
+    """
+    Сводка для главной и страницы «Дебиторка».
+    Менеджер видит только свои данные (как в списке проектов); админ/бухгалтерия — все,
+    с опциональным manager_id для согласованности с фильтром в таблице.
+    """
     ids = accessible_partner_ids(db, current_user)
     if ids is not None and len(ids) == 0:
         return DashboardStats(
@@ -197,10 +210,14 @@ def get_dashboard(
             partners_count=0,
         )
 
+    mgr_scope = _debitor_filter_by_manager(manager_id, current_user)
+
     # Base filter for active (non-archived) payments in the period
     def period_filter(q, use_created_at=True):
         q = q.filter(Payment.is_archived == False)
         q = filter_payments_query(q, db, current_user)
+        if mgr_scope:
+            q = q.join(Partner, Payment.partner_id == Partner.id).filter(Partner.manager_id == manager_id)
         if date_from and use_created_at:
             q = q.filter(func.date(Payment.created_at) >= date_from)
         if date_to and use_created_at:
@@ -219,14 +236,15 @@ def get_dashboard(
         db.query(func.count(Payment.id)).filter(Payment.status == "pending")
     ).scalar() or 0
 
-    # ── Оплаченные: берём из PaymentMonth + Payment без месяцев ─────────────
-    # Определяем диапазон дат для фильтра
+    # ── Оплаченные: PaymentMonth + Payment без месяцев ───────────────────────
+    # Диапазон дат оплат: при выбранном периоде — он же; при «Всё время» (без дат) —
+    # весь срок, иначе цифры в карточках не совпадали с фильтром неоплаченных.
     if date_from or date_to:
         _df = date_from or date(2000, 1, 1)
         _dt = date_to or date(2100, 12, 31)
     else:
-        _df = date(today.year, today.month, 1)
-        _dt = date(today.year, today.month, monthrange(today.year, today.month)[1])
+        _df = date(2000, 1, 1)
+        _dt = date(2100, 12, 31)
 
     # Источник 1: подтверждённые месяцы
     pm_cnt_q = (
@@ -241,6 +259,8 @@ def get_dashboard(
         )
     )
     pm_cnt_q = filter_payments_query(pm_cnt_q, db, current_user)
+    if mgr_scope:
+        pm_cnt_q = pm_cnt_q.join(Partner, Payment.partner_id == Partner.id).filter(Partner.manager_id == manager_id)
 
     pm_sum_q = (
         db.query(func.coalesce(func.sum(func.coalesce(PaymentMonth.amount, Payment.amount)), 0))
@@ -254,6 +274,8 @@ def get_dashboard(
         )
     )
     pm_sum_q = filter_payments_query(pm_sum_q, db, current_user)
+    if mgr_scope:
+        pm_sum_q = pm_sum_q.join(Partner, Payment.partner_id == Partner.id).filter(Partner.manager_id == manager_id)
 
     # Источник 2: разовые проекты без месяцев, подтверждённые напрямую
     has_months_sq = select(PaymentMonth.payment_id).distinct()
@@ -269,6 +291,8 @@ def get_dashboard(
         )
     )
     p_cnt_q = filter_payments_query(p_cnt_q, db, current_user)
+    if mgr_scope:
+        p_cnt_q = p_cnt_q.join(Partner, Payment.partner_id == Partner.id).filter(Partner.manager_id == manager_id)
 
     p_sum_q = (
         db.query(func.coalesce(func.sum(Payment.amount), 0))
@@ -282,6 +306,8 @@ def get_dashboard(
         )
     )
     p_sum_q = filter_payments_query(p_sum_q, db, current_user)
+    if mgr_scope:
+        p_sum_q = p_sum_q.join(Partner, Payment.partner_id == Partner.id).filter(Partner.manager_id == manager_id)
 
     paid_this_month = (pm_cnt_q.scalar() or 0) + (p_cnt_q.scalar() or 0)
     paid_amount_this_month = (pm_sum_q.scalar() or Decimal(0)) + (p_sum_q.scalar() or Decimal(0))
@@ -290,6 +316,8 @@ def get_dashboard(
         Partner.status == "active",
         Partner.is_deleted == False,
     )
+    if mgr_scope:
+        pcq = pcq.filter(Partner.manager_id == manager_id)
     pcq = filter_partners_query(pcq, db, current_user)
     partners_count = pcq.scalar() or 0
 
