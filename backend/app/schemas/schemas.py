@@ -74,10 +74,12 @@ class PartnerBase(BaseModel):
     contact_person: Optional[str] = None
     phone: Optional[str] = None
     email: Optional[str] = None
-    partner_type: str = "regular"
+    partner_type: str = "A"
     manager_id: Optional[int] = None
     status: str = "active"
     comment: Optional[str] = None
+    cooperation_start_date: Optional[date] = None
+    client_joined_date: Optional[date] = None
 
 
 class PartnerCreate(PartnerBase):
@@ -93,6 +95,8 @@ class PartnerUpdate(BaseModel):
     manager_id: Optional[int] = None
     status: Optional[str] = None
     comment: Optional[str] = None
+    cooperation_start_date: Optional[date] = None
+    client_joined_date: Optional[date] = None
 
 
 class PartnerOut(PartnerBase):
@@ -119,7 +123,7 @@ class PaymentBase(BaseModel):
     notify_accounting: bool = True
     contract_url: Optional[str] = None
     service_period: Optional[str] = None  # monthly / yearly
-    project_category: Optional[str] = None  # web | seo | ppc
+    project_category: Optional[str] = None  # web | seo | ppc | mobile_app | tech_support | hosting_domain
 
 
 class PaymentCreate(PaymentBase):
@@ -167,7 +171,7 @@ class PaymentUpdate(BaseModel):
     notify_accounting: Optional[bool] = None
     contract_url: Optional[str] = None
     service_period: Optional[str] = None
-    project_category: Optional[str] = None
+    project_category: Optional[str] = None  # web | seo | ppc | mobile_app | tech_support | hosting_domain
 
 
 class PaymentConfirm(BaseModel):
@@ -214,6 +218,9 @@ class CeoStats(BaseModel):
     web_projects: int
     seo_projects: int
     ppc_projects: int
+    mobile_app_projects: int
+    tech_support_projects: int
+    hosting_domain_projects: int
 
 
 class CeoTurnoverPoint(BaseModel):

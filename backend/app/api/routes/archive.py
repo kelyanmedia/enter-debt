@@ -3,7 +3,7 @@ from sqlalchemy.orm import Session, joinedload
 from typing import List, Optional
 from datetime import date, datetime
 from app.db.database import get_db
-from app.models.payment import Payment
+from app.models.payment import Payment, NotificationLog
 from app.models.partner import Partner
 from app.schemas.schemas import PaymentOut, PartnerOut
 from app.core.security import get_current_user, require_admin
@@ -76,6 +76,29 @@ def archive_payment(
     if not p:
         raise HTTPException(status_code=404, detail="Payment not found")
     p.is_archived = True
+    db.commit()
+    return {"ok": True}
+
+
+@router.delete("/payments/{payment_id}")
+def permanently_delete_archived_payment(
+    payment_id: int,
+    db: Session = Depends(get_db),
+    _=Depends(require_admin)
+):
+    """Удаление из БД только для уже архивных проектов."""
+    p = db.query(Payment).filter(Payment.id == payment_id).first()
+    if not p:
+        raise HTTPException(status_code=404, detail="Payment not found")
+    if not p.is_archived:
+        raise HTTPException(
+            status_code=400,
+            detail="Можно безвозвратно удалить только архивный проект",
+        )
+    db.query(NotificationLog).filter(NotificationLog.payment_id == payment_id).delete(
+        synchronize_session=False
+    )
+    db.delete(p)
     db.commit()
     return {"ok": True}
 

@@ -58,6 +58,24 @@ function categoryBadge(cat?: string | null) {
     return (
       <span style={{ fontSize: 11, fontWeight: 700, color: '#6b7280', background: '#f3f4f6', padding: '3px 8px', borderRadius: 6 }}>PPC</span>
     )
+  if (cat === 'mobile_app')
+    return (
+      <span style={{ fontSize: 11, fontWeight: 700, color: '#7c3aed', background: '#f3e8ff', padding: '3px 8px', borderRadius: 6 }}>
+        Моб. прил.
+      </span>
+    )
+  if (cat === 'tech_support')
+    return (
+      <span style={{ fontSize: 11, fontWeight: 700, color: '#0d9488', background: '#ccfbf1', padding: '3px 8px', borderRadius: 6 }}>
+        Тех. сопр.
+      </span>
+    )
+  if (cat === 'hosting_domain')
+    return (
+      <span style={{ fontSize: 11, fontWeight: 700, color: '#4338ca', background: '#eef2ff', padding: '3px 8px', borderRadius: 6 }}>
+        Хостинг
+      </span>
+    )
   return <span style={{ color: '#c5c8d4', fontSize: 12 }}>—</span>
 }
 
@@ -366,12 +384,15 @@ export default function DebitorPage() {
           <select
             value={filterCategory}
             onChange={e => setFilterCategory(e.target.value)}
-            style={{ ...DATE_INPUT_STYLE, cursor: 'pointer', maxWidth: 160 }}
+            style={{ ...DATE_INPUT_STYLE, cursor: 'pointer', maxWidth: 220 }}
           >
             <option value="">Все</option>
             <option value="web">Web</option>
             <option value="seo">SEO</option>
             <option value="ppc">PPC</option>
+            <option value="mobile_app">Мобильное приложение</option>
+            <option value="tech_support">Тех сопровождение</option>
+            <option value="hosting_domain">Хостинг/домен</option>
           </select>
         </div>
 

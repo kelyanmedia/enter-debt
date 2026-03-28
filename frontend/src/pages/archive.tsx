@@ -44,6 +44,7 @@ export default function ArchivePage() {
   const [dateTo, setDateTo] = useState('')
   const [fetching, setFetching] = useState(false)
   const [restorePartnerId, setRestorePartnerId] = useState<number | null>(null)
+  const [deletePaymentId, setDeletePaymentId] = useState<number | null>(null)
 
   useEffect(() => {
     if (!loading && user && user.role !== 'admin') router.replace('/')
@@ -76,6 +77,12 @@ export default function ArchivePage() {
   const runRestorePartner = async () => {
     if (restorePartnerId === null) return
     await api.post(`archive/partners/${restorePartnerId}/restore`)
+    load()
+  }
+
+  const runPermanentDeletePayment = async () => {
+    if (deletePaymentId === null) return
+    await api.delete(`archive/payments/${deletePaymentId}`)
     load()
   }
 
@@ -147,6 +154,7 @@ export default function ArchivePage() {
                   <Th>Дата оплаты</Th>
                   <Th>Подтвердил</Th>
                   <Th>Добавлен</Th>
+                  <Th style={{ width: 56 }}></Th>
                 </tr>
               </thead>
               <tbody>
@@ -168,6 +176,14 @@ export default function ArchivePage() {
                     <Td style={{ color: '#6b7280', fontSize: 12 }}>{p.paid_at ? formatDate(p.paid_at) : '—'}</Td>
                     <Td style={{ color: '#6b7280', fontSize: 12 }}>{p.confirmed_by_user?.name || '—'}</Td>
                     <Td style={{ color: '#6b7280', fontSize: 12 }}>{formatDate(p.created_at)}</Td>
+                    <Td>
+                      <BtnOutline
+                        onClick={() => setDeletePaymentId(p.id)}
+                        style={{ padding: '5px 10px', fontSize: 14, color: '#e84040', borderColor: '#fecaca' }}
+                      >
+                        ✕
+                      </BtnOutline>
+                    </Td>
                   </tr>
                 ))}
               </tbody>
@@ -232,6 +248,17 @@ export default function ArchivePage() {
         confirmLabel="Восстановить"
         danger={false}
         onConfirm={runRestorePartner}
+      />
+
+      <ConfirmModal
+        open={deletePaymentId !== null}
+        onClose={() => setDeletePaymentId(null)}
+        title="Безвозвратное удаление"
+        message="Вы точно хотите безвозвратно удалить? Проект и строки графика исчезнут из базы без возможности восстановления."
+        confirmLabel="Да"
+        cancelLabel="Нет"
+        danger
+        onConfirm={runPermanentDeletePayment}
       />
     </Layout>
   )

@@ -79,7 +79,7 @@ def update_partner(
     if not partner:
         raise HTTPException(status_code=404, detail="Partner not found")
     assert_partner_access(db, current_user, partner_id)
-    updates = data.model_dump(exclude_none=True)
+    updates = data.model_dump(exclude_unset=True)
     if current_user.role == "manager" and not getattr(current_user, "see_all_partners", False):
         updates.pop("manager_id", None)
     for field, value in updates.items():

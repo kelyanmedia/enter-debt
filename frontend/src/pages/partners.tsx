@@ -1,17 +1,44 @@
 import { useEffect, useState } from 'react'
 import { useAuth } from '@/context/AuthContext'
 import Layout from '@/components/Layout'
-import { PageHeader, Card, Th, Td, PartnerAvatar, statusBadge, BtnPrimary, BtnOutline, BtnIconEdit, Modal, ConfirmModal, Field, Input, Select, Empty } from '@/components/ui'
+import { PageHeader, Card, Th, Td, PartnerAvatar, statusBadge, BtnPrimary, BtnOutline, BtnIconEdit, Modal, ConfirmModal, Field, Input, Select, Empty, formatDate } from '@/components/ui'
 import api from '@/lib/api'
 
 interface User { id: number; name: string }
 interface Partner {
   id: number; name: string; contact_person?: string; phone?: string
   email?: string; partner_type: string; status: string; comment?: string
+  cooperation_start_date?: string | null
+  client_joined_date?: string | null
   manager?: { id: number; name: string }
 }
 
-const EMPTY = { name: '', contact_person: '', phone: '', email: '', partner_type: 'regular', manager_id: '', status: 'active', comment: '' }
+const EMPTY = {
+  name: '', contact_person: '', phone: '', email: '', partner_type: 'A', manager_id: '', status: 'active', comment: '',
+  cooperation_start_date: '', client_joined_date: '',
+}
+
+/** Стаж: от даты начала работы, иначе от «клиент у нас с». */
+function partnerTenureText(cooperationStart?: string | null, clientJoined?: string | null): string {
+  const raw = (cooperationStart || clientJoined || '').slice(0, 10)
+  if (!raw || raw.length < 8) return '—'
+  const parts = raw.split('-').map(Number)
+  const y = parts[0]
+  const mo = parts[1]
+  const d = parts[2] || 1
+  if (!y || !mo) return '—'
+  const start = new Date(y, mo - 1, d)
+  const now = new Date()
+  if (start.getTime() > now.getTime()) return '—'
+  let months = (now.getFullYear() - start.getFullYear()) * 12 + (now.getMonth() - start.getMonth())
+  if (now.getDate() < start.getDate()) months -= 1
+  if (months < 0) return '—'
+  const years = Math.floor(months / 12)
+  const m = months % 12
+  if (years === 0) return `${m} мес.`
+  if (m === 0) return `${years} г.`
+  return `${years} г. ${m} мес.`
+}
 
 export default function PartnersPage() {
   const { user } = useAuth()
@@ -49,6 +76,8 @@ export default function PartnersPage() {
       phone: p.phone || '', email: p.email || '',
       partner_type: p.partner_type, manager_id: String(p.manager?.id || ''),
       status: p.status, comment: p.comment || '',
+      cooperation_start_date: p.cooperation_start_date?.slice(0, 10) || '',
+      client_joined_date: p.client_joined_date?.slice(0, 10) || '',
     })
     setError('')
     setModal(true)
@@ -58,7 +87,18 @@ export default function PartnersPage() {
     if (!form.name) { setError('Введите название компании'); return }
     setSaving(true)
     try {
-      const payload = { ...form, manager_id: form.manager_id ? Number(form.manager_id) : null }
+      const payload = {
+        name: form.name,
+        contact_person: form.contact_person || null,
+        phone: form.phone || null,
+        email: form.email || null,
+        partner_type: form.partner_type,
+        manager_id: form.manager_id ? Number(form.manager_id) : null,
+        status: form.status,
+        comment: form.comment || null,
+        cooperation_start_date: form.cooperation_start_date || null,
+        client_joined_date: form.client_joined_date || null,
+      }
       if (editing) {
         await api.put(`partners/${editing.id}`, payload)
       } else {
@@ -103,6 +143,9 @@ export default function PartnersPage() {
                 <Th>Компания</Th>
                 <Th>Контакт</Th>
                 <Th>Тип</Th>
+                <Th>Начало работы</Th>
+                <Th>Клиент у нас с</Th>
+                <Th>Стаж</Th>
                 <Th>Менеджер</Th>
                 <Th>Статус</Th>
                 <Th></Th>
@@ -125,6 +168,9 @@ export default function PartnersPage() {
                     {p.phone && <div style={{ fontSize: 11, color: '#8a8fa8' }}>{p.phone}</div>}
                   </Td>
                   <Td>{statusBadge(p.partner_type)}</Td>
+                  <Td style={{ fontSize: 13 }}>{p.cooperation_start_date ? formatDate(p.cooperation_start_date) : '—'}</Td>
+                  <Td style={{ fontSize: 13 }}>{p.client_joined_date ? formatDate(p.client_joined_date) : '—'}</Td>
+                  <Td style={{ fontSize: 13, color: '#4b5563' }}>{partnerTenureText(p.cooperation_start_date, p.client_joined_date)}</Td>
                   <Td>{p.manager?.name || '—'}</Td>
                   <Td>{statusBadge(p.status)}</Td>
                   <Td>
@@ -141,7 +187,7 @@ export default function PartnersPage() {
         </Card>
       </div>
 
-      <Modal open={modal} onClose={() => setModal(false)} title={editing ? 'Редактировать партнёра' : 'Новый партнёр'}
+      <Modal open={modal} onClose={() => setModal(false)} title={editing ? 'Редактировать партнёра' : 'Новый партнёр'} width={520}
         footer={<><BtnOutline onClick={() => setModal(false)}>Отмена</BtnOutline><BtnPrimary onClick={save} disabled={saving}>{saving ? 'Сохраняем...' : 'Сохранить'}</BtnPrimary></>}
       >
         {error && <div style={{ background: '#fef0f0', color: '#e84040', borderRadius: 8, padding: '9px 12px', fontSize: 13, marginBottom: 14 }}>{error}</div>}
@@ -162,9 +208,9 @@ export default function PartnersPage() {
         <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
           <Field label="Тип партнёра">
             <Select value={form.partner_type} onChange={e => setForm(f => ({ ...f, partner_type: e.target.value }))}>
-              <option value="recurring">Рекуррентный</option>
-              <option value="one_time">Разовый</option>
-              <option value="service">Сервисный</option>
+              <option value="A">A</option>
+              <option value="B">B</option>
+              <option value="C">C</option>
             </Select>
           </Field>
           <Field label="Статус">
@@ -174,6 +220,25 @@ export default function PartnersPage() {
               <option value="archive">Архив</option>
             </Select>
           </Field>
+        </div>
+        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
+          <Field label="Начало работы с клиентом">
+            <Input
+              type="date"
+              value={form.cooperation_start_date}
+              onChange={e => setForm(f => ({ ...f, cooperation_start_date: e.target.value }))}
+            />
+          </Field>
+          <Field label="Клиент у нас с (приход в компанию)">
+            <Input
+              type="date"
+              value={form.client_joined_date}
+              onChange={e => setForm(f => ({ ...f, client_joined_date: e.target.value }))}
+            />
+          </Field>
+        </div>
+        <div style={{ fontSize: 12, color: '#8a8fa8', lineHeight: 1.45, marginTop: -6, marginBottom: 10 }}>
+          Стаж в таблице считается от даты начала работы; если она не заполнена — от даты «клиент у нас с».
         </div>
         <Field label="Менеджер">
           {user?.role === 'manager' ? (

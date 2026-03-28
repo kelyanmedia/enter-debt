@@ -94,6 +94,24 @@ function lineBadge(cat?: string | null) {
   if (cat === 'web') return <span style={{ fontSize: 11, fontWeight: 700, color: '#2563eb', background: '#eff4ff', padding: '3px 8px', borderRadius: 6 }}>Web</span>
   if (cat === 'seo') return <span style={{ fontSize: 11, fontWeight: 700, color: '#b45309', background: '#fff8ee', padding: '3px 8px', borderRadius: 6 }}>SEO</span>
   if (cat === 'ppc') return <span style={{ fontSize: 11, fontWeight: 700, color: '#6b7280', background: '#f3f4f6', padding: '3px 8px', borderRadius: 6 }}>PPC</span>
+  if (cat === 'mobile_app')
+    return (
+      <span style={{ fontSize: 11, fontWeight: 700, color: '#7c3aed', background: '#f3e8ff', padding: '3px 8px', borderRadius: 6 }}>
+        Моб. прил.
+      </span>
+    )
+  if (cat === 'tech_support')
+    return (
+      <span style={{ fontSize: 11, fontWeight: 700, color: '#0d9488', background: '#ccfbf1', padding: '3px 8px', borderRadius: 6 }}>
+        Тех. сопр.
+      </span>
+    )
+  if (cat === 'hosting_domain')
+    return (
+      <span style={{ fontSize: 11, fontWeight: 700, color: '#4338ca', background: '#eef2ff', padding: '3px 8px', borderRadius: 6 }}>
+        Хостинг
+      </span>
+    )
   return <span style={{ color: '#c5c8d4', fontSize: 12 }}>—</span>
 }
 
@@ -399,11 +417,14 @@ export default function PaymentsPage() {
             <option value="one_time">Разовый</option>
             <option value="service_expiry">Сервисный</option>
           </Select>
-          <Select value={filterCategory} onChange={e => setCategoryFilter(e.target.value)} style={{ maxWidth: 180 }}>
+          <Select value={filterCategory} onChange={e => setCategoryFilter(e.target.value)} style={{ maxWidth: 200 }}>
             <option value="">Все линии</option>
             <option value="web">Web</option>
             <option value="seo">SEO</option>
             <option value="ppc">PPC</option>
+            <option value="mobile_app">Мобильное приложение</option>
+            <option value="tech_support">Тех сопровождение</option>
+            <option value="hosting_domain">Хостинг/домен</option>
           </Select>
         </div>
 
@@ -791,12 +812,15 @@ export default function PaymentsPage() {
             {partners.map(p => <option key={p.id} value={p.id}>{p.name}</option>)}
           </Select>
         </Field>
-        <Field label="Линия (CEO): Web / SEO / PPC">
+        <Field label="Линия (CEO)">
           <Select value={form.project_category} onChange={e => setForm(f => ({ ...f, project_category: e.target.value }))}>
             <option value="">Не указано</option>
             <option value="web">Web — сайты и веб</option>
             <option value="seo">SEO</option>
             <option value="ppc">PPC</option>
+            <option value="mobile_app">Мобильное приложение</option>
+            <option value="tech_support">Тех сопровождение</option>
+            <option value="hosting_domain">Хостинг/домен</option>
           </Select>
         </Field>
         <Field label="Услуга *">

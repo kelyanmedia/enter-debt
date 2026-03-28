@@ -17,6 +17,9 @@ interface CeoStats {
   web_projects: number
   seo_projects: number
   ppc_projects: number
+  mobile_app_projects: number
+  tech_support_projects: number
+  hosting_domain_projects: number
 }
 
 interface TurnoverPoint {
@@ -277,6 +280,24 @@ export default function CeoDashboardPage() {
             href="/payments?category=ppc"
             hint="Контекстная реклама"
           />
+          <CeoCard
+            title="Мобильные приложения"
+            value={stats?.mobile_app_projects ?? 0}
+            href="/payments?category=mobile_app"
+            hint="Разработка и сопровождение приложений"
+          />
+          <CeoCard
+            title="Тех сопровождение"
+            value={stats?.tech_support_projects ?? 0}
+            href="/payments?category=tech_support"
+            hint="Техническая поддержка и сопровождение"
+          />
+          <CeoCard
+            title="Хостинг и домены"
+            value={stats?.hosting_domain_projects ?? 0}
+            href="/payments?category=hosting_domain"
+            hint="Хостинг, домены, инфраструктура"
+          />
         </div>
 
         <Card style={{ marginBottom: 20, padding: '4px 4px 8px' }}>
@@ -472,8 +493,8 @@ export default function CeoDashboardPage() {
             border: '1px solid #e8e9ef',
           }}
         >
-          Укажите линию проекта при создании или редактировании в поле «Линия (Web / SEO / PPC)». Без линии проект
-          учитывается только в «Всего проектов».
+          Укажите линию проекта при создании или редактировании в поле «Линия (CEO)». Без линии проект учитывается
+          только в «Всего проектов».
         </div>
       </div>
 

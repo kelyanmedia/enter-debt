@@ -79,6 +79,11 @@ def _migrate():
             created_at TIMESTAMP WITH TIME ZONE DEFAULT now(),
             updated_at TIMESTAMP WITH TIME ZONE
         )""",
+        "ALTER TABLE partners ADD COLUMN IF NOT EXISTS cooperation_start_date DATE",
+        "ALTER TABLE partners ADD COLUMN IF NOT EXISTS client_joined_date DATE",
+        "UPDATE partners SET partner_type = 'A' WHERE partner_type IN ('regular', 'recurring')",
+        "UPDATE partners SET partner_type = 'B' WHERE partner_type = 'one_time'",
+        "UPDATE partners SET partner_type = 'C' WHERE partner_type = 'service'",
     ]
     for sql in migrations:
         # Защита от случайного удаления данных

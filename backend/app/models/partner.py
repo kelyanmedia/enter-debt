@@ -1,4 +1,4 @@
-from sqlalchemy import Column, Integer, String, Text, ForeignKey, DateTime, Boolean
+from sqlalchemy import Column, Integer, String, Text, ForeignKey, DateTime, Boolean, Date
 from sqlalchemy.orm import relationship
 from sqlalchemy.sql import func
 from app.db.database import Base
@@ -12,10 +12,12 @@ class Partner(Base):
     contact_person = Column(String(200), nullable=True)
     phone = Column(String(50), nullable=True)
     email = Column(String(200), nullable=True)
-    partner_type = Column(String(30), nullable=False, default="regular")  # regular / one_time / service
+    partner_type = Column(String(30), nullable=False, default="A")  # A | B | C
     manager_id = Column(Integer, ForeignKey("users.id"), nullable=True)
     status = Column(String(20), nullable=False, default="active")  # active / paused / archive
     comment = Column(Text, nullable=True)
+    cooperation_start_date = Column(Date, nullable=True)
+    client_joined_date = Column(Date, nullable=True)
     is_deleted = Column(Boolean, default=False)
     created_at = Column(DateTime(timezone=True), server_default=func.now())
     updated_at = Column(DateTime(timezone=True), onupdate=func.now())

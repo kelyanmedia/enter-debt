@@ -339,7 +339,15 @@ def get_ceo_stats(
     """Все неархивные проекты (платежи) по линиям Web / SEO / PPC для CEO Dashboard."""
     ids = accessible_partner_ids(db, current_user)
     if ids is not None and len(ids) == 0:
-        return CeoStats(total_projects=0, web_projects=0, seo_projects=0, ppc_projects=0)
+        return CeoStats(
+            total_projects=0,
+            web_projects=0,
+            seo_projects=0,
+            ppc_projects=0,
+            mobile_app_projects=0,
+            tech_support_projects=0,
+            hosting_domain_projects=0,
+        )
 
     def base_q():
         q = db.query(Payment).filter(Payment.is_archived == False)
@@ -349,11 +357,17 @@ def get_ceo_stats(
     web_projects = base_q().filter(Payment.project_category == "web").count()
     seo_projects = base_q().filter(Payment.project_category == "seo").count()
     ppc_projects = base_q().filter(Payment.project_category == "ppc").count()
+    mobile_app_projects = base_q().filter(Payment.project_category == "mobile_app").count()
+    tech_support_projects = base_q().filter(Payment.project_category == "tech_support").count()
+    hosting_domain_projects = base_q().filter(Payment.project_category == "hosting_domain").count()
     return CeoStats(
         total_projects=total_projects,
         web_projects=web_projects,
         seo_projects=seo_projects,
         ppc_projects=ppc_projects,
+        mobile_app_projects=mobile_app_projects,
+        tech_support_projects=tech_support_projects,
+        hosting_domain_projects=hosting_domain_projects,
     )
 
 

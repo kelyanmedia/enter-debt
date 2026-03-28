@@ -39,6 +39,9 @@ export function statusBadge(status: string) {
     recurring: { label: 'Рекуррентный', variant: 'blue' },
     one_time: { label: 'Разовый',   variant: 'gray'  },
     service:  { label: 'Сервисный', variant: 'amber' },
+    A: { label: 'A', variant: 'blue' },
+    B: { label: 'B', variant: 'amber' },
+    C: { label: 'C', variant: 'gray' },
   }
   const m = map[status] || { label: status, variant: 'gray' }
   return <Badge variant={m.variant}>{m.label}</Badge>
