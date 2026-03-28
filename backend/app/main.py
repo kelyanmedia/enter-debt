@@ -1,3 +1,8 @@
+import logging
+from typing import Optional
+
+from apscheduler.schedulers.background import BackgroundScheduler
+from zoneinfo import ZoneInfo
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from app.db.database import init_db, engine, Base
@@ -12,6 +17,23 @@ from app.core.config import settings
 from app.core.security import get_password_hash
 
 app = FastAPI(title="EnterDebt API", version="1.0.0", redirect_slashes=False)
+
+_scheduler: Optional[BackgroundScheduler] = None
+log = logging.getLogger(__name__)
+
+
+def _weekly_tg_report_job():
+    from app.db.database import SessionLocal
+    from app.services.weekly_tg_report import run_weekly_cash_report
+
+    db = SessionLocal()
+    try:
+        r = run_weekly_cash_report(db)
+        log.info("Weekly cash Telegram report: %s", r)
+    except Exception:
+        log.exception("Weekly cash Telegram report failed")
+    finally:
+        db.close()
 
 app.add_middleware(
     CORSMiddleware,
@@ -36,9 +58,33 @@ app.include_router(commissions.router)
 
 @app.on_event("startup")
 def startup():
+    global _scheduler
     Base.metadata.create_all(bind=engine)
     _migrate()
     seed_initial_data()
+    try:
+        _scheduler = BackgroundScheduler(timezone=ZoneInfo("Asia/Tashkent"))
+        _scheduler.add_job(
+            _weekly_tg_report_job,
+            "cron",
+            day_of_week="fri",
+            hour=18,
+            minute=0,
+            id="weekly_cash_telegram",
+            replace_existing=True,
+        )
+        _scheduler.start()
+        log.info("APScheduler: weekly cash report — пт 18:00 Asia/Tashkent")
+    except Exception as e:
+        log.warning("APScheduler not started: %s", e)
+
+
+@app.on_event("shutdown")
+def shutdown_scheduler():
+    global _scheduler
+    if _scheduler is not None:
+        _scheduler.shutdown(wait=False)
+        _scheduler = None
 
 
 def _migrate():

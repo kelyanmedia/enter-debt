@@ -144,6 +144,30 @@ def _payments_panel_url() -> str:
     return f"{settings.APP_PUBLIC_URL.rstrip('/')}/payments"
 
 
+def _accounting_telegram_route_user_id(actor: User, partner: Optional[Partner]) -> Optional[int]:
+    """
+    Кому бот перешлёт файл от бухгалтерии (ответом на пуш):
+    если действие сделал менеджер — он; иначе закреплённый за партнёром менеджер (админ/бухгалтерия).
+    """
+    if actor.role == "manager":
+        return actor.id
+    if partner and partner.manager_id:
+        return partner.manager_id
+    return None
+
+
+def _accounting_reply_footer(route_user_id: Optional[int]) -> str:
+    if route_user_id:
+        return (
+            "\n\n<i>Ответьте файлом <b>на это сообщение</b> — документ уйдёт менеджеру по этому пушу.</i>"
+            f"\n<code>ed_route_user_id:{route_user_id}</code>"
+        )
+    return (
+        "\n\n<i>Ответьте файлом на это сообщение. Закреплённого менеджера нет — документ уйдёт "
+        "<b>всем</b> менеджерам с привязанным Telegram.</i>"
+    )
+
+
 @router.post("/{payment_id}/months/{month_id}/mark-act", response_model=PaymentMonthOut)
 async def mark_act_issued(
     payment_id: int,
@@ -186,6 +210,12 @@ async def mark_act_issued(
         reply_markup = {
             "inline_keyboard": [[{"text": "Добавить", "url": panel}]],
         }
+        route_uid = _accounting_telegram_route_user_id(current_user, payment.partner)
+        mgr = payment.partner.manager if payment.partner else None
+        mgr_line = f"\n👤 Пуш от: <b>{current_user.name}</b>"
+        if mgr and mgr.id != current_user.id:
+            mgr_line += f"\n👤 Менеджер партнёра: <b>{mgr.name}</b>"
+        footer = _accounting_reply_footer(route_uid)
         accountants = db.query(User).filter(
             User.role == "accountant",
             User.is_active == True,
@@ -197,8 +227,10 @@ async def mark_act_issued(
                 f"🏢 Компания: <b>{partner_name}</b>\n"
                 f"📋 Описание: <b>{desc}</b>\n"
                 f"📅 Месяц: <b>{month_label}</b>\n"
-                f"💰 Сумма: <b>{int(amount_val):,} UZS</b>{contract_line}\n\n"
+                f"💰 Сумма: <b>{int(amount_val):,} UZS</b>{contract_line}"
+                f"{mgr_line}\n\n"
                 f"Нажмите «Добавить», чтобы открыть панель и приложить Акт/СФ."
+                f"{footer}"
             )
             await _send_tg(str(acc.telegram_chat_id), text, reply_markup=reply_markup)
 
@@ -259,6 +291,9 @@ async def confirm_month(
             await _send_tg(str(mgr.telegram_chat_id), text)
 
         if payment.notify_accounting:
+            route_uid = _accounting_telegram_route_user_id(current_user, payment.partner)
+            pusher_line = f"\n👤 Пуш от: <b>{current_user.name}</b>"
+            footer = _accounting_reply_footer(route_uid)
             accountants = db.query(User).filter(
                 User.role == "accountant",
                 User.is_active == True,
@@ -272,7 +307,9 @@ async def confirm_month(
                     f"📋 Описание: <b>{desc}</b>\n"
                     f"📅 Месяц: <b>{month_label}</b>\n"
                     f"💰 Сумма: <b>{int(amount_val):,} UZS</b>\n"
-                    f"👤 Менеджер: <b>{mgr_name}</b>{contract_line}"
+                    f"👤 Менеджер партнёра: <b>{mgr_name}</b>{contract_line}"
+                    f"{pusher_line}"
+                    f"{footer}"
                 )
                 await _send_tg(str(acc.telegram_chat_id), text)
 

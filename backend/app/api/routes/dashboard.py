@@ -12,6 +12,7 @@ from app.models.ceo_metric_override import CeoMetricOverride
 from app.schemas.schemas import (
     DashboardStats,
     ReceivedPaymentRowOut,
+    WeeklyCashReportSendOut,
     CeoStats,
     CeoTurnoverOut,
     CeoTurnoverPoint,
@@ -24,6 +25,7 @@ from app.schemas.schemas import (
 from app.core.security import get_current_user, require_admin, require_admin_or_accountant
 from app.core.access import accessible_partner_ids, filter_payments_query, filter_partners_query
 from app.models.user import User
+from app.services.weekly_tg_report import run_weekly_cash_report
 
 router = APIRouter(prefix="/api/dashboard", tags=["dashboard"])
 
@@ -267,6 +269,38 @@ def received_payments_cashflow(
 
     out.sort(key=lambda r: (r.paid_at.timestamp() if r.paid_at else 0), reverse=True)
     return out
+
+
+@router.post("/weekly-cash-report/send", response_model=WeeklyCashReportSendOut)
+def post_weekly_cash_report_send(
+    db: Session = Depends(get_db),
+    _: User = Depends(require_admin),
+):
+    """
+    Отправить в Telegram тот же отчёт, что и по расписанию (пт 18:00 Ташкент):
+    поступления с понедельника 00:00 до min(сейчас, пятница 18:00) текущей недели.
+    Получатели — все активные админы с telegram_chat_id, иначе ADMIN_TELEGRAM_CHAT_ID.
+    """
+    r = run_weekly_cash_report(db)
+    detail = None
+    if not r["ok"]:
+        err = r.get("error")
+        if err == "no_recipient":
+            detail = "Нет получателя: привяжите Telegram администратору в профиле бота или задайте ADMIN_TELEGRAM_CHAT_ID."
+        elif err == "no_bot_token":
+            detail = "BOT_TOKEN не задан — отправка в Telegram недоступна."
+        else:
+            detail = "Не удалось доставить сообщение в Telegram (проверьте логи сервера)."
+    return WeeklyCashReportSendOut(
+        ok=r["ok"],
+        detail=detail,
+        period_start=r.get("period_start"),
+        period_end=r.get("period_end"),
+        total=r.get("total"),
+        row_count=int(r.get("row_count", 0)),
+        project_groups=int(r.get("project_groups", 0)),
+        sent_to=list(r.get("sent_to") or []),
+    )
 
 
 def _debitor_filter_by_manager(manager_id: Optional[int], current_user: User) -> bool:

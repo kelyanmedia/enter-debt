@@ -1,4 +1,4 @@
-from pydantic import BaseModel, EmailStr
+from pydantic import BaseModel, EmailStr, Field
 from typing import Optional, List, Literal, Dict, Any
 from datetime import datetime, date
 from decimal import Decimal
@@ -213,6 +213,19 @@ class DashboardStats(BaseModel):
     paid_this_month: int
     paid_amount_this_month: Decimal
     partners_count: int
+
+
+class WeeklyCashReportSendOut(BaseModel):
+    """Результат ручной или фоновой отправки еженедельного отчёта в Telegram."""
+
+    ok: bool
+    detail: Optional[str] = None
+    period_start: Optional[str] = None
+    period_end: Optional[str] = None
+    total: Optional[str] = None
+    row_count: int = 0
+    project_groups: int = 0
+    sent_to: List[int] = Field(default_factory=list)
 
 
 class ReceivedPaymentRowOut(BaseModel):

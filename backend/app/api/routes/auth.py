@@ -7,6 +7,9 @@ from sqlalchemy.orm import Session
 from app.db.database import get_db
 from app.models.user import User
 from sqlalchemy import func
+import httpx
+
+from app.core.config import settings
 from app.core.security import verify_password, create_access_token, get_current_user, normalize_email, get_password_hash
 from app.schemas.schemas import Token, UserOut, ProfileSelfUpdate
 
@@ -77,6 +80,45 @@ def login_json(data: LoginRequest, db: Session = Depends(get_db)):
 @router.get("/me", response_model=UserOut)
 def get_me(current_user: User = Depends(get_current_user)):
     return current_user
+
+
+@router.post("/me/telegram-ping", response_model=dict)
+def post_me_telegram_ping(
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """
+    Тестовое сообщение в Telegram текущего пользователя — проверка, что пуши доходят.
+    """
+    user = db.query(User).filter(User.id == current_user.id).first()
+    if not user:
+        raise HTTPException(status_code=404, detail="User not found")
+    if not user.telegram_chat_id:
+        raise HTTPException(
+            status_code=400,
+            detail="Telegram не привязан. Откройте бота EnterDebt, выполните /start и дождитесь одобрения заявки администратором.",
+        )
+    if not settings.BOT_TOKEN:
+        raise HTTPException(status_code=503, detail="BOT_TOKEN не настроен на сервере")
+    url = f"https://api.telegram.org/bot{settings.BOT_TOKEN}/sendMessage"
+    text = (
+        "🔔 <b>EnterDebt</b> — тестовое уведомление.\n\n"
+        "Если вы видите это сообщение, доставка пушей в ваш чат работает."
+    )
+    try:
+        r = httpx.post(
+            url,
+            json={"chat_id": int(user.telegram_chat_id), "text": text, "parse_mode": "HTML"},
+            timeout=15,
+        )
+    except Exception as e:
+        raise HTTPException(status_code=502, detail=f"Сеть Telegram: {e}") from e
+    if r.status_code != 200:
+        raise HTTPException(
+            status_code=502,
+            detail=f"Telegram отклонил сообщение: {r.text[:200]}",
+        )
+    return {"ok": True}
 
 
 @router.patch("/me", response_model=UserOut)

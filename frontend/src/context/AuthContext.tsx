@@ -7,6 +7,7 @@ interface User {
   email: string
   role: 'admin' | 'manager' | 'accountant'
   telegram_username?: string
+  telegram_chat_id?: number | null
   is_active: boolean
 }
 

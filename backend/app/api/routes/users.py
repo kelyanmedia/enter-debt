@@ -153,3 +153,16 @@ def get_managers(db: Session = Depends(get_db)):
         User.telegram_chat_id.isnot(None)
     ).all()
     return [{"id": u.id, "name": u.name, "telegram_chat_id": u.telegram_chat_id} for u in managers]
+
+
+@router.get("/internal/telegram-chat-by-user/{user_id}")
+def internal_telegram_chat_by_user(user_id: int, db: Session = Depends(get_db)):
+    """Для бота: chat id пользователя с привязанным Telegram (менеджер/админ)."""
+    u = db.query(User).filter(
+        User.id == user_id,
+        User.is_active == True,
+        User.telegram_chat_id.isnot(None),
+    ).first()
+    if not u:
+        raise HTTPException(status_code=404, detail="User or telegram not linked")
+    return {"telegram_chat_id": int(u.telegram_chat_id), "name": u.name}

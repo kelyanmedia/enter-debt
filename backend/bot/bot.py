@@ -1,6 +1,8 @@
 import asyncio
 import logging
 import os
+import re
+from typing import Optional
 
 import httpx
 from aiogram import Bot, Dispatcher, types, F
@@ -127,10 +129,30 @@ async def cmd_help(message: types.Message):
         "/help — справка\n\n"
         "После одобрения заявки менеджер получает ссылку и логин в панель; "
         "бухгалтерия работает через уведомления в этом чате.\n\n"
-        "📎 <b>Бухгалтерия:</b> ответьте файлом на уведомление о платеже — "
-        "бот перешлёт документ менеджеру.",
+        "📎 <b>Бухгалтерия:</b> ответьте <b>файлом на то сообщение</b>, которое пришло по акту или оплате — "
+        "документ уйдёт менеджеру, отправившему пуш (или закреплённому за партнёром, если пуш от админа). "
+        "Без ответа на такое сообщение рассылка всем менеджерам.",
         parse_mode="HTML",
     )
+
+
+_ROUTE_RE = re.compile(r"ed_route_user_id:(\d+)")
+
+
+def _extract_route_user_id(reply: Optional[types.Message]) -> Optional[int]:
+    if not reply:
+        return None
+    chunks = []
+    for attr in ("html_text", "text", "caption"):
+        raw = getattr(reply, attr, None)
+        if raw:
+            chunks.append(raw)
+    blob = "\n".join(chunks)
+    m = _ROUTE_RE.search(blob)
+    if not m:
+        return None
+    uid = int(m.group(1))
+    return uid if uid > 0 else None
 
 
 @dp.message(F.document | F.photo)
@@ -163,11 +185,18 @@ async def handle_file_from_accountant(message: types.Message):
         return
 
     caption_text = ""
-    if message.reply_to_message and message.reply_to_message.text:
-        lines = message.reply_to_message.text.split("\n")
-        for line in lines:
-            if "Компания:" in line or "Описание:" in line or "Месяц:" in line:
-                caption_text += line.strip() + "\n"
+    reply_msg = message.reply_to_message
+    if reply_msg:
+        for raw in (
+            getattr(reply_msg, "text", None),
+            getattr(reply_msg, "html_text", None),
+            getattr(reply_msg, "caption", None),
+        ):
+            if not raw:
+                continue
+            for line in raw.split("\n"):
+                if any(k in line for k in ("Компания:", "Описание:", "Месяц:", "Компания", "Описание")):
+                    caption_text += line.strip() + "\n"
 
     forward_caption = (
         f"📎 <b>Документ от бухгалтерии</b>\n"
@@ -176,11 +205,42 @@ async def handle_file_from_accountant(message: types.Message):
     if caption_text:
         forward_caption += f"\n{caption_text}"
 
+    route_uid = _extract_route_user_id(reply_msg)
+    target_chats: list[int] = []
+    mode = "broadcast"
+
+    if route_uid is not None:
+        try:
+            async with httpx.AsyncClient(timeout=5) as client:
+                r = await client.get(f"{API_URL}/api/users/internal/telegram-chat-by-user/{route_uid}")
+                if r.status_code == 200:
+                    data = r.json()
+                    cid = data.get("telegram_chat_id")
+                    if cid:
+                        target_chats = [int(cid)]
+                        mode = "single"
+        except Exception:
+            pass
+
+    if mode == "single" and not target_chats:
+        await message.answer(
+            "⚠️ В уведомлении указан менеджер, но у него нет привязанного Telegram — пересылаю всем менеджерам.",
+        )
+        mode = "broadcast"
+
+    if mode == "broadcast":
+        if not reply_msg:
+            await message.answer(
+                "⚠️ Лучше ответить файлом <b>на сообщение</b> об акте или оплате — тогда документ уйдёт нужному менеджеру. "
+                "Сейчас пересылаю всем менеджерам с Telegram.",
+                parse_mode="HTML",
+            )
+        target_chats = list(
+            {int(m["telegram_chat_id"]) for m in managers if m.get("telegram_chat_id")}
+        )
+
     forwarded = 0
-    for mgr in managers:
-        mgr_chat_id = mgr.get("telegram_chat_id")
-        if not mgr_chat_id:
-            continue
+    for mgr_chat_id in target_chats:
         try:
             if message.document:
                 await bot.send_document(
@@ -198,10 +258,13 @@ async def handle_file_from_accountant(message: types.Message):
                 )
             forwarded += 1
         except Exception as e:
-            logging.warning(f"Failed to forward to manager {mgr_chat_id}: {e}")
+            logging.warning(f"Failed to forward to {mgr_chat_id}: {e}")
 
     if forwarded > 0:
-        await message.answer(f"✅ Документ переслан {forwarded} менеджер(ам).")
+        if mode == "single":
+            await message.answer("✅ Документ переслан менеджеру, которому адресован пуш.")
+        else:
+            await message.answer(f"✅ Документ переслан {forwarded} менеджер(ам).")
     else:
         await message.answer("⚠️ Не удалось переслать — у менеджеров не указан Telegram Chat ID.")
 
