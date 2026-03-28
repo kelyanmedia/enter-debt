@@ -453,7 +453,11 @@ export function formatDate(d?: string | null) {
   return new Date(d).toLocaleDateString('ru-RU', { day: '2-digit', month: 'short', year: 'numeric' })
 }
 
-export function daysLeft(deadline?: string | null, dayOfMonth?: number | null): { label: string; color: string } {
+export function daysLeft(
+  deadline?: string | null,
+  dayOfMonth?: number | null,
+  variant: 'standard' | 'cashflow' = 'standard',
+): { label: string; color: string } {
   let date: Date | null = null
   if (deadline) {
     date = new Date(deadline)
@@ -465,6 +469,11 @@ export function daysLeft(deadline?: string | null, dayOfMonth?: number | null): 
   if (!date) return { label: '—', color: '#8a8fa8' }
   const diff = Math.ceil((date.getTime() - Date.now()) / 86400000)
   if (diff < 0) return { label: `−${Math.abs(diff)} дн.`, color: '#e84040' }
+  if (variant === 'cashflow') {
+    // Дебиторка: красный — просрочка; жёлтый — скоро к оплате (≤14 дн.); остальное — нейтрально
+    if (diff <= 14) return { label: diff === 0 ? 'Сегодня' : `${diff} дн.`, color: '#ca8a04' }
+    return { label: `${diff} дн.`, color: '#94a3b8' }
+  }
   if (diff <= 3) return { label: `${diff} дн.`, color: '#f0900a' }
   return { label: `${diff} дн.`, color: '#2d9b5a' }
 }

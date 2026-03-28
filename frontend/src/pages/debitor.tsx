@@ -68,6 +68,43 @@ function today() {
   return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`
 }
 
+/** Первый и последний день следующего календарного месяца (локальное время) */
+function boundsNextMonth(): [string, string] {
+  const d = new Date()
+  const next = new Date(d.getFullYear(), d.getMonth() + 1, 1)
+  const ny = next.getFullYear()
+  const nm = next.getMonth()
+  const first = `${ny}-${String(nm + 1).padStart(2, '0')}-01`
+  const lastD = new Date(ny, nm + 1, 0).getDate()
+  const last = `${ny}-${String(nm + 1).padStart(2, '0')}-${String(lastD).padStart(2, '0')}`
+  return [first, last]
+}
+
+function ymdTuple(s: string): [number, number, number] | null {
+  const m = /^(\d{4})-(\d{2})-(\d{2})/.exec(s)
+  if (!m) return null
+  return [parseInt(m[1], 10), parseInt(m[2], 10), parseInt(m[3], 10)]
+}
+
+function cmpYmd(a: [number, number, number], b: [number, number, number]): number {
+  if (a[0] !== b[0]) return a[0] - b[0]
+  if (a[1] !== b[1]) return a[1] - b[1]
+  return a[2] - b[2]
+}
+
+/** Платёж попадает в выбранный период по дате срока оплаты (или по дате добавления проекта, если срока нет) */
+function paymentDueInSelectedPeriod(p: Payment, dateFrom: string, dateTo: string): boolean {
+  if (!dateFrom && !dateTo) return true
+  const anchor = (p.deadline_date && p.deadline_date.slice(0, 10)) || (p.created_at && p.created_at.slice(0, 10)) || ''
+  const d = ymdTuple(anchor)
+  if (!d) return true
+  const from = dateFrom ? ymdTuple(dateFrom) : null
+  const to = dateTo ? ymdTuple(dateTo) : null
+  if (from && cmpYmd(d, from) < 0) return false
+  if (to && cmpYmd(d, to) > 0) return false
+  return true
+}
+
 const DATE_INPUT_STYLE: React.CSSProperties = {
   border: '1px solid #e8e9ef',
   borderRadius: 8,
@@ -83,11 +120,11 @@ const DATE_INPUT_STYLE: React.CSSProperties = {
 /** Подсказки для карточек дебиторки (значок «!» в углу) */
 const DEBITOR_STAT_HINT = {
   receivable:
-    'Сумма всех неоплаченных проектов (статусы «Ожидается» и «Просрочено»). Учитываются выбранный период по дате добавления проекта в систему, фильтр менеджера (если есть) и ваши права доступа. Уже оплаченные суммы сюда не входят.',
+    'Сумма неоплаченных платежей (строки графика или разовые проекты), у которых срок оплаты попадает в выбранный период. Длинный договор с 12 месяцами даёт 12 отдельных платежей — каждый со своей датой. Фильтры менеджера и категории учитываются. Оплаченное сюда не входит.',
   overdue:
-    'Сколько неоплаченных проектов с просроченным сроком оплаты. Те же правила периода и менеджера, что у зелёной карточки и таблицы ниже.',
+    'Число платежей с просроченным сроком (красный в колонке «Срок») в выбранном периоде по дате оплаты.',
   pending:
-    'Сколько неоплаченных проектов без просрочки — срок ещё не наступил или это текущее ожидание. Соответствует фильтру «Только ожидается» в таблице.',
+    'Число платежей без просрочки, но со сроком в выбранном периоде (жёлтый — до 14 дней до срока, серый — дальше).',
   paid:
     'Число зафиксированных оплат и сумма по фактической дате зачисления: помесячные оплаты (отметка «оплата прошла» по месяцу) и разовые проекты без графика (кнопка «Оплачено»). Если выбраны даты — только оплаты в этом диапазоне; «Всё время» — за всю историю.',
 } as const
@@ -168,26 +205,38 @@ export default function DebitorPage() {
     loadStats(from, to, filterManager)
   }
 
-  const payments = useMemo(() => {
+  /** База для карточек и таблицы: неоплаченные платежи с сроком в периоде (не по дате создания проекта) */
+  const debitorBase = useMemo(() => {
     let list = allPayments
-    if (filterManager) {
-      list = list.filter(p => String(p.partner?.manager?.id) === filterManager)
-    }
+    if (filterManager) list = list.filter(p => String(p.partner?.manager?.id) === filterManager)
+    if (filterCategory) list = list.filter(p => (p.project_category || '') === filterCategory)
+    list = list.filter(p => paymentDueInSelectedPeriod(p, dateFrom, dateTo))
+    return list
+  }, [allPayments, dateFrom, dateTo, filterManager, filterCategory])
+
+  const debitorReceivableStats = useMemo(() => {
+    const overdue_count = debitorBase.filter(p => p.status === 'overdue').length
+    const pending_count = debitorBase.filter(p => p.status === 'pending').length
+    const total_receivable = debitorBase.reduce((s, p) => s + Number(p.amount), 0)
+    const partners_count = new Set(debitorBase.map(p => p.partner?.name).filter(Boolean)).size
+    return { overdue_count, pending_count, total_receivable, partners_count }
+  }, [debitorBase])
+
+  const payments = useMemo(() => {
+    let list = debitorBase
     if (statusFilter === 'overdue') list = list.filter(p => p.status === 'overdue')
     if (statusFilter === 'pending') list = list.filter(p => p.status === 'pending')
-    if (filterCategory) list = list.filter(p => (p.project_category || '') === filterCategory)
-    if (dateFrom) list = list.filter(p => new Date(p.created_at) >= new Date(dateFrom))
-    if (dateTo) {
-      const to = new Date(dateTo)
-      to.setHours(23, 59, 59, 999)
-      list = list.filter(p => new Date(p.created_at) <= to)
-    }
     return list.sort((a, b) => {
       if (a.status === 'overdue' && b.status !== 'overdue') return -1
       if (a.status !== 'overdue' && b.status === 'overdue') return 1
-      return 0
+      const ad = (a.deadline_date || a.created_at || '').slice(0, 10)
+      const bd = (b.deadline_date || b.created_at || '').slice(0, 10)
+      if (ad !== bd) return ad < bd ? -1 : ad > bd ? 1 : 0
+      const ak = a.source_payment_month_id != null ? `${a.id}-${a.source_payment_month_id}` : String(a.id)
+      const bk = b.source_payment_month_id != null ? `${b.id}-${b.source_payment_month_id}` : String(b.id)
+      return ak.localeCompare(bk)
     })
-  }, [allPayments, dateFrom, dateTo, statusFilter, filterManager, filterCategory])
+  }, [debitorBase, statusFilter])
 
   const periodLabel =
     dateFrom || dateTo
@@ -203,7 +252,7 @@ export default function DebitorPage() {
     <Layout>
       <PageHeader
         title="Дебиторка"
-        subtitle="Дебиторская задолженность по проектам: статистика за период и список неоплаченных сумм."
+        subtitle="Платежи по сроку оплаты: кто должен заплатить в выбранном месяце (в т.ч. отдельные месяцы длинного договора). Красный — просрочка, жёлтый — срок ближе 14 дней."
       />
 
       <div style={{ padding: '22px 24px', overflowY: 'auto', flex: 1 }}>
@@ -216,7 +265,7 @@ export default function DebitorPage() {
             marginBottom: 20,
           }}
         >
-          <span style={{ fontSize: 12, color: '#8a8fa8' }}>Период для статистики:</span>
+          <span style={{ fontSize: 12, color: '#8a8fa8' }}>Срок оплаты в периоде:</span>
           <input
             type="date"
             value={dateFrom}
@@ -246,6 +295,26 @@ export default function DebitorPage() {
             }}
           >
             Этот месяц
+          </button>
+          <button
+            type="button"
+            onClick={() => {
+              const [f, t] = boundsNextMonth()
+              handleDateChange(f, t)
+            }}
+            style={{
+              fontSize: 11,
+              color: '#1e40af',
+              background: '#eff6ff',
+              border: '1px solid #bfdbfe',
+              borderRadius: 7,
+              padding: '5px 10px',
+              cursor: 'pointer',
+              fontWeight: 600,
+              fontFamily: 'inherit',
+            }}
+          >
+            Следующий месяц
           </button>
           <button
             type="button"
@@ -314,22 +383,22 @@ export default function DebitorPage() {
           <StatCard
             featured
             label="Дебиторка за период"
-            value={stats ? formatAmount(stats.total_receivable) : '—'}
-            sub={`${stats?.partners_count ?? 0} активных партнёров`}
+            value={formatAmount(debitorReceivableStats.total_receivable)}
+            sub={`${debitorReceivableStats.partners_count} партнёров в списке`}
             infoText={DEBITOR_STAT_HINT.receivable}
           />
           <StatCard
             label="Просрочено"
-            value={String(stats?.overdue_count ?? '—')}
+            value={String(debitorReceivableStats.overdue_count)}
             sub={`за ${periodLabel}`}
             subColor="#e84040"
             infoText={DEBITOR_STAT_HINT.overdue}
           />
           <StatCard
             label="Ожидается"
-            value={String(stats?.pending_count ?? '—')}
+            value={String(debitorReceivableStats.pending_count)}
             sub={`за ${periodLabel}`}
-            subColor="#f0900a"
+            subColor="#ca8a04"
             infoText={DEBITOR_STAT_HINT.pending}
           />
           <StatCard
@@ -354,9 +423,9 @@ export default function DebitorPage() {
             }}
           >
             <div>
-              <div style={{ fontSize: 14, fontWeight: 700 }}>Неоплаченные проекты</div>
+              <div style={{ fontSize: 14, fontWeight: 700 }}>Неоплаченные платежи</div>
               <div style={{ fontSize: 12, color: '#8a8fa8', marginTop: 4 }}>
-                Период: {periodLabel} · в таблице сумма по отфильтрованным строкам:{' '}
+                Срок оплаты в периоде: {periodLabel} · сумма строк в таблице:{' '}
                 <strong style={{ color: '#1a1d23' }}>{formatAmount(totalRowSum)}</strong>
               </div>
             </div>
@@ -375,14 +444,14 @@ export default function DebitorPage() {
                 <Th>Категория</Th>
                 <Th>Проект</Th>
                 <Th>Сумма</Th>
-                <Th>Добавлен</Th>
-                <Th>Срок / осталось</Th>
+                <Th>Добавлен проект</Th>
+                <Th>Срок оплаты</Th>
                 <Th>Статус</Th>
               </tr>
             </thead>
             <tbody>
               {payments.map(p => {
-                const dl = daysLeft(p.deadline_date, p.day_of_month)
+                const dl = daysLeft(p.deadline_date, p.day_of_month, 'cashflow')
                 const rowKey =
                   p.source_payment_month_id != null ? `${p.id}-m-${p.source_payment_month_id}` : p.id
                 return (
@@ -405,7 +474,18 @@ export default function DebitorPage() {
                     </Td>
                     <Td style={{ color: '#8a8fa8', fontSize: 12 }}>{formatDate(p.created_at)}</Td>
                     <Td>
-                      <span style={{ fontWeight: 600, color: dl.color }}>{dl.label}</span>
+                      {p.deadline_date ? (
+                        <div>
+                          <div style={{ fontWeight: 600, color: '#1a1d23', fontSize: 13 }}>
+                            {formatDate(p.deadline_date)}
+                          </div>
+                          <div style={{ fontWeight: 600, color: dl.color, fontSize: 12, marginTop: 2 }}>
+                            {dl.label}
+                          </div>
+                        </div>
+                      ) : (
+                        <span style={{ fontWeight: 600, color: dl.color }}>{dl.label}</span>
+                      )}
                     </Td>
                     <Td>{statusBadge(p.status)}</Td>
                   </tr>
@@ -413,7 +493,9 @@ export default function DebitorPage() {
               })}
             </tbody>
           </table>
-          {payments.length === 0 && <Empty text="Нет неоплаченных проектов по выбранным фильтрам" />}
+          {payments.length === 0 && (
+            <Empty text="Нет неоплаченных платежей с таким сроком оплаты и фильтрами. Проверьте «Всё время» или следующий месяц." />
+          )}
         </Card>
       </div>
     </Layout>
