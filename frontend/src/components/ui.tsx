@@ -274,19 +274,121 @@ export function PageHeader({ title, subtitle, action }: { title: string; subtitl
 
 // ── Stat Card ─────────────────────────────────────────────────────────────────
 
-export function StatCard({ label, value, sub, subColor = '#2d9b5a', featured, onClick }: {
-  label: string; value: string; sub?: string; subColor?: string; featured?: boolean; onClick?: () => void
+function StatCardInfoTip({ text, light }: { text: string; light?: boolean }) {
+  const [open, setOpen] = useState(false)
+  return (
+    <span
+      onClick={e => e.stopPropagation()}
+      onKeyDown={e => e.stopPropagation()}
+      onMouseEnter={() => setOpen(true)}
+      onMouseLeave={() => setOpen(false)}
+      style={{ position: 'absolute', top: 12, right: 12, zIndex: 4 }}
+    >
+      <span
+        role="img"
+        aria-label="Пояснение к показателю"
+        style={{
+          display: 'inline-flex',
+          width: 22,
+          height: 22,
+          borderRadius: '50%',
+          alignItems: 'center',
+          justifyContent: 'center',
+          fontSize: 13,
+          fontWeight: 800,
+          lineHeight: 1,
+          cursor: 'help',
+          userSelect: 'none',
+          border: light ? '1px solid rgba(255,255,255,0.55)' : '1px solid #cbd5e1',
+          color: light ? '#fff' : '#475569',
+          background: light ? 'rgba(255,255,255,0.2)' : '#f8fafc',
+        }}
+      >
+        !
+      </span>
+      {open && (
+        <div
+          role="tooltip"
+          style={{
+            position: 'absolute',
+            top: '100%',
+            right: 0,
+            marginTop: 8,
+            width: 'min(100vw - 32px, 300px)',
+            maxWidth: 300,
+            padding: '12px 14px',
+            borderRadius: 10,
+            fontSize: 13,
+            fontWeight: 500,
+            lineHeight: 1.5,
+            color: '#f8fafc',
+            background: '#1e293b',
+            boxShadow: '0 10px 28px rgba(0,0,0,.22)',
+          }}
+        >
+          {text}
+        </div>
+      )}
+    </span>
+  )
+}
+
+export function StatCard({
+  label,
+  value,
+  sub,
+  subColor = '#2d9b5a',
+  featured,
+  onClick,
+  infoText,
+}: {
+  label: string
+  value: string
+  sub?: string
+  subColor?: string
+  featured?: boolean
+  onClick?: () => void
+  /** Подсказка при наведении на значок «!» в углу карточки */
+  infoText?: string
 }) {
   return (
-    <div onClick={onClick} style={{
-      background: featured ? '#1a6b3c' : '#fff',
-      border: '1px solid #e8e9ef', borderRadius: 14,
-      padding: '18px 20px', cursor: onClick ? 'pointer' : 'default',
-      transition: 'box-shadow .15s',
-    }}>
-      <div style={{ fontSize: 12, fontWeight: 500, color: featured ? 'rgba(255,255,255,.7)' : '#8a8fa8', marginBottom: 8 }}>{label}</div>
-      <div style={{ fontSize: 28, fontWeight: 700, letterSpacing: '-.02em', color: featured ? '#fff' : '#1a1d23', marginBottom: 6 }}>{value}</div>
-      {sub && <div style={{ fontSize: 12, color: featured ? 'rgba(255,255,255,.8)' : subColor }}>{sub}</div>}
+    <div
+      onClick={onClick}
+      style={{
+        position: 'relative',
+        background: featured ? '#1a6b3c' : '#fff',
+        border: '1px solid #e8e9ef',
+        borderRadius: 14,
+        padding: infoText ? '18px 40px 18px 20px' : '18px 20px',
+        cursor: onClick ? 'pointer' : 'default',
+        transition: 'box-shadow .15s',
+      }}
+    >
+      {infoText && <StatCardInfoTip text={infoText} light={!!featured} />}
+      <div
+        style={{
+          fontSize: 12,
+          fontWeight: 500,
+          color: featured ? 'rgba(255,255,255,.7)' : '#8a8fa8',
+          marginBottom: 8,
+        }}
+      >
+        {label}
+      </div>
+      <div
+        style={{
+          fontSize: 28,
+          fontWeight: 700,
+          letterSpacing: '-.02em',
+          color: featured ? '#fff' : '#1a1d23',
+          marginBottom: 6,
+        }}
+      >
+        {value}
+      </div>
+      {sub && (
+        <div style={{ fontSize: 12, color: featured ? 'rgba(255,255,255,.8)' : subColor }}>{sub}</div>
+      )}
     </div>
   )
 }

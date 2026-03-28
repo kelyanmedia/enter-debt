@@ -79,6 +79,18 @@ const DATE_INPUT_STYLE: React.CSSProperties = {
   fontFamily: 'inherit',
 }
 
+/** Подсказки для карточек дебиторки (значок «!» в углу) */
+const DEBITOR_STAT_HINT = {
+  receivable:
+    'Сумма всех неоплаченных проектов (статусы «Ожидается» и «Просрочено»). Учитываются выбранный период по дате добавления проекта в систему, фильтр менеджера (если есть) и ваши права доступа. Уже оплаченные суммы сюда не входят.',
+  overdue:
+    'Сколько неоплаченных проектов с просроченным сроком оплаты. Те же правила периода и менеджера, что у зелёной карточки и таблицы ниже.',
+  pending:
+    'Сколько неоплаченных проектов без просрочки — срок ещё не наступил или это текущее ожидание. Соответствует фильтру «Только ожидается» в таблице.',
+  paid:
+    'Число зафиксированных оплат и сумма по фактической дате зачисления: помесячные оплаты (отметка «оплата прошла» по месяцу) и разовые проекты без графика (кнопка «Оплачено»). Если выбраны даты — только оплаты в этом диапазоне; «Всё время» — за всю историю.',
+} as const
+
 interface ManagerOption {
   id: number
   name: string
@@ -290,24 +302,28 @@ export default function DebitorPage() {
             label="Дебиторка за период"
             value={stats ? formatAmount(stats.total_receivable) : '—'}
             sub={`${stats?.partners_count ?? 0} активных партнёров`}
+            infoText={DEBITOR_STAT_HINT.receivable}
           />
           <StatCard
             label="Просрочено"
             value={String(stats?.overdue_count ?? '—')}
             sub={`за ${periodLabel}`}
             subColor="#e84040"
+            infoText={DEBITOR_STAT_HINT.overdue}
           />
           <StatCard
             label="Ожидается"
             value={String(stats?.pending_count ?? '—')}
             sub={`за ${periodLabel}`}
             subColor="#f0900a"
+            infoText={DEBITOR_STAT_HINT.pending}
           />
           <StatCard
             label={dateFrom || dateTo ? 'Оплачено за период' : 'Оплачено (всего)'}
             value={String(stats?.paid_this_month ?? '—')}
             sub={stats ? `${formatAmount(stats.paid_amount_this_month)} получено` : ''}
             subColor="#1a6b3c"
+            infoText={DEBITOR_STAT_HINT.paid}
           />
         </div>
 
