@@ -132,12 +132,14 @@ class PaymentMonthCreate(BaseModel):
     amount: Optional[Decimal] = None
     description: Optional[str] = None
     note: Optional[str] = None
+    due_date: Optional[date] = None  # срок оплаты; если не задан — из day_of_month договора или конец месяца
 
 
 class PaymentMonthOut(BaseModel):
     id: int
     payment_id: int
     month: str
+    due_date: Optional[date] = None
     amount: Optional[Decimal] = None
     status: str
     description: Optional[str] = None
@@ -188,6 +190,8 @@ class PaymentOut(PaymentBase):
     confirmed_by_user: Optional[UserOut] = None
     days_until_due: Optional[int] = None
     months: List['PaymentMonthOut'] = []
+    # Если строка развёрнута из payment_months (дебиторка по месяцам)
+    source_payment_month_id: Optional[int] = None
 
     class Config:
         from_attributes = True

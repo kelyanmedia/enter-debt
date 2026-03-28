@@ -38,6 +38,7 @@ interface Payment {
   deadline_date?: string
   day_of_month?: number
   created_at: string
+  source_payment_month_id?: number | null
   partner: { name: string; manager?: { id: number; name: string } }
 }
 
@@ -123,11 +124,24 @@ export default function DebitorPage() {
   )
 
   const loadPayments = useCallback(() => {
-    Promise.all([api.get('payments?status=overdue'), api.get('payments?status=pending')])
+    Promise.all([
+      api.get('payments?status=overdue&expand_month_lines=1'),
+      api.get('payments?status=pending&expand_month_lines=1'),
+    ])
       .then(([r1, r2]) => {
-        const combined = [...r1.data, ...r2.data]
-        const seen = new Set<number>()
-        setAllPayments(combined.filter(p => (seen.has(p.id) ? false : (seen.add(p.id), true))))
+        const combined = [...r1.data, ...r2.data] as Payment[]
+        const seen = new Set<string>()
+        setAllPayments(
+          combined.filter(p => {
+            const k =
+              p.source_payment_month_id != null
+                ? `${p.id}-m${p.source_payment_month_id}`
+                : String(p.id)
+            if (seen.has(k)) return false
+            seen.add(k)
+            return true
+          })
+        )
       })
       .catch(() => setAllPayments([]))
   }, [])
@@ -369,9 +383,11 @@ export default function DebitorPage() {
             <tbody>
               {payments.map(p => {
                 const dl = daysLeft(p.deadline_date, p.day_of_month)
+                const rowKey =
+                  p.source_payment_month_id != null ? `${p.id}-m-${p.source_payment_month_id}` : p.id
                 return (
                   <tr
-                    key={p.id}
+                    key={rowKey}
                     style={{ borderBottom: '1px solid #e8e9ef', cursor: 'pointer' }}
                     onClick={() => router.push('/payments')}
                   >

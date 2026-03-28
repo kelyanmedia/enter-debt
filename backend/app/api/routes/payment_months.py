@@ -3,7 +3,9 @@ import logging
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session, joinedload
 from typing import List, Optional
-from datetime import datetime
+from datetime import datetime, date
+from decimal import Decimal
+from calendar import monthrange
 
 from app.db.database import get_db
 from app.models.payment import Payment, PaymentMonth
@@ -32,6 +34,33 @@ async def _send_tg(chat_id: str, text: str, reply_markup: Optional[dict] = None)
             await client.post(url, json=payload)
     except Exception as e:
         logger.warning(f"TG notify failed: {e}")
+
+
+def resolve_payment_month_due_date(month_str: str, due_date_in: Optional[date], payment: Payment) -> date:
+    """Срок оплаты строки месяца: явная дата или день из договора + месяц, иначе последний день месяца услуги."""
+    if due_date_in:
+        return due_date_in
+    try:
+        y, m = month_str.split("-")
+        yi, mi = int(y), int(m)
+    except Exception:
+        raise HTTPException(status_code=400, detail="Неверный формат месяца (нужно YYYY-MM)")
+    last_d = monthrange(yi, mi)[1]
+    if payment.day_of_month:
+        d = min(int(payment.day_of_month), last_d)
+        return date(yi, mi, d)
+    return date(yi, mi, last_d)
+
+
+def _effective_month_amount(pm_amount: Optional[Decimal], payment_amount) -> Decimal:
+    if pm_amount is not None:
+        return Decimal(str(pm_amount))
+    return Decimal(str(payment_amount))
+
+
+def _sum_month_lines_amounts(db: Session, payment_id: int, payment: Payment) -> Decimal:
+    rows = db.query(PaymentMonth).filter(PaymentMonth.payment_id == payment_id).all()
+    return sum(_effective_month_amount(r.amount, payment.amount) for r in rows)
 
 
 def _month_label(month_str: str) -> str:
@@ -77,14 +106,29 @@ def add_month(
     ).first()
     if existing:
         raise HTTPException(status_code=400, detail=f"Месяц {data.month} уже добавлен для этого проекта")
+
+    new_amt = _effective_month_amount(data.amount, p.amount)
+    existing_sum = _sum_month_lines_amounts(db, payment_id, p)
+    contract_amt = Decimal(str(p.amount)).quantize(Decimal("0.01"))
+    if (existing_sum + new_amt).quantize(Decimal("0.01")) > contract_amt:
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                f"Сумма по строкам месяцев ({existing_sum + new_amt} сум) не может превышать сумму договора "
+                f"({contract_amt} сум). Укажите меньшие суммы по месяцам или увеличьте сумму проекта."
+            ),
+        )
+
+    due = resolve_payment_month_due_date(data.month, data.due_date, p)
     try:
         pm = PaymentMonth(
             payment_id=payment_id,
             month=data.month,
+            due_date=due,
             amount=data.amount,
             description=data.description,
             note=data.note,
-            status="pending"
+            status="pending",
         )
         db.add(pm)
         db.commit()

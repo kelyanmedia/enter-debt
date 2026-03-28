@@ -9,6 +9,7 @@ interface Partner { id: number; name: string }
 interface User { id: number; name: string }
 interface PaymentMonth {
   id: number; payment_id: number; month: string; amount?: number
+  due_date?: string | null
   status: 'pending' | 'paid'; description?: string; note?: string; paid_at?: string; created_at: string
   act_issued?: boolean; act_issued_at?: string
 }
@@ -39,6 +40,31 @@ function monthLabel(ym: string) {
 function currentYM() {
   const d = new Date()
   return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`
+}
+
+/** День оплаты в календаре: число из договора или последний день месяца услуги */
+function defaultDueDateForMonth(ym: string, dayOfMonth?: number | null): string {
+  const [y, m] = ym.split('-').map(Number)
+  const last = new Date(y, m, 0).getDate()
+  const d = dayOfMonth ? Math.min(Math.max(1, dayOfMonth), last) : last
+  return `${y}-${String(m).padStart(2, '0')}-${String(d).padStart(2, '0')}`
+}
+
+/** Равномерное разбиение суммы договора по N месяцам (сумма в тийинах → без float-ошибок) */
+function splitContractAmountCents(total: number, n: number): number[] {
+  const cents = Math.round(Number(total) * 100)
+  if (n <= 0) return []
+  const base = Math.floor(cents / n)
+  const out: number[] = []
+  let acc = 0
+  for (let i = 0; i < n; i++) {
+    if (i === n - 1) out.push((cents - acc) / 100)
+    else {
+      out.push(base / 100)
+      acc += base
+    }
+  }
+  return out
 }
 
 function formatApiError(e: unknown): string {
@@ -93,7 +119,13 @@ export default function PaymentsPage() {
   const [drawer, setDrawer] = useState<Payment | null>(null)
   const [drawerMonths, setDrawerMonths] = useState<PaymentMonth[]>([])
   const [drawerLoading, setDrawerLoading] = useState(false)
-  const [addMonthForm, setAddMonthForm] = useState({ month: currentYM(), amount: '', description: '', note: '' })
+  const [addMonthForm, setAddMonthForm] = useState({
+    month: currentYM(),
+    due_date: '',
+    amount: '',
+    description: '',
+    note: '',
+  })
   const [addMonthOpen, setAddMonthOpen] = useState(false)
   const [confirmingMonth, setConfirmingMonth] = useState<number | null>(null)
   const [confirmingAct, setConfirmingAct] = useState<number | null>(null)
@@ -224,8 +256,15 @@ export default function PaymentsPage() {
     setDrawer(p)
     setDrawerLoading(true)
     setAddMonthOpen(false)
-    const autoDesc = `${p.description} ${MONTHS_RU[parseInt(currentYM().split('-')[1]) - 1]} ${currentYM().split('-')[0]} Акт/СФ`
-    setAddMonthForm({ month: currentYM(), amount: '', description: autoDesc, note: '' })
+    const ym0 = currentYM()
+    const autoDesc = `${p.description} ${MONTHS_RU[parseInt(ym0.split('-')[1]) - 1]} ${ym0.split('-')[0]} Акт/СФ`
+    setAddMonthForm({
+      month: ym0,
+      due_date: defaultDueDateForMonth(ym0, p.day_of_month ?? null),
+      amount: '',
+      description: autoDesc,
+      note: '',
+    })
     setMonthSaved(null)
     try {
       const r = await api.get(`payments/${p.id}/months`)
@@ -237,9 +276,14 @@ export default function PaymentsPage() {
 
   const addMonth = async () => {
     if (!drawer) return
+    if (!addMonthForm.due_date) {
+      alert('Укажите срок оплаты (дату), чтобы строка корректно отображалась в дебиторке.')
+      return
+    }
     try {
       const r = await api.post(`payments/${drawer.id}/months`, {
         month: addMonthForm.month,
+        due_date: addMonthForm.due_date || null,
         amount: addMonthForm.amount ? Number(addMonthForm.amount) : null,
         description: addMonthForm.description || null,
         note: addMonthForm.note || null,
@@ -248,7 +292,14 @@ export default function PaymentsPage() {
       setAddMonthOpen(false)
       const nextMonth = addMonthForm.month
       const autoDesc = `${drawer.description} ${MONTHS_RU[parseInt(nextMonth.split('-')[1]) - 1]} ${nextMonth.split('-')[0]} Акт/СФ`
-      setAddMonthForm({ month: currentYM(), amount: '', description: autoDesc, note: '' })
+      const ymNext = currentYM()
+      setAddMonthForm({
+        month: ymNext,
+        due_date: defaultDueDateForMonth(ymNext, drawer.day_of_month ?? null),
+        amount: '',
+        description: autoDesc,
+        note: '',
+      })
     } catch (e: any) {
       const detail = e.response?.data?.detail
       const msg = typeof detail === 'string' ? detail
@@ -293,15 +344,23 @@ export default function PaymentsPage() {
   const bulkAddMonths = async () => {
     if (!drawer || !drawer.contract_months) return
     const months = generateMonths(addMonthForm.month, drawer.contract_months)
-    for (const m of months) {
+    const parts = splitContractAmountCents(Number(drawer.amount), months.length)
+    for (let i = 0; i < months.length; i++) {
+      const m = months[i]
       try {
-        const r = await api.post(`payments/${drawer.id}/months`, { month: m, amount: null, note: null })
+        const due = defaultDueDateForMonth(m, drawer.day_of_month ?? null)
+        const r = await api.post(`payments/${drawer.id}/months`, {
+          month: m,
+          due_date: due,
+          amount: parts[i],
+          note: null,
+        })
         setDrawerMonths(prev => {
           const exists = prev.find(x => x.month === m)
           if (exists) return prev
           return [...prev, r.data].sort((a, b) => a.month.localeCompare(b.month))
         })
-      } catch { /* skip already existing */ }
+      } catch { /* skip duplicate month or validation */ }
     }
     setAddMonthOpen(false)
   }
@@ -560,19 +619,33 @@ export default function PaymentsPage() {
                       onChange={e => setAddMonthForm(f => ({ ...f, description: e.target.value }))} />
                   </Field>
                   <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10, marginTop: 10 }}>
-                    <Field label="Месяц">
+                    <Field label="Месяц услуги (период акта)">
                       <Input type="month" value={addMonthForm.month}
                         onChange={e => {
-                          const [y, m] = e.target.value.split('-')
+                          const v = e.target.value
+                          const [y, m] = v.split('-')
                           const autoDesc = `${drawer.description} ${MONTHS_RU[parseInt(m) - 1]} ${y} Акт/СФ`
-                          setAddMonthForm(f => ({ ...f, month: e.target.value, description: autoDesc }))
+                          setAddMonthForm(f => ({
+                            ...f,
+                            month: v,
+                            description: autoDesc,
+                            due_date: defaultDueDateForMonth(v, drawer.day_of_month ?? null),
+                          }))
                         }} />
                     </Field>
-                    <Field label="Сумма (если другая)">
-                      <Input type="number" value={addMonthForm.amount} placeholder={String(drawer.amount)}
-                        onChange={e => setAddMonthForm(f => ({ ...f, amount: e.target.value }))} />
+                    <Field label="Срок оплаты (день)">
+                      <Input type="date" value={addMonthForm.due_date}
+                        onChange={e => setAddMonthForm(f => ({ ...f, due_date: e.target.value }))} />
+                      <div style={{ fontSize: 10, color: '#8a8fa8', marginTop: 4 }}>
+                        По этой дате строка попадёт в дебиторку (просрочка / ожидание).
+                        {drawer.day_of_month ? ` По умолчанию — ${drawer.day_of_month}-е число месяца услуги.` : ' По умолчанию — последний день месяца.'}
+                      </div>
                     </Field>
                   </div>
+                  <Field label="Сумма (если другая, иначе — полная сумма договора)">
+                    <Input type="number" value={addMonthForm.amount} placeholder={String(drawer.amount)}
+                      onChange={e => setAddMonthForm(f => ({ ...f, amount: e.target.value }))} />
+                  </Field>
                   <div style={{ display: 'flex', gap: 8, marginTop: 10 }}>
                     <BtnPrimary onClick={addMonth} style={{ fontSize: 12, padding: '6px 14px' }}>Добавить</BtnPrimary>
                     <BtnOutline onClick={() => setAddMonthOpen(false)} style={{ fontSize: 12, padding: '6px 14px' }}>Отмена</BtnOutline>
@@ -626,6 +699,11 @@ export default function PaymentsPage() {
                       </div>
                       <div style={{ minWidth: 0 }}>
                         <div style={{ fontWeight: 600, fontSize: 13 }}>{monthLabel(m.month)}</div>
+                        {m.due_date && (
+                          <div style={{ fontSize: 11, color: '#64748b', marginTop: 2 }}>
+                            Срок оплаты: {formatDate(m.due_date)}
+                          </div>
+                        )}
                         {m.description && (
                           <div style={{ fontSize: 11, color: '#444', marginTop: 1 }}>{m.description}</div>
                         )}

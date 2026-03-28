@@ -60,6 +60,7 @@ def _migrate():
         "ALTER TABLE payments ADD COLUMN IF NOT EXISTS project_category VARCHAR(20)",
         "ALTER TABLE payment_months ADD COLUMN IF NOT EXISTS act_issued BOOLEAN NOT NULL DEFAULT FALSE",
         "ALTER TABLE payment_months ADD COLUMN IF NOT EXISTS act_issued_at TIMESTAMP WITH TIME ZONE",
+        "ALTER TABLE payment_months ADD COLUMN IF NOT EXISTS due_date DATE",
         # Commissions table
         """CREATE TABLE IF NOT EXISTS commissions (
             id SERIAL PRIMARY KEY,
