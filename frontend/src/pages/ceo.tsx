@@ -87,6 +87,9 @@ function ArrowIcon() {
   )
 }
 
+/** Одна высота/ширина ячейки сетки: длинные подписи переносятся внутри */
+const CEO_CARD_ROW_PX = 188
+
 function CeoCard({
   title,
   value,
@@ -101,12 +104,24 @@ function CeoCard({
   hint?: string
 }) {
   return (
-    <Link href={href} style={{ textDecoration: 'none', color: 'inherit' }}>
+    <Link
+      href={href}
+      style={{
+        textDecoration: 'none',
+        color: 'inherit',
+        display: 'block',
+        height: '100%',
+        minHeight: CEO_CARD_ROW_PX,
+      }}
+    >
       <div
         style={{
           borderRadius: 14,
-          padding: '18px 20px',
-          minHeight: 130,
+          padding: '16px 18px',
+          height: '100%',
+          minHeight: CEO_CARD_ROW_PX,
+          maxHeight: CEO_CARD_ROW_PX,
+          boxSizing: 'border-box',
           border: featured ? 'none' : '1px solid #e8e9ef',
           background: featured
             ? 'linear-gradient(145deg, #1a6b3c 0%, #145a32 100%)'
@@ -114,14 +129,30 @@ function CeoCard({
           boxShadow: featured ? '0 8px 24px rgba(26,107,60,.25)' : '0 1px 3px rgba(0,0,0,.04)',
           transition: 'transform .12s, box-shadow .12s',
           cursor: 'pointer',
+          display: 'flex',
+          flexDirection: 'column',
+          overflow: 'hidden',
         }}
       >
-        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: 12 }}>
+        <div
+          style={{
+            display: 'flex',
+            justifyContent: 'space-between',
+            alignItems: 'flex-start',
+            gap: 8,
+            marginBottom: 8,
+            flexShrink: 0,
+          }}
+        >
           <span
             style={{
               fontSize: 13,
               fontWeight: 600,
+              lineHeight: 1.3,
               color: featured ? 'rgba(255,255,255,.85)' : '#6b7280',
+              flex: 1,
+              minWidth: 0,
+              wordBreak: 'break-word',
             }}
           >
             {title}
@@ -140,6 +171,7 @@ function CeoCard({
                 justifyContent: 'center',
                 fontSize: 14,
                 color: '#1a1d23',
+                flexShrink: 0,
               }}
             >
               ↗
@@ -148,25 +180,33 @@ function CeoCard({
         </div>
         <div
           style={{
-            fontSize: 34,
+            fontSize: 28,
             fontWeight: 800,
             letterSpacing: '-0.02em',
             color: featured ? '#fff' : '#1a1d23',
             lineHeight: 1.1,
+            flexShrink: 0,
           }}
         >
           {value}
         </div>
-        {hint && (
+        {hint ? (
           <div
             style={{
-              marginTop: 12,
+              marginTop: 8,
               fontSize: 12,
+              lineHeight: 1.35,
               color: featured ? 'rgba(255,255,255,.75)' : '#8a8fa8',
+              flex: 1,
+              minHeight: 0,
+              overflowY: 'auto',
+              wordBreak: 'break-word',
             }}
           >
             {hint}
           </div>
+        ) : (
+          <div style={{ flex: 1 }} />
         )}
       </div>
     </Link>
@@ -244,15 +284,17 @@ export default function CeoDashboardPage() {
       {!loading && user && user.role !== 'manager' && <>
       <PageHeader
         title="CEO Dashboard"
-        subtitle="Проекты по линиям, новые компании по месяцам, оборот и LTV."
+        subtitle="Проекты по линиям, активные партнёры по месяцам, оборот и LTV."
       />
       <div style={{ padding: '22px 24px', overflowY: 'auto', flex: 1 }}>
         <div
           style={{
             display: 'grid',
-            gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))',
+            gridTemplateColumns: 'repeat(auto-fill, minmax(200px, 1fr))',
+            gridAutoRows: `${CEO_CARD_ROW_PX}px`,
             gap: 14,
             marginBottom: 24,
+            alignItems: 'stretch',
           }}
         >
           <CeoCard
@@ -313,11 +355,12 @@ export default function CeoDashboardPage() {
           >
             <div style={{ flex: 1, minWidth: 200 }}>
               <div style={{ fontSize: 15, fontWeight: 700, color: '#1a1d23' }}>
-                Количество клиентов · {clientYear}
+                Активные партнёры · {clientYear}
               </div>
               <div style={{ fontSize: 12, color: '#8a8fa8', marginTop: 4, lineHeight: 1.5 }}>
-                Новые компании по месяцам — по дате добавления в систему (история в базе). Наведите на график для
-                числа за месяц.
+                Новые партнёры по месяцу добавления в систему, у которых есть неархивный проект в линиях веб, SEO,
+                PPC, мобильные приложения или техподдержка (как на карточках выше; хостинг и домены не учитываются).
+                Наведите на график — число за месяц.
               </div>
             </div>
             <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>
@@ -347,7 +390,7 @@ export default function CeoDashboardPage() {
               {isAdmin && (
                 <CeoEditPencil
                   onClick={() => setEditMetric('client_history')}
-                  title="Ручной ввод: новые компании по месяцам"
+                  title="Ручной ввод: активные партнёры по месяцам"
                 />
               )}
             </div>

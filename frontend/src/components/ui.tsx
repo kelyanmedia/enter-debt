@@ -336,12 +336,15 @@ function StatCardInfoTip({ text, light }: { text: string; light?: boolean }) {
   )
 }
 
+const STAT_CARD_MIN_HEIGHT = 130
+
 export function StatCard({
   label,
   value,
   sub,
   subColor = '#2d9b5a',
   featured,
+  compactValue,
   onClick,
   infoText,
 }: {
@@ -350,21 +353,32 @@ export function StatCard({
   sub?: string
   subColor?: string
   featured?: boolean
+  /** Чуть меньший шрифт суммы (длинные «N Uzs» в одной строке с соседними карточками) */
+  compactValue?: boolean
   onClick?: () => void
   /** Подсказка при наведении на значок «!» в углу карточки */
   infoText?: string
 }) {
+  const valueSize = compactValue ? 22 : 28
   return (
     <div
       onClick={onClick}
       style={{
         position: 'relative',
         background: featured ? '#1a6b3c' : '#fff',
-        border: '1px solid #e8e9ef',
+        border: featured ? '1px solid #145a32' : '1px solid #e8e9ef',
         borderRadius: 14,
         padding: infoText ? '18px 40px 18px 20px' : '18px 20px',
         cursor: onClick ? 'pointer' : 'default',
         transition: 'box-shadow .15s',
+        minHeight: STAT_CARD_MIN_HEIGHT,
+        height: '100%',
+        width: '100%',
+        minWidth: 0,
+        maxWidth: '100%',
+        boxSizing: 'border-box',
+        display: 'flex',
+        flexDirection: 'column',
       }}
     >
       {infoText && <StatCardInfoTip text={infoText} light={!!featured} />}
@@ -374,23 +388,42 @@ export function StatCard({
           fontWeight: 500,
           color: featured ? 'rgba(255,255,255,.7)' : '#8a8fa8',
           marginBottom: 8,
+          minWidth: 0,
+          wordBreak: 'break-word',
+          lineHeight: 1.3,
         }}
       >
         {label}
       </div>
       <div
         style={{
-          fontSize: 28,
+          fontSize: valueSize,
           fontWeight: 700,
           letterSpacing: '-.02em',
+          lineHeight: 1.15,
           color: featured ? '#fff' : '#1a1d23',
           marginBottom: 6,
+          minWidth: 0,
+          wordBreak: 'break-word',
+          overflowWrap: 'anywhere',
         }}
       >
         {value}
       </div>
       {sub && (
-        <div style={{ fontSize: 12, color: featured ? 'rgba(255,255,255,.8)' : subColor }}>{sub}</div>
+        <div
+          style={{
+            fontSize: 12,
+            fontWeight: featured ? 600 : 400,
+            marginTop: 'auto',
+            minWidth: 0,
+            wordBreak: 'break-word',
+            lineHeight: 1.35,
+            color: featured ? 'rgba(255,255,255,.85)' : subColor,
+          }}
+        >
+          {sub}
+        </div>
       )}
     </div>
   )

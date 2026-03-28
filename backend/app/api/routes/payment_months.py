@@ -228,6 +228,7 @@ async def confirm_month(
     if not already_paid:
         pm.status = "paid"
         pm.paid_at = datetime.utcnow()
+        pm.confirmed_by = current_user.id
         db.commit()
         db.refresh(pm)
     else:

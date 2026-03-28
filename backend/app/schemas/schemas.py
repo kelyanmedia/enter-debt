@@ -63,6 +63,7 @@ class UserOut(UserBase):
     id: int
     created_at: datetime
     email: str
+    last_login_at: Optional[datetime] = None
 
     class Config:
         from_attributes = True
@@ -149,6 +150,7 @@ class PaymentMonthOut(BaseModel):
     description: Optional[str] = None
     note: Optional[str] = None
     paid_at: Optional[datetime] = None
+    confirmed_by: Optional[int] = None
     act_issued: bool = False
     act_issued_at: Optional[datetime] = None
     created_at: datetime
@@ -211,6 +213,22 @@ class DashboardStats(BaseModel):
     paid_this_month: int
     paid_amount_this_month: Decimal
     partners_count: int
+
+
+class ReceivedPaymentRowOut(BaseModel):
+    """Одна зафиксированная оплата за выбранный календарный месяц (по дате paid_at)."""
+
+    kind: str  # month_line | project_whole
+    paid_at: datetime
+    amount: Decimal
+    partner_id: int
+    partner_name: str
+    payment_id: int
+    project_description: str
+    service_month: Optional[str] = None
+    line_description: Optional[str] = None
+    confirmed_by_id: Optional[int] = None
+    confirmed_by_name: Optional[str] = None
 
 
 class CeoStats(BaseModel):

@@ -178,8 +178,19 @@ export default function Dashboard() {
 
       <div style={{ padding: '22px 24px', overflowY: 'auto', flex: 1 }}>
         {/* Stats row */}
-        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: 14, marginBottom: 20 }}>
-          <Link href="/debitor" style={{ textDecoration: 'none', color: 'inherit', display: 'block' }}>
+        <div
+          style={{
+            display: 'grid',
+            gridTemplateColumns: 'repeat(4, minmax(0, 1fr))',
+            gap: 14,
+            marginBottom: 20,
+            alignItems: 'stretch',
+          }}
+        >
+          <Link
+            href="/debitor"
+            style={{ textDecoration: 'none', color: 'inherit', display: 'flex', minHeight: 0, minWidth: 0, width: '100%' }}
+          >
             <StatCard
               featured
               label="Дебиторка за период"
@@ -200,10 +211,11 @@ export default function Dashboard() {
             subColor="#f0900a"
           />
           <StatCard
+            featured
+            compactValue
             label="Оплачено за период"
-            value={String(stats?.paid_this_month ?? '—')}
-            sub={stats ? `${formatAmount(stats.paid_amount_this_month)} получено` : ''}
-            subColor="#1a6b3c"
+            value={stats ? formatAmount(stats.paid_amount_this_month) : '—'}
+            sub={stats != null ? `${stats.paid_this_month} оплат · получено` : ''}
           />
         </div>
 

@@ -50,15 +50,15 @@ export default function LoginPage() {
   return (
     <div style={{ minHeight: '100vh', display: 'flex', alignItems: 'center', justifyContent: 'center', background: '#f5f6fa' }}>
       <div style={{ background: '#fff', borderRadius: 16, border: '1px solid #e8e9ef', padding: '40px 36px', width: 380, boxShadow: '0 4px 24px rgba(0,0,0,.06)' }}>
-        <div style={{ display: 'flex', alignItems: 'center', gap: 12, marginBottom: 32 }}>
-          <div style={{ width: 40, height: 40, background: '#1a6b3c', borderRadius: 12, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-            <svg width="20" height="20" fill="none" stroke="#fff" strokeWidth="2" viewBox="0 0 24 24">
-              <path d="M12 2L2 7l10 5 10-5-10-5zM2 17l10 5 10-5M2 12l10 5 10-5" strokeLinecap="round" strokeLinejoin="round"/>
-            </svg>
-          </div>
-          <div>
-            <div style={{ fontWeight: 700, fontSize: 17 }}>EnterDebt</div>
-            <div style={{ fontSize: 12, color: '#8a8fa8' }}>Enter Group · Контроль дебиторки</div>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 14, marginBottom: 32 }}>
+          <img
+            src="/kelyanmedia-logo.png"
+            alt="KelyanMedia"
+            style={{ height: 48, width: 'auto', maxWidth: 120, objectFit: 'contain', flexShrink: 0, display: 'block' }}
+          />
+          <div style={{ minWidth: 0 }}>
+            <div style={{ fontWeight: 700, fontSize: 17, lineHeight: 1.25 }}>Финансовый модуль</div>
+            <div style={{ fontSize: 12, color: '#8a8fa8' }}>KelyanMedia · Контроль дебиторки</div>
           </div>
         </div>
 

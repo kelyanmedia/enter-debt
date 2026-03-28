@@ -1,5 +1,5 @@
 from fastapi import APIRouter, Depends, Query, HTTPException
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import Session, joinedload
 from sqlalchemy import func, extract, select
 from datetime import date, datetime
 from typing import Optional, List, Tuple, Dict, Any
@@ -11,6 +11,7 @@ from app.models.partner import Partner
 from app.models.ceo_metric_override import CeoMetricOverride
 from app.schemas.schemas import (
     DashboardStats,
+    ReceivedPaymentRowOut,
     CeoStats,
     CeoTurnoverOut,
     CeoTurnoverPoint,
@@ -40,6 +41,9 @@ _MONTHS_RU = (
     "нояб.",
     "дек.",
 )
+
+# Линии CEO-дашборда (карточки Web / SEO / PPC / приложения / техподдержка), без хостинга и доменов.
+_CEO_CORE_PROJECT_CATEGORIES = ("web", "seo", "ppc", "mobile_app", "tech_support")
 
 _LTV_BUCKET_SPEC = (
     ("lt_3", "Меньше 3 мес."),
@@ -176,6 +180,93 @@ def _turnover_points_for_roll(
             )
         )
     return points
+
+
+@router.get("/received-payments", response_model=List[ReceivedPaymentRowOut])
+def received_payments_cashflow(
+    year: int = Query(..., ge=2000, le=2100),
+    month: int = Query(..., ge=1, le=12),
+    db: Session = Depends(get_db),
+    _: User = Depends(require_admin),
+):
+    """
+    Все зафиксированные поступления за календарный месяц (по дате paid_at) для ДДС.
+    Источники совпадают со сводкой дашборда: строки графика (PaymentMonth) и целые проекты без графика.
+    """
+    start_date = date(year, month, 1)
+    end_date = date(year, month, monthrange(year, month)[1])
+    out: List[ReceivedPaymentRowOut] = []
+
+    q_months = (
+        db.query(PaymentMonth, Payment, Partner)
+        .join(Payment, Payment.id == PaymentMonth.payment_id)
+        .join(Partner, Partner.id == Payment.partner_id)
+        .options(joinedload(PaymentMonth.confirmed_by_user))
+        .filter(
+            Payment.is_archived == False,
+            PaymentMonth.status == "paid",
+            PaymentMonth.paid_at.isnot(None),
+            func.date(PaymentMonth.paid_at) >= start_date,
+            func.date(PaymentMonth.paid_at) <= end_date,
+        )
+        .order_by(Partner.name.asc(), Payment.id.asc(), PaymentMonth.paid_at.desc())
+    )
+    for pm, pay, part in q_months.all():
+        eff = pm.amount if pm.amount is not None else pay.amount
+        cu = pm.confirmed_by_user
+        line_desc = (pm.description or "").strip() or None
+        proj_desc = pay.description
+        out.append(
+            ReceivedPaymentRowOut(
+                kind="month_line",
+                paid_at=pm.paid_at,
+                amount=eff,
+                partner_id=part.id,
+                partner_name=part.name,
+                payment_id=pay.id,
+                project_description=proj_desc,
+                service_month=pm.month,
+                line_description=line_desc,
+                confirmed_by_id=pm.confirmed_by,
+                confirmed_by_name=cu.name if cu else None,
+            )
+        )
+
+    has_months_sq = select(PaymentMonth.payment_id).distinct()
+    q_whole = (
+        db.query(Payment, Partner)
+        .join(Partner, Partner.id == Payment.partner_id)
+        .options(joinedload(Payment.confirmed_by_user))
+        .filter(
+            Payment.is_archived == False,
+            Payment.status == "paid",
+            Payment.paid_at.isnot(None),
+            ~Payment.id.in_(has_months_sq),
+            func.date(Payment.paid_at) >= start_date,
+            func.date(Payment.paid_at) <= end_date,
+        )
+        .order_by(Partner.name.asc(), Payment.paid_at.desc())
+    )
+    for pay, part in q_whole.all():
+        cu = pay.confirmed_by_user
+        out.append(
+            ReceivedPaymentRowOut(
+                kind="project_whole",
+                paid_at=pay.paid_at,
+                amount=pay.amount,
+                partner_id=part.id,
+                partner_name=part.name,
+                payment_id=pay.id,
+                project_description=pay.description,
+                service_month=None,
+                line_description=None,
+                confirmed_by_id=pay.confirmed_by,
+                confirmed_by_name=cu.name if cu else None,
+            )
+        )
+
+    out.sort(key=lambda r: (r.paid_at.timestamp() if r.paid_at else 0), reverse=True)
+    return out
 
 
 def _debitor_filter_by_manager(manager_id: Optional[int], current_user: User) -> bool:
@@ -488,8 +579,10 @@ def get_client_history(
     current_user: User = Depends(require_admin_or_accountant),
 ):
     """
-    Число новых компаний (партнёров) по месяцам за год — по дате добавления в систему (created_at).
-    История фиксируется фактом записи в БД; учитываются партнёры с is_deleted=False.
+    Число новых партнёров по месяцам за год — по дате добавления в систему (created_at).
+    Учитываются только партнёры с is_deleted=False, у которых есть хотя бы один неархивный проект
+    в линиях Web, SEO, PPC, мобильные приложения или техподдержка (как на карточках CEO;
+    хостинг и домены не входят).
     """
     y = year if year is not None else date.today().year
     if y < 2000 or y > 2100:
@@ -505,6 +598,19 @@ def get_client_history(
             ],
         )
 
+    core_partner_ids = (
+        filter_payments_query(
+            db.query(Payment.partner_id)
+            .filter(
+                Payment.is_archived == False,
+                Payment.project_category.in_(_CEO_CORE_PROJECT_CATEGORIES),
+            ),
+            db,
+            current_user,
+        )
+        .distinct()
+    )
+
     q = (
         db.query(
             extract("month", Partner.created_at).label("mm"),
@@ -513,6 +619,7 @@ def get_client_history(
         .filter(
             Partner.is_deleted == False,
             extract("year", Partner.created_at) == y,
+            Partner.id.in_(core_partner_ids),
         )
     )
     q = filter_partners_query(q, db, current_user)

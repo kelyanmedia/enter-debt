@@ -20,6 +20,7 @@ class User(Base):
     see_all_partners = Column(Boolean, nullable=False, default=False)  # менеджер: True = видит всех партнёров
     created_at = Column(DateTime(timezone=True), server_default=func.now())
     feed_cleared_at = Column(DateTime(timezone=True), nullable=True)
+    last_login_at = Column(DateTime(timezone=True), nullable=True)
 
     # Relationships
     managed_partners = relationship("Partner", back_populates="manager")

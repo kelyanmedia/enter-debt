@@ -38,8 +38,11 @@ function ClientTooltip({
     >
       <div style={{ fontWeight: 700, color: '#1a1d23', marginBottom: 6 }}>{row?.label}</div>
       <div style={{ color: '#6b7280' }}>
-        Новых компаний:{' '}
+        Активных партнёров:{' '}
         <span style={{ fontWeight: 800, color: '#2563eb', fontSize: 20 }}>{v}</span>
+      </div>
+      <div style={{ fontSize: 11, color: '#9ca3af', marginTop: 8, lineHeight: 1.35, maxWidth: 220 }}>
+        По линиям: веб, SEO, PPC, мобильные приложения, техподдержка (без хостинга и доменов).
       </div>
     </div>
   )
@@ -94,7 +97,7 @@ export default function CeoClientHistoryChart({
           <Area
             type="monotone"
             dataKey="count"
-            name="Клиентов"
+            name="Активных партнёров"
             stroke="#2563eb"
             strokeWidth={2.5}
             fill="url(#clientAreaFill)"

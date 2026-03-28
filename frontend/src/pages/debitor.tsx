@@ -1,4 +1,4 @@
-import { useEffect, useState, useMemo, useCallback } from 'react'
+import { useEffect, useState, useMemo, useCallback, useRef } from 'react'
 import { useRouter } from 'next/router'
 import Layout from '@/components/Layout'
 import {
@@ -135,6 +135,34 @@ const DATE_INPUT_STYLE: React.CSSProperties = {
   fontFamily: 'inherit',
 }
 
+const DEBITOR_PROJECT_LINES_STORAGE = 'debitor_project_lines_v1'
+
+const CEO_LINE_FILTERS: { value: string; label: string }[] = [
+  { value: '', label: 'Все' },
+  { value: 'web', label: 'Web' },
+  { value: 'seo', label: 'SEO' },
+  { value: 'ppc', label: 'PPC' },
+  { value: 'mobile_app', label: 'Моб. приложение' },
+  { value: 'tech_support', label: 'Тех сопровождение' },
+  { value: 'hosting_domain', label: 'Хостинг/домен' },
+]
+
+const CEO_LINE_SLUGS = CEO_LINE_FILTERS.filter(f => f.value).map(f => f.value)
+
+function loadStoredProjectLines(): string[] {
+  if (typeof window === 'undefined') return []
+  try {
+    const raw = localStorage.getItem(DEBITOR_PROJECT_LINES_STORAGE)
+    if (!raw) return []
+    const parsed = JSON.parse(raw) as unknown
+    if (!Array.isArray(parsed)) return []
+    const allowed = new Set(CEO_LINE_SLUGS)
+    return parsed.filter((x): x is string => typeof x === 'string' && allowed.has(x))
+  } catch {
+    return []
+  }
+}
+
 /** Подсказки для карточек дебиторки (значок «!» в углу) */
 const DEBITOR_STAT_HINT = {
   receivable:
@@ -162,7 +190,8 @@ export default function DebitorPage() {
   const [dateFrom, setDateFrom] = useState(firstOfMonth)
   const [dateTo, setDateTo] = useState(today)
   const [statusFilter, setStatusFilter] = useState<'all' | 'overdue' | 'pending'>('all')
-  const [filterCategory, setFilterCategory] = useState('')
+  const [selectedProjectLines, setSelectedProjectLines] = useState<string[]>([])
+  const skipProjectLinesSaveOnce = useRef(true)
 
   const loadStats = useCallback(
     (from: string, to: string, mgr: string) => {
@@ -205,19 +234,38 @@ export default function DebitorPage() {
     if (user?.role === 'manager') setFilterManager(String(user.id))
   }, [user])
 
+  useEffect(() => {
+    setSelectedProjectLines(loadStoredProjectLines())
+  }, [])
+
+  useEffect(() => {
+    if (skipProjectLinesSaveOnce.current) {
+      skipProjectLinesSaveOnce.current = false
+      return
+    }
+    try {
+      localStorage.setItem(DEBITOR_PROJECT_LINES_STORAGE, JSON.stringify(selectedProjectLines))
+    } catch {
+      /* ignore quota */
+    }
+  }, [selectedProjectLines])
+
   const handleDateChange = (from: string, to: string) => {
     setDateFrom(from)
     setDateTo(to)
     loadStats(from, to, filterManager)
   }
 
-  /** Строки за период с бэка (по сроку); дальше — менеджер и линия CEO */
+  /** Строки за период с бэка (по сроку); дальше — менеджер и линии проектов (мультивыбор) */
   const debitorBase = useMemo(() => {
     let list = allPayments
     if (filterManager) list = list.filter(p => String(p.partner?.manager?.id) === filterManager)
-    if (filterCategory) list = list.filter(p => (p.project_category || '') === filterCategory)
+    if (selectedProjectLines.length > 0) {
+      const set = new Set(selectedProjectLines)
+      list = list.filter(p => set.has(p.project_category || ''))
+    }
     return list
-  }, [allPayments, filterManager, filterCategory])
+  }, [allPayments, filterManager, selectedProjectLines])
 
   /** Карточки 1–3: только неоплаченные */
   const debitorReceivableStats = useMemo(() => {
@@ -379,24 +427,124 @@ export default function DebitorPage() {
             <option value="overdue">Только просрочено</option>
             <option value="pending">Только ожидается</option>
           </select>
-
-          <span style={{ marginLeft: 8, fontSize: 12, color: '#8a8fa8' }}>Линия CEO:</span>
-          <select
-            value={filterCategory}
-            onChange={e => setFilterCategory(e.target.value)}
-            style={{ ...DATE_INPUT_STYLE, cursor: 'pointer', maxWidth: 220 }}
-          >
-            <option value="">Все</option>
-            <option value="web">Web</option>
-            <option value="seo">SEO</option>
-            <option value="ppc">PPC</option>
-            <option value="mobile_app">Мобильное приложение</option>
-            <option value="tech_support">Тех сопровождение</option>
-            <option value="hosting_domain">Хостинг/домен</option>
-          </select>
         </div>
 
-        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))', gap: 14, marginBottom: 22 }}>
+        <div style={{ marginBottom: 20 }}>
+          <div
+            style={{
+              display: 'flex',
+              flexWrap: 'wrap',
+              alignItems: 'flex-start',
+              gap: 10,
+              marginBottom: 8,
+            }}
+          >
+            <span
+              style={{
+                fontSize: 11,
+                fontWeight: 700,
+                color: '#8a8fa8',
+                textTransform: 'uppercase',
+                letterSpacing: '0.06em',
+                paddingTop: 10,
+                flexShrink: 0,
+              }}
+            >
+              Линии проектов
+            </span>
+            <div
+              style={{
+                display: 'flex',
+                flexWrap: 'wrap',
+                gap: 8,
+                flex: 1,
+                minWidth: 0,
+              }}
+            >
+              <button
+                type="button"
+                onClick={() => setSelectedProjectLines([])}
+                style={{
+                  width: 118,
+                  minHeight: 44,
+                  padding: '6px 8px',
+                  borderRadius: 10,
+                  fontSize: 12,
+                  fontWeight: 600,
+                  border: selectedProjectLines.length === 0 ? '2px solid #1a6b3c' : '1px solid #e8e9ef',
+                  background: selectedProjectLines.length === 0 ? '#f0faf4' : '#fff',
+                  color: selectedProjectLines.length === 0 ? '#145a32' : '#4b5563',
+                  cursor: 'pointer',
+                  fontFamily: 'inherit',
+                  boxShadow: selectedProjectLines.length === 0 ? '0 1px 3px rgba(26,107,60,.12)' : 'none',
+                  display: 'flex',
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                  textAlign: 'center',
+                  lineHeight: 1.25,
+                  transition: 'border-color .12s, background .12s, color .12s',
+                  boxSizing: 'border-box',
+                }}
+              >
+                Все
+              </button>
+              {CEO_LINE_FILTERS.filter(f => f.value).map(opt => {
+                const active = selectedProjectLines.includes(opt.value)
+                return (
+                  <button
+                    key={opt.value}
+                    type="button"
+                    onClick={() => {
+                      setSelectedProjectLines(prev => {
+                        if (prev.includes(opt.value)) return prev.filter(s => s !== opt.value)
+                        return [...prev, opt.value]
+                      })
+                    }}
+                    style={{
+                      width: 118,
+                      minHeight: 44,
+                      padding: '6px 8px',
+                      borderRadius: 10,
+                      fontSize: 12,
+                      fontWeight: 600,
+                      border: active ? '2px solid #1a6b3c' : '1px solid #e8e9ef',
+                      background: active ? '#f0faf4' : '#fff',
+                      color: active ? '#145a32' : '#4b5563',
+                      cursor: 'pointer',
+                      fontFamily: 'inherit',
+                      boxShadow: active ? '0 1px 3px rgba(26,107,60,.12)' : 'none',
+                      display: 'flex',
+                      alignItems: 'center',
+                      justifyContent: 'center',
+                      textAlign: 'center',
+                      lineHeight: 1.25,
+                      wordBreak: 'break-word',
+                      hyphens: 'auto',
+                      transition: 'border-color .12s, background .12s, color .12s',
+                      boxSizing: 'border-box',
+                    }}
+                  >
+                    {opt.label}
+                  </button>
+                )
+              })}
+            </div>
+          </div>
+          <div style={{ fontSize: 11, color: '#a1a8bc', paddingLeft: 0, maxWidth: 640, lineHeight: 1.45 }}>
+            Можно выбрать несколько линий сразу. Выбор сохраняется в этом браузере и не сбрасывается при обновлении
+            страницы. «Все» снимает фильтр по линиям.
+          </div>
+        </div>
+
+        <div
+          style={{
+            display: 'grid',
+            gridTemplateColumns: 'repeat(4, minmax(0, 1fr))',
+            gap: 14,
+            marginBottom: 22,
+            alignItems: 'stretch',
+          }}
+        >
           <StatCard
             featured
             label="Дебиторка за период"
@@ -419,10 +567,11 @@ export default function DebitorPage() {
             infoText={DEBITOR_STAT_HINT.pending}
           />
           <StatCard
+            featured
+            compactValue
             label={dateFrom || dateTo ? 'Оплачено за период' : 'Оплачено (всего)'}
-            value={String(stats?.paid_this_month ?? '—')}
-            sub={stats ? `${formatAmount(stats.paid_amount_this_month)} получено` : ''}
-            subColor="#1a6b3c"
+            value={stats ? formatAmount(stats.paid_amount_this_month) : '—'}
+            sub={stats != null ? `${stats.paid_this_month} оплат · получено` : ''}
             infoText={DEBITOR_STAT_HINT.paid}
           />
         </div>

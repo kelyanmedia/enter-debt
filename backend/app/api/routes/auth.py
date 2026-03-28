@@ -1,3 +1,5 @@
+from datetime import datetime, timezone
+
 from fastapi import APIRouter, Depends, HTTPException, status
 from fastapi.security import OAuth2PasswordRequestForm
 from pydantic import BaseModel
@@ -42,9 +44,16 @@ def authenticate_user(email: str, password: str, db: Session):
     return user
 
 
+def _record_web_login(user: User, db: Session) -> None:
+    user.last_login_at = datetime.now(timezone.utc)
+    db.commit()
+    db.refresh(user)
+
+
 @router.post("/token", response_model=Token)
 def login_form(form_data: OAuth2PasswordRequestForm = Depends(), db: Session = Depends(get_db)):
     user = authenticate_user(form_data.username, form_data.password, db)
+    _record_web_login(user, db)
     access_token = create_access_token(data={"sub": str(user.id)})
     return Token(
         access_token=access_token,
@@ -56,6 +65,7 @@ def login_form(form_data: OAuth2PasswordRequestForm = Depends(), db: Session = D
 @router.post("/login", response_model=Token)
 def login_json(data: LoginRequest, db: Session = Depends(get_db)):
     user = authenticate_user(data.email, data.password, db)
+    _record_web_login(user, db)
     access_token = create_access_token(data={"sub": str(user.id)})
     return Token(
         access_token=access_token,

@@ -10,6 +10,7 @@ interface User {
   telegram_chat_id?: number; telegram_username?: string; is_active: boolean
   web_access?: boolean
   see_all_partners?: boolean
+  last_login_at?: string | null
 }
 interface PartnerRow { id: number; name: string }
 
@@ -193,6 +194,17 @@ export default function UsersPage() {
 
   const deleteUserTarget = deleteUserId != null ? users.find(x => x.id === deleteUserId) : null
 
+  const formatLastLogin = (iso?: string | null) => {
+    if (!iso) return '—'
+    return new Date(iso).toLocaleString('ru-RU', {
+      day: '2-digit',
+      month: 'short',
+      year: 'numeric',
+      hour: '2-digit',
+      minute: '2-digit',
+    })
+  }
+
   return (
     <Layout>
       <PageHeader title="Пользователи" subtitle="Роли и Telegram-доступы" action={<BtnPrimary onClick={openAdd}>+ Добавить пользователя</BtnPrimary>} />
@@ -227,6 +239,7 @@ export default function UsersPage() {
                 <Th>Telegram</Th>
                 <Th>Получает пуши</Th>
                 <Th>Доступ к данным</Th>
+                <Th>Последний вход (веб)</Th>
                 <Th>Активен</Th>
                 <Th></Th>
               </tr>
@@ -256,6 +269,7 @@ export default function UsersPage() {
                   <Td style={{ fontSize: 11, color: '#8a8fa8' }}>
                     {u.role === 'manager' ? (u.see_all_partners ? 'Все партнёры' : 'Только назначенные') : '—'}
                   </Td>
+                  <Td style={{ fontSize: 12, color: '#6b7280', whiteSpace: 'nowrap' }}>{formatLastLogin(u.last_login_at)}</Td>
                   <Td><Badge variant={u.is_active ? 'green' : 'gray'}>{u.is_active ? 'Да' : 'Нет'}</Badge></Td>
                   <Td>
                     <div style={{ display: 'flex', gap: 6, justifyContent: 'flex-end', alignItems: 'center' }}>
