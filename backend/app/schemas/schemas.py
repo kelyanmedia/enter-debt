@@ -192,6 +192,8 @@ class PaymentOut(PaymentBase):
     months: List['PaymentMonthOut'] = []
     # Если строка развёрнута из payment_months (дебиторка по месяцам)
     source_payment_month_id: Optional[int] = None
+    # Период услуги / акт по строке графика (YYYY-MM), напр. «март 2026» на фронте
+    service_month: Optional[str] = None
 
     class Config:
         from_attributes = True

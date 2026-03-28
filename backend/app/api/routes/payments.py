@@ -49,6 +49,7 @@ def enrich(p: Payment) -> PaymentOut:
     out = PaymentOut.model_validate(p)
     out.days_until_due = compute_days_until_due(p)
     out.source_payment_month_id = None
+    out.service_month = None
     return out
 
 
@@ -76,9 +77,88 @@ def enrich_as_month_line(p: Payment, pm: PaymentMonth, today: date) -> PaymentOu
     out.status = "overdue" if due < today else "pending"
     out.days_until_due = (due - today).days
     out.source_payment_month_id = pm.id
+    out.service_month = pm.month
     out.months = []
     out.postponed_until = None
     out.paid_at = None
+    return out
+
+
+def enrich_paid_month_line(p: Payment, pm: PaymentMonth, today: date) -> PaymentOut:
+    """Оплаченная строка месяца — в дебиторке внизу списка за тот же период."""
+    out = PaymentOut.model_validate(p)
+    due = _due_date_for_payment_month(pm, p)
+    out.deadline_date = due
+    out.day_of_month = due.day
+    eff = pm.amount if pm.amount is not None else p.amount
+    out.amount = eff
+    desc = (pm.description or "").strip()
+    out.description = desc if desc else p.description
+    out.status = "paid"
+    out.days_until_due = None
+    out.source_payment_month_id = pm.id
+    out.service_month = pm.month
+    out.months = []
+    out.postponed_until = None
+    out.paid_at = pm.paid_at
+    return out
+
+
+def _due_in_range(due: date, df: Optional[date], dt: Optional[date]) -> bool:
+    if df and due < df:
+        return False
+    if dt and due > dt:
+        return False
+    return True
+
+
+def _list_debitor_payments(
+    db: Session,
+    current_user: User,
+    partner_id: Optional[int],
+    payment_type: Optional[str],
+    project_category: Optional[str],
+    due_from: Optional[date],
+    due_to: Optional[date],
+) -> List[PaymentOut]:
+    q = db.query(Payment).options(
+        joinedload(Payment.partner).joinedload(Partner.manager),
+        joinedload(Payment.confirmed_by_user),
+        joinedload(Payment.months),
+    ).filter(Payment.is_archived == False)
+    q = filter_payments_query(q, db, current_user)
+    if partner_id:
+        q = q.filter(Payment.partner_id == partner_id)
+    if payment_type:
+        q = q.filter(Payment.payment_type == payment_type)
+    if project_category:
+        q = q.filter(Payment.project_category == project_category)
+    payments = q.order_by(Payment.created_at.desc()).all()
+    today = date.today()
+    out: List[PaymentOut] = []
+    for p in payments:
+        months_list = p.months or []
+        if len(months_list) > 0:
+            for pm in sorted(months_list, key=lambda x: x.month):
+                due = _due_date_for_payment_month(pm, p)
+                if not _due_in_range(due, due_from, due_to):
+                    continue
+                if pm.status == "paid":
+                    out.append(enrich_paid_month_line(p, pm, today))
+                else:
+                    out.append(enrich_as_month_line(p, pm, today))
+        else:
+            if p.status in ("paid", "archived"):
+                continue
+            if p.deadline_date:
+                if not _due_in_range(p.deadline_date, due_from, due_to):
+                    continue
+            else:
+                ca = p.created_at.date() if isinstance(p.created_at, datetime) else p.created_at
+                if not _due_in_range(ca, due_from, due_to):
+                    continue
+            line = enrich(p)
+            out.append(line)
     return out
 
 
@@ -92,9 +172,20 @@ def list_payments(
         False,
         description="Развернуть неоплаченные строки payment_months в отдельные позиции (срок — due_date строки)",
     ),
+    debitor: bool = Query(
+        False,
+        description="Режим дебиторки: строки графика (все месяцы) с сроком оплаты в интервале due_from–due_to; оплаченные включены",
+    ),
+    due_from: Optional[date] = Query(None, description="Начало периода по дате срока оплаты (debitor=1)"),
+    due_to: Optional[date] = Query(None, description="Конец периода по дате срока оплаты (debitor=1)"),
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
+    if debitor:
+        return _list_debitor_payments(
+            db, current_user, partner_id, payment_type, project_category, due_from, due_to
+        )
+
     q = db.query(Payment).options(
         joinedload(Payment.partner).joinedload(Partner.manager),
         joinedload(Payment.confirmed_by_user),
