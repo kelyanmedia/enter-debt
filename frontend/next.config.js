@@ -28,7 +28,8 @@ const nextConfig = {
   },
 
   async rewrites() {
-    const backendUrl = process.env.BACKEND_URL || 'http://localhost:8001'
+    // Совпадает с README / uvicorn по умолчанию (:8000). Другой порт — задайте BACKEND_URL в .env.local
+    const backendUrl = process.env.BACKEND_URL || 'http://127.0.0.1:8000'
     return [
       {
         source: '/api/:path*',

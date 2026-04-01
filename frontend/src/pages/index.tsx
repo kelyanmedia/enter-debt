@@ -57,7 +57,7 @@ export default function Dashboard() {
   const router = useRouter()
 
   useEffect(() => {
-    if (!loading && user && user.role === 'manager') router.replace('/debitor')
+    if (!loading && user && (user.role === 'manager' || user.role === 'administration')) router.replace('/debitor')
   }, [user, loading, router])
 
   const [stats, setStats] = useState<Stats | null>(null)
@@ -83,7 +83,7 @@ export default function Dashboard() {
   }
 
   useEffect(() => {
-    if (!user || user.role === 'manager') return
+    if (!user || user.role === 'manager' || user.role === 'administration') return
     loadStats(dateFrom, dateTo)
     Promise.all([
       api.get('payments?status=overdue&expand_month_lines=1'),
@@ -133,7 +133,7 @@ export default function Dashboard() {
   return (
     <Layout>
       {/* Layout обрабатывает редирект на /login и spinner; контент только для admin/accountant */}
-      {!loading && user && user.role !== 'manager' && <>
+      {!loading && user && user.role !== 'manager' && user.role !== 'administration' && <>
       {/* Header with global date filter */}
       <div style={{ background: '#fff', borderBottom: '1px solid #e8e9ef', padding: '0 24px', minHeight: 60, display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexShrink: 0, flexWrap: 'wrap', gap: 12 }}>
         <div>

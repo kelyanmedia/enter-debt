@@ -1,4 +1,4 @@
-from sqlalchemy import Column, Integer, String, Boolean, DateTime, BigInteger
+from sqlalchemy import Column, Integer, String, Boolean, DateTime, BigInteger, Text
 from sqlalchemy.orm import relationship
 from sqlalchemy.sql import func
 from app.db.database import Base
@@ -11,7 +11,11 @@ class User(Base):
     name = Column(String(100), nullable=False)
     email = Column(String(200), unique=True, index=True, nullable=False)
     hashed_password = Column(String(255), nullable=False)
-    role = Column(String(20), nullable=False, default="manager")  # admin / manager / accountant
+    role = Column(String(20), nullable=False, default="manager")  # admin / manager / accountant / administration / employee
+    # JSON-массив id менеджеров (только role=administration): видимость партнёров и проектов
+    visible_manager_ids = Column(Text, nullable=True)
+    # Реквизиты для выплат (Visa, Uzcard и т.д.) — для роли employee
+    payment_details = Column(Text, nullable=True)
     telegram_id = Column(String(50), unique=True, nullable=True)
     telegram_chat_id = Column(BigInteger, unique=True, nullable=True)
     telegram_username = Column(String(100), nullable=True)
@@ -25,3 +29,4 @@ class User(Base):
     # Relationships
     managed_partners = relationship("Partner", back_populates="manager")
     confirmed_payments = relationship("Payment", back_populates="confirmed_by_user")
+    employee_tasks = relationship("EmployeeTask", back_populates="user", cascade="all, delete-orphan")

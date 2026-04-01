@@ -22,8 +22,9 @@ def _truncate(text: str, limit: int = 400) -> str:
 
 def emit_payment_created(payment_id: int, partner_id: int, description: str) -> None:
     """Записывает событие о новом проекте в собственной сессии."""
-    from app.db.database import SessionLocal
-    db = SessionLocal()
+    from app.db.database import open_request_company_session
+
+    db = open_request_company_session()
     try:
         partner = db.query(Partner).filter(Partner.id == partner_id).first()
         pname = partner.name if partner else "—"
@@ -45,8 +46,9 @@ def emit_payment_created(payment_id: int, partner_id: int, description: str) -> 
 
 def emit_partner_created(partner_id: int, name: str) -> None:
     """Записывает событие о новой компании в собственной сессии."""
-    from app.db.database import SessionLocal
-    db = SessionLocal()
+    from app.db.database import open_request_company_session
+
+    db = open_request_company_session()
     try:
         db.add(FeedNotification(
             kind="partner_created",
@@ -65,8 +67,9 @@ def emit_partner_created(partner_id: int, name: str) -> None:
 
 def emit_user_created(user_id: int, name: str, email: str) -> None:
     """Записывает событие о новом сотруднике в собственной сессии."""
-    from app.db.database import SessionLocal
-    db = SessionLocal()
+    from app.db.database import open_request_company_session
+
+    db = open_request_company_session()
     try:
         db.add(FeedNotification(
             kind="user_created",

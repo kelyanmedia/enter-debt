@@ -198,7 +198,11 @@ export default function DebitorPage() {
       const params = new URLSearchParams()
       if (from) params.append('date_from', from)
       if (to) params.append('date_to', to)
-      if ((user?.role === 'admin' || user?.role === 'accountant') && mgr) params.append('manager_id', mgr)
+      if (
+        (user?.role === 'admin' || user?.role === 'accountant' || user?.role === 'administration') &&
+        mgr
+      )
+        params.append('manager_id', mgr)
       api
         .get(`dashboard?${params}`)
         .then(r => setStats(r.data))
@@ -395,7 +399,7 @@ export default function DebitorPage() {
             Всё время
           </button>
 
-          {user?.role === 'admin' && (
+          {(user?.role === 'admin' || user?.role === 'accountant' || user?.role === 'administration') && (
             <>
               <span style={{ marginLeft: 12, fontSize: 12, color: '#8a8fa8' }}>Менеджер:</span>
               <Select
@@ -413,7 +417,16 @@ export default function DebitorPage() {
             </>
           )}
 
-          <span style={{ marginLeft: user?.role === 'admin' ? 8 : 12, fontSize: 12, color: '#8a8fa8' }}>В таблице:</span>
+          <span
+            style={{
+              marginLeft:
+                user?.role === 'admin' || user?.role === 'accountant' || user?.role === 'administration' ? 8 : 12,
+              fontSize: 12,
+              color: '#8a8fa8',
+            }}
+          >
+            В таблице:
+          </span>
           <select
             value={statusFilter}
             onChange={e => setStatusFilter(e.target.value as 'all' | 'overdue' | 'pending')}

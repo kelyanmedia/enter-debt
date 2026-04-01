@@ -1,7 +1,27 @@
-from pydantic import BaseModel, EmailStr, Field
-from typing import Optional, List, Literal, Dict, Any
+from pydantic import BaseModel, EmailStr, Field, BeforeValidator
+from typing import Optional, List, Literal, Dict, Any, Annotated
 from datetime import datetime, date
 from decimal import Decimal
+
+
+def _coerce_visible_manager_ids_field(v: Any) -> List[int]:
+    if v is None:
+        return []
+    if isinstance(v, list):
+        return [int(x) for x in v]
+    if isinstance(v, str):
+        import json
+        s = v.strip()
+        if not s:
+            return []
+        try:
+            return [int(x) for x in json.loads(s)]
+        except (TypeError, ValueError, json.JSONDecodeError):
+            return []
+    return []
+
+
+VisibleManagerIds = Annotated[List[int], BeforeValidator(_coerce_visible_manager_ids_field)]
 
 
 # ── AUTH ──────────────────────────────────────────────────────────────────────
@@ -34,10 +54,12 @@ class UserBase(BaseModel):
     is_active: bool = True
     web_access: bool = True
     see_all_partners: bool = False
+    payment_details: Optional[str] = None  # реквизиты выплат для сотрудников (freelance)
 
 
 class UserCreate(UserBase):
     password: str
+    visible_manager_ids: Optional[List[int]] = None
 
 
 class UserUpdate(BaseModel):
@@ -51,6 +73,8 @@ class UserUpdate(BaseModel):
     web_access: Optional[bool] = None
     see_all_partners: Optional[bool] = None
     password: Optional[str] = None
+    visible_manager_ids: Optional[List[int]] = None
+    payment_details: Optional[str] = None
 
 
 class AssignedPartnersBody(BaseModel):
@@ -64,9 +88,68 @@ class UserOut(UserBase):
     created_at: datetime
     email: str
     last_login_at: Optional[datetime] = None
+    visible_manager_ids: VisibleManagerIds = Field(default_factory=list)
 
     class Config:
         from_attributes = True
+
+
+# ── EMPLOYEE TASKS (freelance / зарплата) ─────────────────────────────────────
+class EmployeeTaskBase(BaseModel):
+    work_date: date
+    project_name: str = Field(..., max_length=300)
+    task_description: str = Field(..., max_length=600)
+    task_url: Optional[str] = Field(None, max_length=800)
+    hours: Optional[Decimal] = None
+    amount: Optional[Decimal] = None
+    currency: str = Field(default="USD", max_length=3)
+    status: str = Field(default="not_started", max_length=30)
+
+
+class EmployeeTaskCreate(EmployeeTaskBase):
+    """Для админа в теле запроса передайте user_id — задача будет создана для этого сотрудника."""
+
+    user_id: Optional[int] = Field(
+        default=None,
+        description="Только админ: ID пользователя с ролью employee",
+    )
+
+
+class EmployeeTaskUpdate(BaseModel):
+    work_date: Optional[date] = None
+    project_name: Optional[str] = Field(None, max_length=300)
+    task_description: Optional[str] = Field(None, max_length=600)
+    task_url: Optional[str] = Field(None, max_length=800)
+    hours: Optional[Decimal] = None
+    amount: Optional[Decimal] = None
+    currency: Optional[str] = Field(None, max_length=3)
+    status: Optional[str] = Field(None, max_length=30)
+
+
+class EmployeeTaskOut(EmployeeTaskBase):
+    id: int
+    user_id: int
+    created_at: datetime
+
+    class Config:
+        from_attributes = True
+
+
+class StaffEmployeeOut(BaseModel):
+    id: int
+    name: str
+    email: str
+    payment_details: Optional[str] = None
+    task_count: int = 0
+
+
+class StaffMonthTotalsOut(BaseModel):
+    year: int
+    month: int
+    label: str
+    total_usd: Decimal
+    total_uzs: Decimal
+    total_hours: Decimal
 
 
 # ── PARTNERS ──────────────────────────────────────────────────────────────────
@@ -200,6 +283,9 @@ class PaymentOut(PaymentBase):
     source_payment_month_id: Optional[int] = None
     # Период услуги / акт по строке графика (YYYY-MM), напр. «март 2026» на фронте
     service_month: Optional[str] = None
+    # Ближайший неоплаченный месяц графика (для списка проектов и напоминаний)
+    next_payment_due_date: Optional[date] = None
+    next_payment_month: Optional[str] = None
 
     class Config:
         from_attributes = True

@@ -14,7 +14,6 @@ from app.models.user import User
 from app.schemas.schemas import PaymentMonthCreate, PaymentMonthOut
 from app.core.security import get_current_user, require_manager_or_admin
 from app.core.access import assert_payment_access
-from app.models.user import User
 from app.core.config import settings
 
 router = APIRouter(prefix="/api/payments", tags=["payment-months"])
@@ -72,6 +71,23 @@ def _month_label(month_str: str) -> str:
         return f"{months_ru[int(m) - 1]} {y}"
     except Exception:
         return month_str
+
+
+def _next_calendar_month(ym: str) -> str:
+    parts = (ym or "").strip().split("-")
+    if len(parts) != 2:
+        raise HTTPException(status_code=400, detail="Неверный формат месяца (нужно YYYY-MM)")
+    try:
+        y, mo = int(parts[0]), int(parts[1])
+    except ValueError:
+        raise HTTPException(status_code=400, detail="Неверный формат месяца (нужно YYYY-MM)")
+    if mo < 1 or mo > 12:
+        raise HTTPException(status_code=400, detail="Неверный месяц в периоде")
+    mo += 1
+    if mo > 12:
+        mo = 1
+        y += 1
+    return f"{y}-{mo:02d}"
 
 
 @router.get("/{payment_id}/months", response_model=List[PaymentMonthOut])
@@ -137,6 +153,78 @@ def add_month(
     except Exception as e:
         db.rollback()
         logger.error(f"add_month error payment_id={payment_id} month={data.month}: {e}")
+        raise HTTPException(status_code=500, detail=f"Ошибка базы данных: {str(e)}")
+
+
+@router.post("/{payment_id}/months/{month_id}/duplicate-next", response_model=PaymentMonthOut)
+def duplicate_month_to_next_month(
+    payment_id: int,
+    month_id: int,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(require_manager_or_admin),
+):
+    """
+    Копия строки графика на следующий календарный месяц: та же сумма, новое описание «… Май 2026 Акт/СФ»,
+    срок оплаты по правилам договора; акт и оплата — сброшены (как у новой строки).
+    """
+    p = db.query(Payment).filter(Payment.id == payment_id).first()
+    if not p:
+        raise HTTPException(status_code=404, detail="Payment not found")
+    assert_payment_access(db, current_user, p)
+    pm = db.query(PaymentMonth).filter(
+        PaymentMonth.id == month_id,
+        PaymentMonth.payment_id == payment_id,
+    ).first()
+    if not pm:
+        raise HTTPException(status_code=404, detail="Month not found")
+
+    nxt = _next_calendar_month(pm.month)
+    existing = db.query(PaymentMonth).filter(
+        PaymentMonth.payment_id == payment_id,
+        PaymentMonth.month == nxt,
+    ).first()
+    if existing:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Месяц {nxt} уже есть в графике. Удалите или отредактируйте существующую строку.",
+        )
+
+    new_amt = _effective_month_amount(pm.amount, p.amount)
+    existing_sum = _sum_month_lines_amounts(db, payment_id, p)
+    contract_amt = Decimal(str(p.amount)).quantize(Decimal("0.01"))
+    if (existing_sum + new_amt).quantize(Decimal("0.01")) > contract_amt:
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                f"Сумма по строкам месяцев ({existing_sum + new_amt} сум) не может превышать сумму договора "
+                f"({contract_amt} сум). Увеличьте сумму проекта или уменьшите суммы по месяцам."
+            ),
+        )
+
+    due = resolve_payment_month_due_date(nxt, None, p)
+    desc = f"{(p.description or '').strip()} {_month_label(nxt)} Акт/СФ".strip()
+
+    try:
+        new_pm = PaymentMonth(
+            payment_id=payment_id,
+            month=nxt,
+            due_date=due,
+            amount=pm.amount,
+            description=desc,
+            note=None,
+            status="pending",
+            act_issued=False,
+            act_issued_at=None,
+            paid_at=None,
+            confirmed_by=None,
+        )
+        db.add(new_pm)
+        db.commit()
+        db.refresh(new_pm)
+        return new_pm
+    except Exception as e:
+        db.rollback()
+        logger.error(f"duplicate_month payment_id={payment_id} month_id={month_id}: {e}")
         raise HTTPException(status_code=500, detail=f"Ошибка базы данных: {str(e)}")
 
 

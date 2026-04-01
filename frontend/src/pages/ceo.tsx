@@ -221,7 +221,7 @@ export default function CeoDashboardPage() {
   const isAdmin = user?.role === 'admin'
 
   useEffect(() => {
-    if (!loading && user && user.role === 'manager') router.replace('/')
+    if (!loading && user && (user.role === 'manager' || user.role === 'administration')) router.replace('/debitor')
   }, [user, loading, router])
 
   const [stats, setStats] = useState<CeoStats | null>(null)
@@ -281,7 +281,7 @@ export default function CeoDashboardPage() {
 
   return (
     <Layout>
-      {!loading && user && user.role !== 'manager' && <>
+      {!loading && user && user.role !== 'manager' && user.role !== 'administration' && <>
       <PageHeader
         title="CEO Dashboard"
         subtitle="Проекты по линиям, активные партнёры по месяцам, оборот и LTV."

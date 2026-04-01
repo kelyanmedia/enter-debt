@@ -26,7 +26,8 @@ def get_archived_payments(
 ):
     q = db.query(Payment).options(
         joinedload(Payment.partner).joinedload(Partner.manager),
-        joinedload(Payment.confirmed_by_user)
+        joinedload(Payment.confirmed_by_user),
+        joinedload(Payment.months),
     ).filter(Payment.is_archived == True)
 
     if date_from:

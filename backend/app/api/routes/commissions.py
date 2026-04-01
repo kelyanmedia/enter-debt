@@ -16,6 +16,11 @@ from app.core.security import get_current_user
 router = APIRouter(prefix="/api/commissions", tags=["commissions"])
 
 
+def _reject_administration(current_user: User) -> None:
+    if current_user.role == "administration":
+        raise HTTPException(status_code=403, detail="Нет доступа к разделу комиссий")
+
+
 def _enrich(c: Commission) -> CommissionOut:
     out = CommissionOut.model_validate(c)
     cost = Decimal(str(c.project_cost or 0))
@@ -56,6 +61,7 @@ def get_stats(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
+    _reject_administration(current_user)
     rows = _base_query(db, current_user, year, month, manager_id).all()
     total_cost = total_profit = total_mgr = total_recv = Decimal(0)
     for c in rows:
@@ -86,6 +92,7 @@ def list_commissions(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
+    _reject_administration(current_user)
     rows = _base_query(db, current_user, year, month, manager_id)\
         .order_by(Commission.project_date.desc(), Commission.id.desc()).all()
     return [_enrich(c) for c in rows]
@@ -97,6 +104,7 @@ def create_commission(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
+    _reject_administration(current_user)
     mgr_id = current_user.id
     if current_user.role in ("admin", "accountant") and data.manager_id:
         mgr_id = data.manager_id
@@ -129,6 +137,7 @@ def update_commission(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
+    _reject_administration(current_user)
     c = db.query(Commission).filter(Commission.id == cid).first()
     if not c:
         raise HTTPException(404, "Не найдено")
@@ -147,6 +156,7 @@ def delete_commission(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
+    _reject_administration(current_user)
     c = db.query(Commission).filter(Commission.id == cid).first()
     if not c:
         raise HTTPException(404, "Не найдено")

@@ -1,4 +1,4 @@
-import { ReactNode, CSSProperties, useState, MouseEvent } from 'react'
+import { ReactNode, CSSProperties, useState, MouseEvent, MouseEventHandler, type InputHTMLAttributes } from 'react'
 
 // ── Badge ─────────────────────────────────────────────────────────────────────
 
@@ -35,6 +35,12 @@ export function statusBadge(status: string) {
     admin:    { label: 'Администратор', variant: 'green' },
     manager:  { label: 'Менеджер',  variant: 'blue'  },
     accountant:{ label: 'Бухгалтерия', variant: 'gray' },
+    administration:{ label: 'Администрация', variant: 'blue' },
+    employee:{ label: 'Сотрудник', variant: 'blue' },
+    not_started:{ label: 'Не начато', variant: 'gray' },
+    in_progress:{ label: 'В процессе', variant: 'blue' },
+    pending_approval:{ label: 'На утверждении', variant: 'amber' },
+    done:{ label: 'Готово', variant: 'green' },
     regular:   { label: 'Рекуррентный', variant: 'blue' },
     recurring: { label: 'Рекуррентный', variant: 'blue' },
     one_time: { label: 'Разовый',   variant: 'gray'  },
@@ -45,6 +51,75 @@ export function statusBadge(status: string) {
   }
   const m = map[status] || { label: status, variant: 'gray' }
   return <Badge variant={m.variant}>{m.label}</Badge>
+}
+
+/** Статусы задач сотрудника — совпадают с backend VALID_STATUS */
+export const EMPLOYEE_TASK_STATUS_OPTIONS: ReadonlyArray<{ value: string; label: string }> = [
+  { value: 'not_started', label: 'Не начато' },
+  { value: 'in_progress', label: 'В процессе' },
+  { value: 'pending_approval', label: 'На утверждении' },
+  { value: 'done', label: 'Готово' },
+]
+
+function employeeTaskStatusBadgeVariant(status: string): keyof typeof BADGE_STYLES {
+  const m: Record<string, keyof typeof BADGE_STYLES> = {
+    not_started: 'gray',
+    in_progress: 'blue',
+    pending_approval: 'amber',
+    done: 'green',
+  }
+  return m[status] || 'gray'
+}
+
+/** Выпадающий список статуса в таблице задач (без отдельного редактирования) */
+export function EmployeeTaskStatusSelect({
+  value,
+  onChange,
+  disabled,
+}: {
+  value: string
+  onChange: (next: string) => void
+  disabled?: boolean
+}) {
+  const variant = employeeTaskStatusBadgeVariant(value)
+  const colors = BADGE_STYLES[variant]
+  const chevron =
+    'url("data:image/svg+xml,%3Csvg xmlns=%27http://www.w3.org/2000/svg%27 width=%2712%27 height=%2712%27 viewBox=%270 0 12 12%27%3E%3Cpath fill=%27none%27 stroke=%27%2364748b%27 stroke-width=%271.5%27 stroke-linecap=%27round%27 d=%27M3 4.5L6 7.5L9 4.5%27/%3E%3C/svg%3E")'
+  const bg =
+    typeof colors.background === 'string' ? colors.background : '#f5f6fa'
+  return (
+    <select
+      value={value}
+      disabled={disabled}
+      onChange={e => onChange(e.target.value)}
+      aria-label="Статус задачи"
+      style={{
+        color: colors.color,
+        backgroundColor: bg,
+        padding: '5px 26px 5px 10px',
+        borderRadius: 20,
+        fontSize: 11,
+        fontWeight: 600,
+        border: '1px solid rgba(0,0,0,.06)',
+        cursor: disabled ? 'not-allowed' : 'pointer',
+        opacity: disabled ? 0.65 : 1,
+        appearance: 'none',
+        WebkitAppearance: 'none',
+        maxWidth: '100%',
+        minWidth: 158,
+        backgroundImage: chevron,
+        backgroundRepeat: 'no-repeat',
+        backgroundPosition: 'right 8px center',
+      }}
+    >
+      {!EMPLOYEE_TASK_STATUS_OPTIONS.some(o => o.value === value) && (
+        <option value={value}>{value}</option>
+      )}
+      {EMPLOYEE_TASK_STATUS_OPTIONS.map(o => (
+        <option key={o.value} value={o.value}>{o.label}</option>
+      ))}
+    </select>
+  )
 }
 
 // ── Modal ─────────────────────────────────────────────────────────────────────
@@ -257,6 +332,121 @@ export function Input(props: React.InputHTMLAttributes<HTMLInputElement>) {
   return <input {...props} style={{ ...inputStyle, ...props.style }} />
 }
 
+/** Убрать пробелы/группировку; одна точка как разделитель дроби (запятая → точка). */
+export function sanitizeMoneyInputString(raw: string): string {
+  let t = raw.replace(/\s/g, '').replace(/,/g, '.')
+  let out = ''
+  let dot = false
+  for (const c of t) {
+    if (c >= '0' && c <= '9') out += c
+    else if (c === '.' && !dot) {
+      dot = true
+      out += '.'
+    }
+  }
+  return out
+}
+
+function normalizeMoneyBlurValue(raw: string): string {
+  if (raw === '' || raw === '.') return ''
+  const n = Number(raw)
+  if (!Number.isFinite(n)) return raw
+  const r = Math.round(n * 100) / 100
+  if (Math.abs(r - Math.round(r)) < 1e-9) return String(Math.round(r))
+  return String(r)
+}
+
+type GroupedInputExtra = Omit<InputHTMLAttributes<HTMLInputElement>, 'value' | 'onChange' | 'type' | 'inputMode'>
+
+/**
+ * Сумма / денежное поле: в состоянии храните строку без пробелов («90000000» или «90000000.5»).
+ * Вне фокуса показываются группы разрядов (1 000, 10 000, 100 000 …).
+ */
+export function MoneyInput({
+  value,
+  onChange,
+  placeholder,
+  disabled,
+  style,
+  ...rest
+}: GroupedInputExtra & { value: string; onChange: (v: string) => void }) {
+  const [focused, setFocused] = useState(false)
+  const displayValue =
+    focused || value === '' || value === '.'
+      ? sanitizeMoneyInputString(value)
+      : (() => {
+          const n = Number(value)
+          return Number.isFinite(n) ? formatMoneyNumber(n) : sanitizeMoneyInputString(value)
+        })()
+
+  return (
+    <input
+      {...rest}
+      type="text"
+      inputMode="decimal"
+      autoComplete="off"
+      disabled={disabled}
+      placeholder={placeholder}
+      value={displayValue}
+      onFocus={(e) => {
+        setFocused(true)
+        rest.onFocus?.(e)
+      }}
+      onBlur={(e) => {
+        setFocused(false)
+        const n = normalizeMoneyBlurValue(sanitizeMoneyInputString(value))
+        if (n !== value) onChange(n)
+        rest.onBlur?.(e)
+      }}
+      onChange={(e) => onChange(sanitizeMoneyInputString(e.target.value))}
+      style={{ ...inputStyle, ...style }}
+    />
+  )
+}
+
+/** Целое число с группировкой разрядов (Telegram chat id, штуки и т.д.). */
+export function IntegerGroupedInput({
+  value,
+  onChange,
+  placeholder,
+  disabled,
+  style,
+  ...rest
+}: GroupedInputExtra & { value: string; onChange: (v: string) => void }) {
+  const [focused, setFocused] = useState(false)
+  const displayValue =
+    focused || value === ''
+      ? value
+      : (() => {
+          const n = parseInt(value, 10)
+          return Number.isFinite(n) ? formatMoneyNumber(n) : value
+        })()
+
+  return (
+    <input
+      {...rest}
+      type="text"
+      inputMode="numeric"
+      autoComplete="off"
+      disabled={disabled}
+      placeholder={placeholder}
+      value={displayValue}
+      onFocus={(e) => {
+        setFocused(true)
+        rest.onFocus?.(e)
+      }}
+      onBlur={(e) => {
+        setFocused(false)
+        const digits = value.replace(/\D/g, '')
+        if (digits !== value) onChange(digits)
+        rest.onBlur?.(e)
+      }}
+      onChange={(e) => onChange(e.target.value.replace(/\D/g, ''))}
+      style={{ ...inputStyle, ...style }}
+    />
+  )
+}
+
 export function Select(props: React.SelectHTMLAttributes<HTMLSelectElement>) {
   return <select {...props} style={{ ...inputStyle, cursor: 'pointer', ...props.style }} />
 }
@@ -265,7 +455,21 @@ export function Select(props: React.SelectHTMLAttributes<HTMLSelectElement>) {
 
 export function PageHeader({ title, subtitle, action }: { title: string; subtitle?: string; action?: ReactNode }) {
   return (
-    <div style={{ background: '#fff', borderBottom: '1px solid #e8e9ef', padding: '0 24px', height: 60, display: 'flex', alignItems: 'center', gap: 16, flexShrink: 0 }}>
+    <div
+      style={{
+        background: '#fff',
+        borderBottom: '1px solid #e8e9ef',
+        padding: '0 24px',
+        height: 60,
+        display: 'flex',
+        alignItems: 'center',
+        gap: 16,
+        flexShrink: 0,
+        width: '100%',
+        minWidth: 0,
+        boxSizing: 'border-box',
+      }}
+    >
       <div style={{ flex: 1 }}>
         <div style={{ fontSize: 18, fontWeight: 700 }}>{title}</div>
         {subtitle && <div style={{ fontSize: 13, color: '#8a8fa8' }}>{subtitle}</div>}
@@ -459,12 +663,60 @@ export function CardTitle({ children }: { children: ReactNode }) {
   return <div style={{ fontSize: 14, fontWeight: 700 }}>{children}</div>
 }
 
-export function Th({ children, style }: { children?: ReactNode; style?: CSSProperties }) {
-  return <th style={{ padding: '10px 16px', textAlign: 'left', fontSize: 11.5, fontWeight: 600, color: '#8a8fa8', textTransform: 'uppercase', letterSpacing: '.05em', borderBottom: '1px solid #e8e9ef', background: '#f5f6fa', whiteSpace: 'nowrap', ...style }}>{children}</th>
+export function Th({
+  children,
+  style,
+  onClick,
+  title,
+}: {
+  children?: ReactNode
+  style?: CSSProperties
+  onClick?: MouseEventHandler<HTMLTableCellElement>
+  title?: string
+}) {
+  return (
+    <th
+      style={{
+        padding: '10px 16px',
+        textAlign: 'left',
+        fontSize: 11.5,
+        fontWeight: 600,
+        color: '#8a8fa8',
+        textTransform: 'uppercase',
+        letterSpacing: '.05em',
+        borderBottom: '1px solid #e8e9ef',
+        background: '#f5f6fa',
+        whiteSpace: 'nowrap',
+        ...style,
+      }}
+      onClick={onClick}
+      title={title}
+    >
+      {children}
+    </th>
+  )
 }
 
-export function Td({ children, style }: { children?: ReactNode; style?: CSSProperties }) {
-  return <td style={{ padding: '12px 16px', fontSize: 13, borderBottom: '1px solid #e8e9ef', ...style }}>{children}</td>
+export function Td({
+  children,
+  style,
+  colSpan,
+  rowSpan,
+}: {
+  children?: ReactNode
+  style?: CSSProperties
+  colSpan?: number
+  rowSpan?: number
+}) {
+  return (
+    <td
+      colSpan={colSpan}
+      rowSpan={rowSpan}
+      style={{ padding: '12px 16px', fontSize: 13, borderBottom: '1px solid #e8e9ef', ...style }}
+    >
+      {children}
+    </td>
+  )
 }
 
 export function PartnerAvatar({ name }: { name: string }) {
@@ -474,9 +726,16 @@ export function PartnerAvatar({ name }: { name: string }) {
   )
 }
 
-/** Группы разрядов с пробелами (ru-RU), без валюты */
+/** Группы разрядов с пробелами (ru-RU), без валюты; до 2 знаков после запятой */
 export function formatMoneyNumber(n: number | string) {
-  return Number(n).toLocaleString('ru-RU').replace(/[\u00A0\u202F]/g, ' ')
+  const num = Number(n)
+  if (!Number.isFinite(num)) return '0'
+  return new Intl.NumberFormat('ru-RU', {
+    minimumFractionDigits: 0,
+    maximumFractionDigits: 2,
+  })
+    .format(num)
+    .replace(/[\u00A0\u202F]/g, ' ')
 }
 
 /** Полная сумма: «100 000 000 Uzs» */
@@ -489,19 +748,34 @@ export function formatDate(d?: string | null) {
   return new Date(d).toLocaleDateString('ru-RU', { day: '2-digit', month: 'short', year: 'numeric' })
 }
 
+/** Дата «окончания» для проекта: deadline или ближайший платёж по числу месяца. */
+function _paymentDeadlineDate(deadline?: string | null, dayOfMonth?: number | null): Date | null {
+  if (deadline) return new Date(deadline)
+  if (dayOfMonth) {
+    const now = new Date()
+    let date = new Date(now.getFullYear(), now.getMonth(), dayOfMonth)
+    if (date < now) date = new Date(now.getFullYear(), now.getMonth() + 1, dayOfMonth)
+    return date
+  }
+  return null
+}
+
+/**
+ * Дней до дедлайна: отрицательное — просрочка, положительное — осталось; null — нет даты.
+ * Совпадает с расчётом подписи в daysLeft.
+ */
+export function daysLeftSortKey(deadline?: string | null, dayOfMonth?: number | null): number | null {
+  const date = _paymentDeadlineDate(deadline, dayOfMonth)
+  if (!date) return null
+  return Math.ceil((date.getTime() - Date.now()) / 86400000)
+}
+
 export function daysLeft(
   deadline?: string | null,
   dayOfMonth?: number | null,
   variant: 'standard' | 'cashflow' = 'standard',
 ): { label: string; color: string } {
-  let date: Date | null = null
-  if (deadline) {
-    date = new Date(deadline)
-  } else if (dayOfMonth) {
-    const now = new Date()
-    date = new Date(now.getFullYear(), now.getMonth(), dayOfMonth)
-    if (date < now) date = new Date(now.getFullYear(), now.getMonth() + 1, dayOfMonth)
-  }
+  const date = _paymentDeadlineDate(deadline, dayOfMonth)
   if (!date) return { label: '—', color: '#8a8fa8' }
   const diff = Math.ceil((date.getTime() - Date.now()) / 86400000)
   if (diff < 0) return { label: `−${Math.abs(diff)} дн.`, color: '#e84040' }

@@ -8,6 +8,8 @@ const roleLabel: Record<string, string> = {
   admin: 'Администратор',
   manager: 'Менеджер',
   accountant: 'Бухгалтерия',
+  administration: 'Администрация',
+  employee: 'Сотрудник',
 }
 
 export default function ProfilePage() {

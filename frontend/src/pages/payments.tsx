@@ -1,8 +1,8 @@
-import { useEffect, useState, useCallback } from 'react'
+import { useEffect, useState, useCallback, useMemo } from 'react'
 import { useRouter } from 'next/router'
 import { useAuth } from '@/context/AuthContext'
 import Layout from '@/components/Layout'
-import { PageHeader, Card, Th, Td, PartnerAvatar, statusBadge, formatAmount, formatMoneyNumber, formatDate, daysLeft, BtnPrimary, BtnOutline, BtnIconEdit, Modal, ConfirmModal, Field, Input, Select, Empty } from '@/components/ui'
+import { PageHeader, Card, Th, Td, PartnerAvatar, statusBadge, formatAmount, formatMoneyNumber, formatDate, daysLeft, daysLeftSortKey, BtnPrimary, BtnOutline, BtnIconEdit, Modal, ConfirmModal, Field, Input, Select, Empty, MoneyInput } from '@/components/ui'
 import api from '@/lib/api'
 
 interface Partner { id: number; name: string }
@@ -19,8 +19,19 @@ interface Payment {
   contract_months?: number; remind_days_before: number; created_at: string; postponed_until?: string
   notify_accounting: boolean; contract_url?: string; service_period?: string
   project_category?: string | null
+  /** Ближайший неоплаченный месяц графика (ISO date) */
+  next_payment_due_date?: string | null
+  next_payment_month?: string | null
   partner: { id: number; name: string; manager?: { id: number; name: string } }
   months?: PaymentMonth[]
+}
+
+/** Для списка: дедлайн по графику или по договору (редактирование всегда по deadline_date из API). */
+function listDueDateStr(p: Payment): string | null | undefined {
+  return p.next_payment_due_date || p.deadline_date || undefined
+}
+function listDueDayOfMonth(p: Payment): number | null | undefined {
+  return p.next_payment_due_date ? undefined : p.day_of_month
 }
 
 const EMPTY_FORM = {
@@ -90,6 +101,18 @@ function generateMonths(startYM: string, count: number): string[] {
   })
 }
 
+/** Следующий календарный месяц после YYYY-MM */
+function nextMonthYm(ym: string): string {
+  const [y, m] = ym.split('-').map(Number)
+  let mo = m + 1
+  let yr = y
+  if (mo > 12) {
+    mo = 1
+    yr += 1
+  }
+  return `${yr}-${String(mo).padStart(2, '0')}`
+}
+
 function lineBadge(cat?: string | null) {
   if (cat === 'web') return <span style={{ fontSize: 11, fontWeight: 700, color: '#2563eb', background: '#eff4ff', padding: '3px 8px', borderRadius: 6 }}>Web</span>
   if (cat === 'seo') return <span style={{ fontSize: 11, fontWeight: 700, color: '#b45309', background: '#fff8ee', padding: '3px 8px', borderRadius: 6 }}>SEO</span>
@@ -124,6 +147,8 @@ export default function PaymentsPage() {
   const [filterType, setFilterType] = useState('')
   const [filterCategory, setFilterCategory] = useState('')
   const [filterManager, setFilterManager] = useState('')
+  /** default — порядок с API; urgency — сначала просрочка (красные), затем ближайшие выплаты, в конце без даты и с большим запасом */
+  const [sortByRemaining, setSortByRemaining] = useState<'default' | 'urgency'>('default')
   const [users, setUsers] = useState<User[]>([])
   const [modal, setModal] = useState(false)
   const [editingId, setEditingId] = useState<number | null>(null)
@@ -147,6 +172,7 @@ export default function PaymentsPage() {
   const [addMonthOpen, setAddMonthOpen] = useState(false)
   const [confirmingMonth, setConfirmingMonth] = useState<number | null>(null)
   const [confirmingAct, setConfirmingAct] = useState<number | null>(null)
+  const [duplicatingMonth, setDuplicatingMonth] = useState<number | null>(null)
   const [monthSaved, setMonthSaved] = useState<number | null>(null)
   const [deletePaymentId, setDeletePaymentId] = useState<number | null>(null)
   const [deleteMonthId, setDeleteMonthId] = useState<number | null>(null)
@@ -184,6 +210,28 @@ export default function PaymentsPage() {
   useEffect(() => {
     load()
   }, [load])
+
+  const displayedPayments = useMemo(() => {
+    if (sortByRemaining !== 'urgency') return payments
+
+    const tier = (k: number | null) => {
+      if (k === null) return 2
+      if (k < 0) return 0
+      return 1
+    }
+
+    return [...payments].sort((a, b) => {
+      const ka = daysLeftSortKey(listDueDateStr(a), listDueDayOfMonth(a))
+      const kb = daysLeftSortKey(listDueDateStr(b), listDueDayOfMonth(b))
+      const ta = tier(ka)
+      const tb = tier(kb)
+      if (ta !== tb) return ta - tb
+      if (ka === null && kb === null) return 0
+      if (ka === null) return 1
+      if (kb === null) return -1
+      return ka - kb
+    })
+  }, [payments, sortByRemaining])
 
   useEffect(() => {
     api.get('partners').then(r => setPartners(r.data)).catch(() => setPartners([]))
@@ -353,6 +401,19 @@ export default function PaymentsPage() {
     }
   }
 
+  const duplicateMonthToNext = async (monthId: number) => {
+    if (!drawer) return
+    setDuplicatingMonth(monthId)
+    try {
+      const r = await api.post<PaymentMonth>(`payments/${drawer.id}/months/${monthId}/duplicate-next`, {})
+      setDrawerMonths(prev => [...prev, r.data].sort((a, b) => a.month.localeCompare(b.month)))
+    } catch (e: unknown) {
+      alert(formatApiError(e))
+    } finally {
+      setDuplicatingMonth(null)
+    }
+  }
+
   const runDeleteMonth = async () => {
     if (!drawer || deleteMonthId === null) return
     await api.delete(`payments/${drawer.id}/months/${deleteMonthId}`)
@@ -395,10 +456,20 @@ export default function PaymentsPage() {
         action={<BtnPrimary onClick={openAdd}>+ Новый проект</BtnPrimary>}
       />
 
-      <div style={{ padding: '22px 24px', overflowY: 'auto', flex: 1 }}>
+      <div
+        style={{
+          padding: '22px 24px',
+          overflowY: 'auto',
+          overflowX: 'hidden',
+          flex: 1,
+          width: '100%',
+          minWidth: 0,
+          boxSizing: 'border-box',
+        }}
+      >
         {/* Filters */}
         <div style={{ display: 'flex', gap: 10, marginBottom: 18, flexWrap: 'wrap' }}>
-          {user?.role === 'admin' && (
+          {(user?.role === 'admin' || user?.role === 'administration') && (
             <Select value={filterManager} onChange={e => setFilterManager(e.target.value)} style={{ maxWidth: 200 }}>
               <option value="">Все менеджеры</option>
               {users.map(u => <option key={u.id} value={u.id}>{u.name}</option>)}
@@ -426,10 +497,28 @@ export default function PaymentsPage() {
             <option value="tech_support">Тех сопровождение</option>
             <option value="hosting_domain">Хостинг/домен</option>
           </Select>
+          <Select
+            value={sortByRemaining}
+            onChange={e => setSortByRemaining(e.target.value as 'default' | 'urgency')}
+            style={{ maxWidth: 320 }}
+          >
+            <option value="default">Осталось: как в системе</option>
+            <option value="urgency">Осталось: просрочка → ближайшие → дальше</option>
+          </Select>
         </div>
 
-        <Card>
-          <table style={{ width: '100%', borderCollapse: 'collapse' }}>
+        <Card style={{ width: '100%', minWidth: 0 }}>
+          <table style={{ width: '100%', borderCollapse: 'collapse', tableLayout: 'fixed' }}>
+            <colgroup>
+              <col style={{ width: '17%' }} />
+              <col style={{ width: '26%' }} />
+              <col style={{ width: '7%' }} />
+              <col style={{ width: '9%' }} />
+              <col style={{ width: '10%' }} />
+              <col style={{ width: '11%' }} />
+              <col style={{ width: '8%' }} />
+              <col style={{ width: '9%' }} />
+            </colgroup>
             <thead>
               <tr>
                 <Th>Партнёр</Th>
@@ -437,15 +526,28 @@ export default function PaymentsPage() {
                 <Th>Линия</Th>
                 <Th>Тип</Th>
                 <Th>Сумма</Th>
-                <Th>Окончание договора</Th>
-                <Th>Осталось</Th>
+                <Th title="Дата ближайшего платежа по графику; если неоплаченных месяцев нет — окончание договора или день месяца">
+                  Ближайший срок
+                </Th>
+                <Th
+                  title="Нажмите, чтобы переключить сортировку по срочности (просрочка и ближайшие сверху)"
+                  onClick={() => setSortByRemaining(s => (s === 'default' ? 'urgency' : 'default'))}
+                  style={{
+                    cursor: 'pointer',
+                    color: sortByRemaining === 'urgency' ? '#1a6b3c' : undefined,
+                    textDecoration: sortByRemaining === 'urgency' ? 'underline' : undefined,
+                    textUnderlineOffset: 3,
+                  }}
+                >
+                  Осталось{sortByRemaining === 'urgency' ? ' ↓' : ''}
+                </Th>
                 <Th>Статус</Th>
-                <Th></Th>
+                <Th style={{ width: '1%', whiteSpace: 'nowrap' }} />
               </tr>
             </thead>
             <tbody>
-              {payments.map(p => {
-                const dl = daysLeft(p.deadline_date, p.day_of_month)
+              {displayedPayments.map(p => {
+                const dl = daysLeft(listDueDateStr(p), listDueDayOfMonth(p))
                 const isActive = drawer?.id === p.id
                 return (
                   <tr
@@ -460,24 +562,41 @@ export default function PaymentsPage() {
                     onMouseEnter={e => { if (!isActive) (e.currentTarget as HTMLTableRowElement).style.background = '#fafbfc' }}
                     onMouseLeave={e => { (e.currentTarget as HTMLTableRowElement).style.background = isActive ? '#f0f7f3' : '' }}
                   >
-                    <Td>
-                      <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+                    <Td style={{ verticalAlign: 'middle', wordBreak: 'break-word', overflowWrap: 'anywhere' }}>
+                      <div style={{ display: 'flex', alignItems: 'center', gap: 10, minWidth: 0 }}>
                         <PartnerAvatar name={p.partner.name} />
-                        <div>
+                        <div style={{ minWidth: 0 }}>
                           <div style={{ fontWeight: 600 }}>{p.partner.name}</div>
                           <div style={{ fontSize: 11, color: '#8a8fa8' }}>{p.partner.manager?.name}</div>
                         </div>
                       </div>
                     </Td>
-                    <Td style={{ color: '#8a8fa8' }}>{p.description}</Td>
+                    <Td style={{ color: '#8a8fa8', wordBreak: 'break-word', overflowWrap: 'anywhere', verticalAlign: 'middle' }}>
+                      {p.description}
+                    </Td>
                     <Td>{lineBadge(p.project_category)}</Td>
                     <Td>{statusBadge(p.payment_type)}</Td>
                     <Td><span style={{ fontWeight: 700 }}>{formatMoneyNumber(p.amount)}</span></Td>
-                    <Td>{p.deadline_date ? formatDate(p.deadline_date) : p.day_of_month ? `${p.day_of_month}-е число` : '—'}</Td>
+                    <Td>
+                      {p.next_payment_due_date ? (
+                        <div>
+                          <div>{formatDate(p.next_payment_due_date)}</div>
+                          {p.next_payment_month && (
+                            <div style={{ fontSize: 11, color: '#8a8fa8', marginTop: 2 }}>{monthLabel(p.next_payment_month)}</div>
+                          )}
+                        </div>
+                      ) : p.deadline_date ? (
+                        formatDate(p.deadline_date)
+                      ) : p.day_of_month ? (
+                        `${p.day_of_month}-е число`
+                      ) : (
+                        '—'
+                      )}
+                    </Td>
                     <Td><span style={{ fontWeight: 600, color: dl.color }}>{dl.label}</span></Td>
                     <Td>{statusBadge(p.status)}</Td>
-                    <Td>
-                      <div style={{ display: 'flex', gap: 6, alignItems: 'center' }} onClick={e => e.stopPropagation()}>
+                    <Td style={{ verticalAlign: 'middle', whiteSpace: 'nowrap' }}>
+                      <div style={{ display: 'flex', gap: 6, alignItems: 'center', flexWrap: 'nowrap' }} onClick={e => e.stopPropagation()}>
                         {p.status !== 'paid' && (
                           <BtnOutline onClick={() => { setPostponeDays(0); setConfirmModal(p) }} style={{ padding: '5px 10px', fontSize: 12 }}>✅ Оплачено</BtnOutline>
                         )}
@@ -490,7 +609,7 @@ export default function PaymentsPage() {
               })}
             </tbody>
           </table>
-          {payments.length === 0 && <Empty text="Проектов не найдено" />}
+          {displayedPayments.length === 0 && <Empty text="Проектов не найдено" />}
         </Card>
       </div>
 
@@ -664,8 +783,11 @@ export default function PaymentsPage() {
                     </Field>
                   </div>
                   <Field label="Сумма (если другая, иначе — полная сумма договора)">
-                    <Input type="number" value={addMonthForm.amount} placeholder={String(drawer.amount)}
-                      onChange={e => setAddMonthForm(f => ({ ...f, amount: e.target.value }))} />
+                    <MoneyInput
+                      value={addMonthForm.amount}
+                      placeholder={formatMoneyNumber(drawer.amount)}
+                      onChange={(v) => setAddMonthForm(f => ({ ...f, amount: v }))}
+                    />
                   </Field>
                   <div style={{ display: 'flex', gap: 8, marginTop: 10 }}>
                     <BtnPrimary onClick={addMonth} style={{ fontSize: 12, padding: '6px 14px' }}>Добавить</BtnPrimary>
@@ -690,6 +812,8 @@ export default function PaymentsPage() {
                 const actOk = !!m.act_issued
                 const bothDone = actOk && isPaid
                 const effAmount = m.amount ?? drawer.amount
+                const nextYm = nextMonthYm(m.month)
+                const nextMonthTaken = drawerMonths.some(x => x.month === nextYm)
                 const btnStyle = (primary: boolean, disabled: boolean) => ({
                   background: primary ? '#1a6b3c' : '#fff',
                   color: primary ? '#fff' : '#4361ee',
@@ -750,6 +874,17 @@ export default function PaymentsPage() {
                         {formatMoneyNumber(effAmount)}
                       </span>
                       <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6, justifyContent: 'flex-end' }}>
+                        {['admin', 'manager', 'administration'].includes(user?.role || '') && (
+                          <button
+                            type="button"
+                            title={nextMonthTaken ? `Месяц ${monthLabel(nextYm)} уже в графике` : `Создать строку на ${monthLabel(nextYm)}`}
+                            onClick={() => duplicateMonthToNext(m.id)}
+                            disabled={nextMonthTaken || duplicatingMonth === m.id}
+                            style={btnStyle(false, nextMonthTaken || duplicatingMonth === m.id)}
+                          >
+                            {duplicatingMonth === m.id ? '...' : '→ След. месяц'}
+                          </button>
+                        )}
                         {!actOk && (
                           <button
                             type="button"
@@ -835,7 +970,7 @@ export default function PaymentsPage() {
             </Select>
           </Field>
           <Field label="Сумма (Uzs) *">
-            <Input type="number" value={form.amount} onChange={e => setForm(f => ({ ...f, amount: e.target.value }))} placeholder="0" />
+            <MoneyInput value={form.amount} onChange={(v) => setForm(f => ({ ...f, amount: v }))} placeholder="0" />
           </Field>
         </div>
         {form.payment_type === 'recurring' && (

@@ -1,4 +1,5 @@
 from datetime import datetime, timezone
+from typing import List
 
 from fastapi import APIRouter, Depends, HTTPException, status
 from fastapi.security import OAuth2PasswordRequestForm
@@ -14,6 +15,24 @@ from app.core.security import verify_password, create_access_token, get_current_
 from app.schemas.schemas import Token, UserOut, ProfileSelfUpdate
 
 router = APIRouter(prefix="/api/auth", tags=["auth"])
+
+
+class CompanyOut(BaseModel):
+    slug: str
+    name: str
+
+
+@router.get("/companies", response_model=List[CompanyOut])
+def list_companies_public():
+    """Список компаний для переключателя в UI (без авторизации)."""
+    from app.core.companies import COMPANY_LABELS, COMPANY_SLUG_ORDER
+    from app.db.database import is_registered_company_slug
+
+    return [
+        CompanyOut(slug=s, name=COMPANY_LABELS[s])
+        for s in COMPANY_SLUG_ORDER
+        if is_registered_company_slug(s)
+    ]
 
 
 class LoginRequest(BaseModel):

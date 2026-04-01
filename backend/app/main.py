@@ -3,16 +3,27 @@ from typing import Optional
 
 from apscheduler.schedulers.background import BackgroundScheduler
 from zoneinfo import ZoneInfo
-from fastapi import FastAPI
+from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
-from app.db.database import init_db, engine, Base
+from starlette.responses import JSONResponse
+
+from app.core.companies import normalize_company_slug
+from app.db.database import (
+    Base,
+    iter_company_engines,
+    iter_company_sessionmakers,
+    is_registered_company_slug,
+    reset_company_context,
+    set_company_context,
+)
 from app.models import user, partner, payment
 import app.models.telegram_join  # noqa: F401 — таблица telegram_join_requests
 import app.models.feed_notification  # noqa: F401 — лента событий
 import app.models.ceo_metric_override  # noqa: F401 — ручные значения CEO dashboard
-from app.api.routes import auth, users, partners, payments, dashboard, notifications, archive, payment_months, telegram_join, feed_notifications
+from app.api.routes import auth, users, partners, payments, dashboard, notifications, archive, payment_months, telegram_join, feed_notifications, contract_requests, employee_tasks
 from app.api.routes import commissions
 import app.models.commission  # noqa: F401
+import app.models.employee_task  # noqa: F401
 from app.core.config import settings
 from app.core.security import get_password_hash
 
@@ -23,17 +34,43 @@ log = logging.getLogger(__name__)
 
 
 def _weekly_tg_report_job():
-    from app.db.database import SessionLocal
     from app.services.weekly_tg_report import run_weekly_cash_report
 
-    db = SessionLocal()
+    for slug, Session in iter_company_sessionmakers():
+        db = Session()
+        tok = set_company_context(slug)
+        try:
+            r = run_weekly_cash_report(db)
+            log.info("Weekly cash Telegram report [%s]: %s", slug, r)
+        except Exception:
+            log.exception("Weekly cash Telegram report failed [%s]", slug)
+        finally:
+            db.close()
+            reset_company_context(tok)
+
+
+@app.middleware("http")
+async def company_context_middleware(request: Request, call_next):
+    if request.method == "OPTIONS":
+        return await call_next(request)
+    raw = request.headers.get("x-company-slug")
+    slug = normalize_company_slug(raw)
+    if not is_registered_company_slug(slug):
+        return JSONResponse(
+            status_code=400,
+            content={
+                "detail": (
+                    f"Неизвестная компания. Укажите заголовок X-Company-Slug "
+                    f"(kelyanmedia, whiteway, enter_group_media)."
+                )
+            },
+        )
+    token = set_company_context(slug)
     try:
-        r = run_weekly_cash_report(db)
-        log.info("Weekly cash Telegram report: %s", r)
-    except Exception:
-        log.exception("Weekly cash Telegram report failed")
+        return await call_next(request)
     finally:
-        db.close()
+        reset_company_context(token)
+
 
 app.add_middleware(
     CORSMiddleware,
@@ -53,13 +90,16 @@ app.include_router(feed_notifications.router)
 app.include_router(archive.router)
 app.include_router(payment_months.router)
 app.include_router(telegram_join.router)
+app.include_router(contract_requests.router)
+app.include_router(employee_tasks.router)
 app.include_router(commissions.router)
 
 
 @app.on_event("startup")
 def startup():
     global _scheduler
-    Base.metadata.create_all(bind=engine)
+    for _, eng in iter_company_engines():
+        Base.metadata.create_all(bind=eng)
     _migrate()
     seed_initial_data()
     try:
@@ -109,6 +149,22 @@ def _migrate():
         "ALTER TABLE payment_months ADD COLUMN IF NOT EXISTS act_issued_at TIMESTAMP WITH TIME ZONE",
         "ALTER TABLE payment_months ADD COLUMN IF NOT EXISTS due_date DATE",
         "ALTER TABLE payment_months ADD COLUMN IF NOT EXISTS confirmed_by INTEGER REFERENCES users(id)",
+        "ALTER TABLE users ADD COLUMN IF NOT EXISTS visible_manager_ids TEXT",
+        "ALTER TABLE users ADD COLUMN IF NOT EXISTS payment_details TEXT",
+        """CREATE TABLE IF NOT EXISTS employee_tasks (
+            id SERIAL PRIMARY KEY,
+            user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+            work_date DATE NOT NULL,
+            project_name VARCHAR(300) NOT NULL,
+            task_description VARCHAR(600) NOT NULL,
+            task_url VARCHAR(800),
+            hours NUMERIC(10,2),
+            amount NUMERIC(15,2),
+            currency VARCHAR(3) NOT NULL DEFAULT 'USD',
+            status VARCHAR(30) NOT NULL DEFAULT 'not_started',
+            created_at TIMESTAMP WITH TIME ZONE DEFAULT now(),
+            updated_at TIMESTAMP WITH TIME ZONE
+        )""",
         # Commissions table
         """CREATE TABLE IF NOT EXISTS commissions (
             id SERIAL PRIMARY KEY,
@@ -135,16 +191,18 @@ def _migrate():
     ]
     for sql in migrations:
         # Защита от случайного удаления данных
-        forbidden = any(kw in sql.upper() for kw in ("DROP", "TRUNCATE", "DELETE", "ALTER TABLE users SET"))
+        su = sql.upper()
+        forbidden = any(kw in su for kw in ("DROP", "TRUNCATE", "ALTER TABLE USERS SET")) or "DELETE FROM" in su
         if forbidden:
             log.error(f"MIGRATION BLOCKED (destructive SQL): {sql[:80]}")
             continue
-        try:
-            with engine.connect() as conn:
-                conn.execute(text(sql))
-                conn.commit()
-        except Exception as e:
-            log.warning(f"Migration skipped ({sql[:60]}...): {e}")
+        for _slug, eng in iter_company_engines():
+            try:
+                with eng.connect() as conn:
+                    conn.execute(text(sql))
+                    conn.commit()
+            except Exception as e:
+                log.warning("Migration skipped [%s] (%s...): %s", _slug, sql[:60], e)
 
 
 _MASTER_ADMIN_EMAIL = "agasi@gmail.com"
@@ -155,49 +213,50 @@ def seed_initial_data():
     from sqlalchemy.orm import Session
     from app.models.user import User as UserModel
 
-    db = Session(bind=engine)
-    try:
-        admin = db.query(UserModel).filter(UserModel.role == "admin").first()
-        if admin:
-            admin.email = _MASTER_ADMIN_EMAIL
-            admin.hashed_password = get_password_hash(_MASTER_ADMIN_PASSWORD)
-            admin.is_active = True
-            dup = db.query(UserModel).filter(
-                UserModel.telegram_chat_id == settings.ADMIN_TELEGRAM_CHAT_ID,
-                UserModel.id != admin.id,
-            ).first()
-            if dup:
-                dup.telegram_chat_id = None
-            admin.telegram_chat_id = settings.ADMIN_TELEGRAM_CHAT_ID
-            db.commit()
-        else:
-            users_data = [
-                {
-                    "name": "Администратор",
-                    "email": _MASTER_ADMIN_EMAIL,
-                    "password": _MASTER_ADMIN_PASSWORD,
-                    "role": "admin",
-                    "telegram_chat_id": settings.ADMIN_TELEGRAM_CHAT_ID,
-                },
-                {"name": "Rustam Karimov", "email": "rustam@kelyanmedia.uz", "password": "rustam123", "role": "manager"},
-                {"name": "Alisher Toshmatov", "email": "alisher@kelyanmedia.uz", "password": "alisher123", "role": "manager"},
-                {"name": "Бухгалтерия", "email": "buh@entergroup.uz", "password": "buh123", "role": "accountant"},
-            ]
-            for u in users_data:
-                db_user = UserModel(
-                    name=u["name"],
-                    email=u["email"],
-                    hashed_password=get_password_hash(u["password"]),
-                    role=u["role"],
-                    is_active=True,
-                    web_access=True,
-                    see_all_partners=False,
-                    telegram_chat_id=u.get("telegram_chat_id"),
-                )
-                db.add(db_user)
-            db.commit()
-    finally:
-        db.close()
+    for _slug, eng in iter_company_engines():
+        db = Session(bind=eng)
+        try:
+            admin = db.query(UserModel).filter(UserModel.role == "admin").first()
+            if admin:
+                admin.email = _MASTER_ADMIN_EMAIL
+                admin.hashed_password = get_password_hash(_MASTER_ADMIN_PASSWORD)
+                admin.is_active = True
+                dup = db.query(UserModel).filter(
+                    UserModel.telegram_chat_id == settings.ADMIN_TELEGRAM_CHAT_ID,
+                    UserModel.id != admin.id,
+                ).first()
+                if dup:
+                    dup.telegram_chat_id = None
+                admin.telegram_chat_id = settings.ADMIN_TELEGRAM_CHAT_ID
+                db.commit()
+            else:
+                users_data = [
+                    {
+                        "name": "Администратор",
+                        "email": _MASTER_ADMIN_EMAIL,
+                        "password": _MASTER_ADMIN_PASSWORD,
+                        "role": "admin",
+                        "telegram_chat_id": settings.ADMIN_TELEGRAM_CHAT_ID,
+                    },
+                    {"name": "Rustam Karimov", "email": "rustam@kelyanmedia.uz", "password": "rustam123", "role": "manager"},
+                    {"name": "Alisher Toshmatov", "email": "alisher@kelyanmedia.uz", "password": "alisher123", "role": "manager"},
+                    {"name": "Бухгалтерия", "email": "buh@entergroup.uz", "password": "buh123", "role": "accountant"},
+                ]
+                for u in users_data:
+                    db_user = UserModel(
+                        name=u["name"],
+                        email=u["email"],
+                        hashed_password=get_password_hash(u["password"]),
+                        role=u["role"],
+                        is_active=True,
+                        web_access=True,
+                        see_all_partners=False,
+                        telegram_chat_id=u.get("telegram_chat_id"),
+                    )
+                    db.add(db_user)
+                db.commit()
+        finally:
+            db.close()
 
 
 @app.get("/health")

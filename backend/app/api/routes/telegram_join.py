@@ -187,8 +187,59 @@ def approve_request(
 
     # accountant — только пуши в Telegram, без веб-доступа (служебный email для БД)
     email = f"tg_buh_{chat_id}@enterdebt.app"
-    if db.query(User).filter(User.email == email).first():
-        raise HTTPException(status_code=400, detail="Пользователь бухгалтерии для этого чата уже существует")
+
+    def _notify_accountant_approved() -> None:
+        text = (
+            f"✅ <b>Заявка одобрена</b>\n\n"
+            f"Роль: <b>бухгалтерия</b>\n\n"
+            f"Уведомления о платежах и запросы документов будут приходить <b>в этот чат</b>. "
+            f"Вход в веб-панель для этой роли не требуется."
+        )
+        _send_telegram_message(int(chat_id), text)
+
+    # Уже есть строка с этим chat_id (часто is_active=False после «удаления» в админке)
+    u_by_chat = db.query(User).filter(User.telegram_chat_id == chat_id).first()
+    if u_by_chat:
+        if u_by_chat.is_active:
+            db.delete(req)
+            db.commit()
+            raise HTTPException(
+                status_code=400,
+                detail="Пользователь с этим Chat ID уже активен в системе.",
+            )
+        u_by_chat.name = data.name.strip()
+        u_by_chat.email = email
+        u_by_chat.role = "accountant"
+        u_by_chat.telegram_username = req.telegram_username
+        u_by_chat.hashed_password = get_password_hash(secrets.token_urlsafe(16))
+        u_by_chat.web_access = False
+        u_by_chat.is_active = True
+        db.delete(req)
+        db.commit()
+        db.refresh(u_by_chat)
+        _notify_accountant_approved()
+        return {"ok": True, "user_id": u_by_chat.id, "role": "accountant"}
+
+    # Служебный email остался от прошлой бухгалтерии, chat_id сняли — повторная заявка
+    existing_buh = db.query(User).filter(User.email == email).first()
+    if existing_buh:
+        if existing_buh.telegram_chat_id is not None and int(existing_buh.telegram_chat_id) != int(chat_id):
+            raise HTTPException(
+                status_code=400,
+                detail="Учётная запись бухгалтерии с этим email привязана к другому Chat ID.",
+            )
+        existing_buh.name = data.name.strip()
+        existing_buh.telegram_chat_id = chat_id
+        existing_buh.telegram_username = req.telegram_username
+        existing_buh.role = "accountant"
+        existing_buh.web_access = False
+        existing_buh.is_active = True
+        existing_buh.hashed_password = get_password_hash(secrets.token_urlsafe(16))
+        db.delete(req)
+        db.commit()
+        db.refresh(existing_buh)
+        _notify_accountant_approved()
+        return {"ok": True, "user_id": existing_buh.id, "role": "accountant"}
 
     plain_unused = secrets.token_urlsafe(16)
     user = User(
@@ -206,13 +257,7 @@ def approve_request(
     db.commit()
     db.refresh(user)
 
-    text = (
-        f"✅ <b>Заявка одобрена</b>\n\n"
-        f"Роль: <b>бухгалтерия</b>\n\n"
-        f"Уведомления о платежах и запросы документов будут приходить <b>в этот чат</b>. "
-        f"Вход в веб-панель для этой роли не требуется."
-    )
-    _send_telegram_message(int(chat_id), text)
+    _notify_accountant_approved()
     return {"ok": True, "user_id": user.id, "role": "accountant"}
 
 

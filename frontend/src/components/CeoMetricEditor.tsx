@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react'
-import { Modal, BtnPrimary } from '@/components/ui'
+import { Modal, BtnPrimary, MoneyInput, IntegerGroupedInput } from '@/components/ui'
 import api from '@/lib/api'
 
 const MONTH_LABELS = [
@@ -189,19 +189,10 @@ export function CeoMetricEditModal({
           {LTV_BUCKETS.map(({ key, label }) => (
             <label key={key} style={{ display: 'flex', alignItems: 'center', gap: 12, fontSize: 13 }}>
               <span style={{ flex: 1, color: '#374151' }}>{label}</span>
-              <input
-                type="number"
-                min={0}
-                value={ltv[key] ?? '0'}
-                onChange={e => setLtv(prev => ({ ...prev, [key]: e.target.value }))}
-                style={{
-                  width: 100,
-                  border: '1px solid #e8e9ef',
-                  borderRadius: 8,
-                  padding: '8px 10px',
-                  fontSize: 14,
-                  fontFamily: 'inherit',
-                }}
+              <IntegerGroupedInput
+                value={ltv[key] ?? ''}
+                onChange={v => setLtv(prev => ({ ...prev, [key]: v }))}
+                style={{ width: 100 }}
               />
             </label>
           ))}
@@ -213,19 +204,17 @@ export function CeoMetricEditModal({
             return (
               <label key={k} style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
                 <span style={{ fontSize: 11, fontWeight: 600, color: '#94a3b8', textTransform: 'uppercase' }}>{lab}</span>
-                <input
-                  type="text"
-                  inputMode={metric === 'turnover' ? 'decimal' : 'numeric'}
-                  value={months[k] ?? '0'}
-                  onChange={e => setMonths(prev => ({ ...prev, [k]: e.target.value }))}
-                  style={{
-                    border: '1px solid #e8e9ef',
-                    borderRadius: 8,
-                    padding: '8px 10px',
-                    fontSize: 14,
-                    fontFamily: 'inherit',
-                  }}
-                />
+                {metric === 'turnover' ? (
+                  <MoneyInput
+                    value={months[k] ?? ''}
+                    onChange={v => setMonths(prev => ({ ...prev, [k]: v }))}
+                  />
+                ) : (
+                  <IntegerGroupedInput
+                    value={months[k] ?? ''}
+                    onChange={v => setMonths(prev => ({ ...prev, [k]: v }))}
+                  />
+                )}
               </label>
             )
           })}

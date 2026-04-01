@@ -47,7 +47,18 @@ def load_payment(db: Session, payment_id: int) -> Payment:
 
 def enrich(p: Payment) -> PaymentOut:
     out = PaymentOut.model_validate(p)
-    out.days_until_due = compute_days_until_due(p)
+    today = date.today()
+    unpaid = sorted([m for m in (p.months or []) if m.status != "paid"], key=lambda x: x.month)
+    if unpaid:
+        pm = unpaid[0]
+        due = _due_date_for_payment_month(pm, p)
+        out.next_payment_due_date = due
+        out.next_payment_month = pm.month
+        out.days_until_due = (due - today).days
+    else:
+        out.next_payment_due_date = None
+        out.next_payment_month = None
+        out.days_until_due = compute_days_until_due(p)
     out.source_payment_month_id = None
     out.service_month = None
     return out
@@ -76,6 +87,8 @@ def enrich_as_month_line(p: Payment, pm: PaymentMonth, today: date) -> PaymentOu
     out.description = desc if desc else p.description
     out.status = "overdue" if due < today else "pending"
     out.days_until_due = (due - today).days
+    out.next_payment_due_date = due
+    out.next_payment_month = pm.month
     out.source_payment_month_id = pm.id
     out.service_month = pm.month
     out.months = []
@@ -96,6 +109,8 @@ def enrich_paid_month_line(p: Payment, pm: PaymentMonth, today: date) -> Payment
     out.description = desc if desc else p.description
     out.status = "paid"
     out.days_until_due = None
+    out.next_payment_due_date = due
+    out.next_payment_month = pm.month
     out.source_payment_month_id = pm.id
     out.service_month = pm.month
     out.months = []
@@ -228,7 +243,8 @@ def list_payments(
 def get_payment(payment_id: int, db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
     p = db.query(Payment).options(
         joinedload(Payment.partner),
-        joinedload(Payment.confirmed_by_user)
+        joinedload(Payment.confirmed_by_user),
+        joinedload(Payment.months),
     ).filter(Payment.id == payment_id).first()
     if not p:
         raise HTTPException(status_code=404, detail="Payment not found")

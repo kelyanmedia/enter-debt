@@ -1,13 +1,14 @@
 import { useState, FormEvent, useEffect } from 'react'
 import { useRouter } from 'next/router'
 import { useAuth } from '@/context/AuthContext'
+import { getCompanySlug, setCompanySlug as persistCompanySlug, companyDisplayName, DEFAULT_COMPANY_SLUG } from '@/lib/company'
 
 /** Совпадает с backend/app/core/config.py (ADMIN_EMAIL / ADMIN_PASSWORD) и seed в main.py */
 const DEV_LOGIN_EMAIL = 'agasi@gmail.com'
 const DEV_LOGIN_PASSWORD = 'KM2026admin_controlpanel'
 
 export default function LoginPage() {
-  const { login } = useAuth()
+  const { login, companies } = useAuth()
   const router = useRouter()
   const isDev = process.env.NODE_ENV === 'development'
   const [email, setEmail] = useState(isDev ? DEV_LOGIN_EMAIL : '')
@@ -15,6 +16,11 @@ export default function LoginPage() {
   const [remember, setRemember] = useState(false)
   const [error, setError] = useState('')
   const [loading, setLoading] = useState(false)
+  const [workspace, setWorkspace] = useState(DEFAULT_COMPANY_SLUG)
+
+  useEffect(() => {
+    setWorkspace(getCompanySlug())
+  }, [])
 
   useEffect(() => {
     const saved = localStorage.getItem('saved_email')
@@ -29,14 +35,18 @@ export default function LoginPage() {
     setError('')
     setLoading(true)
     try {
-      await login(email, password, remember)
-      router.push('/')
+      const u = await login(email, password, remember)
+      router.push(u.role === 'employee' ? '/my-work' : '/')
     } catch (err: any) {
       const status = err?.response?.status
       const detail = err?.response?.data?.detail
       const msg = typeof detail === 'string' ? detail : Array.isArray(detail) ? detail.map((x: { msg?: string }) => x?.msg).filter(Boolean).join(' ') : ''
       if (status === 500 || status === 503 || !status) {
-        setError('Сервер недоступен. Попробуйте позже.')
+        setError(
+          !status
+            ? 'Нет ответа от API. Запустите бэкенд и проверьте в frontend/.env.local переменную BACKEND_URL (должен совпадать с портом uvicorn, обычно http://127.0.0.1:8000). После смены порта перезапустите npm run dev.'
+            : 'Сервер недоступен. Попробуйте позже.'
+        )
       } else if (msg) {
         setError(msg)
       } else {
@@ -58,11 +68,47 @@ export default function LoginPage() {
           />
           <div style={{ minWidth: 0 }}>
             <div style={{ fontWeight: 700, fontSize: 17, lineHeight: 1.25 }}>Финансовый модуль</div>
-            <div style={{ fontSize: 12, color: '#8a8fa8' }}>KelyanMedia · Контроль дебиторки</div>
+            <div style={{ fontSize: 12, color: '#8a8fa8' }}>
+              {companyDisplayName(workspace)} · Контроль дебиторки
+            </div>
           </div>
         </div>
 
         <form onSubmit={handleSubmit}>
+          <div style={{ marginBottom: 14 }}>
+            <label style={{ display: 'block', fontSize: 11, fontWeight: 600, color: '#8a8fa8', textTransform: 'uppercase', letterSpacing: '.05em', marginBottom: 5 }}>Компания</label>
+            <select
+              value={workspace}
+              onChange={(e) => {
+                const s = e.target.value
+                persistCompanySlug(s)
+                setWorkspace(s)
+              }}
+              aria-label="Компания"
+              style={{
+                width: '100%',
+                border: '1px solid #e8e9ef',
+                borderRadius: 9,
+                padding: '10px 13px',
+                fontSize: 14,
+                outline: 'none',
+                color: '#1a1d23',
+                boxSizing: 'border-box',
+                fontFamily: 'inherit',
+                cursor: 'pointer',
+                background: '#fff',
+              }}
+            >
+              {companies.map((c) => (
+                <option key={c.slug} value={c.slug}>
+                  {c.name}
+                </option>
+              ))}
+            </select>
+            <div style={{ fontSize: 11, color: '#8a8fa8', marginTop: 6, lineHeight: 1.4 }}>
+              У каждой компании своя база: проекты и пользователи не смешиваются.
+            </div>
+          </div>
           <div style={{ marginBottom: 14 }}>
             <label style={{ display: 'block', fontSize: 11, fontWeight: 600, color: '#8a8fa8', textTransform: 'uppercase', letterSpacing: '.05em', marginBottom: 5 }}>Email (логин)</label>
             <input

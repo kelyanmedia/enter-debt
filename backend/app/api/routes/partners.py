@@ -7,7 +7,7 @@ from app.models.partner import Partner
 from app.models.payment import Payment
 from app.schemas.schemas import PartnerOut, PartnerCreate, PartnerUpdate
 from app.core.security import get_current_user, require_manager_or_admin
-from app.core.access import assert_partner_access, filter_partners_query
+from app.core.access import assert_partner_access, filter_partners_query, assert_manager_assignable_by_administration
 
 router = APIRouter(prefix="/api/partners", tags=["partners"])
 
@@ -59,6 +59,8 @@ def create_partner(data: PartnerCreate, db: Session = Depends(get_db), current_u
     payload = data.model_dump()
     if current_user.role == "manager":
         payload["manager_id"] = current_user.id
+    if current_user.role == "administration":
+        assert_manager_assignable_by_administration(db, current_user, payload.get("manager_id"))
     partner = Partner(**payload)
     db.add(partner)
     db.commit()
@@ -86,6 +88,8 @@ def update_partner(
         setattr(partner, field, value)
     if current_user.role == "manager" and not getattr(current_user, "see_all_partners", False):
         partner.manager_id = current_user.id
+    if current_user.role == "administration":
+        assert_manager_assignable_by_administration(db, current_user, partner.manager_id)
     db.commit()
     db.refresh(partner)
     return enrich_partner(partner, db)

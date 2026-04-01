@@ -18,7 +18,7 @@ const EMPTY = {
   cooperation_start_date: '', client_joined_date: '',
 }
 
-/** Стаж: от даты начала работы, иначе от «клиент у нас с». */
+/** LTV (в таблице): от даты начала работы, иначе от «Старт работы». */
 function partnerTenureText(cooperationStart?: string | null, clientJoined?: string | null): string {
   const raw = (cooperationStart || clientJoined || '').slice(0, 10)
   if (!raw || raw.length < 8) return '—'
@@ -85,6 +85,10 @@ export default function PartnersPage() {
 
   const save = async () => {
     if (!form.name) { setError('Введите название компании'); return }
+    if (user?.role === 'administration' && !form.manager_id) {
+      setError('Выберите менеджера, за которым закрепляется компания')
+      return
+    }
     setSaving(true)
     try {
       const payload = {
@@ -144,8 +148,8 @@ export default function PartnersPage() {
                 <Th>Контакт</Th>
                 <Th>Тип</Th>
                 <Th>Начало работы</Th>
-                <Th>Клиент у нас с</Th>
-                <Th>Стаж</Th>
+                <Th>Старт работы</Th>
+                <Th>LTV</Th>
                 <Th>Менеджер</Th>
                 <Th>Статус</Th>
                 <Th></Th>
@@ -229,7 +233,7 @@ export default function PartnersPage() {
               onChange={e => setForm(f => ({ ...f, cooperation_start_date: e.target.value }))}
             />
           </Field>
-          <Field label="Клиент у нас с (приход в компанию)">
+          <Field label="Старт работы (приход в компанию)">
             <Input
               type="date"
               value={form.client_joined_date}
@@ -238,7 +242,7 @@ export default function PartnersPage() {
           </Field>
         </div>
         <div style={{ fontSize: 12, color: '#8a8fa8', lineHeight: 1.45, marginTop: -6, marginBottom: 10 }}>
-          Стаж в таблице считается от даты начала работы; если она не заполнена — от даты «клиент у нас с».
+          LTV в таблице считается от даты начала работы; если она не заполнена — от даты «Старт работы».
         </div>
         <Field label="Менеджер">
           {user?.role === 'manager' ? (

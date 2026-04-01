@@ -6,6 +6,11 @@ import os
 
 class Settings(BaseSettings):
     DATABASE_URL: str = os.environ.get("DATABASE_URL", "postgresql://enterdebt:enterdebt123@localhost:5432/enterdebt")
+    # Необязательные URL отдельных БД по компаниям. Если не заданы — для PostgreSQL
+    # подставляются базы enterdebt_whiteway и enterdebt_enter_group_media (тот же хост/юзер).
+    DATABASE_URL_KELYANMEDIA: Optional[str] = None
+    DATABASE_URL_WHITEWAY: Optional[str] = None
+    DATABASE_URL_ENTER_GROUP_MEDIA: Optional[str] = None
     SECRET_KEY: str = "supersecretkey_change_in_prod"
     ALGORITHM: str = "HS256"
     ACCESS_TOKEN_EXPIRE_MINUTES: int = 60 * 24 * 7

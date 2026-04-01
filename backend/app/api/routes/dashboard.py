@@ -23,7 +23,7 @@ from app.schemas.schemas import (
     CeoOverridePut,
 )
 from app.core.security import get_current_user, require_admin, require_admin_or_accountant
-from app.core.access import accessible_partner_ids, filter_payments_query, filter_partners_query
+from app.core.access import accessible_partner_ids, filter_payments_query, filter_partners_query, parse_visible_manager_ids
 from app.models.user import User
 from app.services.weekly_tg_report import run_weekly_cash_report
 
@@ -304,8 +304,14 @@ def post_weekly_cash_report_send(
 
 
 def _debitor_filter_by_manager(manager_id: Optional[int], current_user: User) -> bool:
-    """Админ/бухгалтерия могут сузить дебиторку до одного менеджера."""
-    return manager_id is not None and current_user.role in ("admin", "accountant")
+    """Админ/бухгалтерия — любой менеджер; администрация — только из своего списка."""
+    if manager_id is None:
+        return False
+    if current_user.role in ("admin", "accountant"):
+        return True
+    if current_user.role == "administration":
+        return manager_id in parse_visible_manager_ids(current_user)
+    return False
 
 
 @router.get("", response_model=DashboardStats)

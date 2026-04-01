@@ -65,14 +65,14 @@ def require_admin(current_user=Depends(get_current_user)):
 
 
 def require_manager_or_admin(current_user=Depends(get_current_user)):
-    if current_user.role not in ("admin", "manager"):
+    if current_user.role not in ("admin", "manager", "administration"):
         raise HTTPException(status_code=403, detail="Manager or admin access required")
     return current_user
 
 
 def require_payment_write(current_user=Depends(get_current_user)):
-    """Создание/изменение проектов (платежей): админ, менеджер, бухгалтерия."""
-    if current_user.role not in ("admin", "manager", "accountant"):
+    """Создание/изменение проектов (платежей): админ, менеджер, бухгалтерия, администрация."""
+    if current_user.role not in ("admin", "manager", "accountant", "administration"):
         raise HTTPException(status_code=403, detail="Недостаточно прав для изменения проектов")
     return current_user
 

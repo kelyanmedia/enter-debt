@@ -1,9 +1,10 @@
 import { useEffect, useState, useCallback } from 'react'
+import { useRouter } from 'next/router'
 import { useAuth } from '@/context/AuthContext'
 import Layout from '@/components/Layout'
 import {
   PageHeader, Card, Th, Td, BtnPrimary, BtnOutline, BtnIconEdit, Modal,
-  ConfirmModal, Field, Input, Select, Empty, StatCard, formatMoneyNumber,
+  ConfirmModal, Field, Input, Select, Empty, StatCard, formatMoneyNumber, MoneyInput,
 } from '@/components/ui'
 import api from '@/lib/api'
 
@@ -159,6 +160,7 @@ function CalcPreview({ form }: { form: typeof EMPTY_FORM }) {
 
 // ── Page ──────────────────────────────────────────────────────────────────────
 export default function CommissionsPage() {
+  const router = useRouter()
   const { user } = useAuth()
   const isAdmin = user?.role === 'admin' || user?.role === 'accountant'
 
@@ -201,7 +203,14 @@ export default function CommissionsPage() {
     }
   }, [year, month, filterMgr])
 
-  useEffect(() => { load() }, [load])
+  useEffect(() => {
+    if (user?.role === 'administration') {
+      setLoading(false)
+      router.replace('/payments')
+      return
+    }
+    load()
+  }, [load, user?.role, router])
 
   useEffect(() => {
     if (isAdmin) {
@@ -516,17 +525,17 @@ export default function CommissionsPage() {
 
           <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 14 }}>
             <Field label="Стоимость проекта">
-              <Input
-                type="number" placeholder="1 000 000" step="1" min="0"
+              <MoneyInput
+                placeholder="1 000 000"
                 value={form.project_cost}
-                onChange={e => f('project_cost', e.target.value)}
+                onChange={v => f('project_cost', v)}
               />
             </Field>
             <Field label="Себестоимость производства">
-              <Input
-                type="number" placeholder="0" step="1" min="0"
+              <MoneyInput
+                placeholder="0"
                 value={form.production_cost}
-                onChange={e => f('production_cost', e.target.value)}
+                onChange={v => f('production_cost', v)}
               />
             </Field>
           </div>
@@ -540,27 +549,27 @@ export default function CommissionsPage() {
               />
             </Field>
             <Field label="Оплата фактическая">
-              <Input
-                type="number" placeholder="0" step="1" min="0"
+              <MoneyInput
+                placeholder="0"
                 value={form.actual_payment}
-                onChange={e => f('actual_payment', e.target.value)}
+                onChange={v => f('actual_payment', v)}
               />
             </Field>
           </div>
 
           <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 14 }}>
             <Field label="Полученный % (1)">
-              <Input
-                type="number" placeholder="0" step="1" min="0"
+              <MoneyInput
+                placeholder="0"
                 value={form.received_amount_1}
-                onChange={e => f('received_amount_1', e.target.value)}
+                onChange={v => f('received_amount_1', v)}
               />
             </Field>
             <Field label="Полученный % (2)">
-              <Input
-                type="number" placeholder="0" step="1" min="0"
+              <MoneyInput
+                placeholder="0"
                 value={form.received_amount_2}
-                onChange={e => f('received_amount_2', e.target.value)}
+                onChange={v => f('received_amount_2', v)}
               />
             </Field>
           </div>

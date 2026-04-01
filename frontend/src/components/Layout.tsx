@@ -1,4 +1,4 @@
-import { ReactNode, useEffect } from 'react'
+import { ReactNode, useEffect, useCallback, type ChangeEvent } from 'react'
 import type { CSSProperties } from 'react'
 import { useRouter } from 'next/router'
 import Link from 'next/link'
@@ -11,6 +11,8 @@ type NavItem = {
   icon: string
   adminOnly?: boolean
   managerHidden?: boolean
+  administrationHidden?: boolean
+  accountantHidden?: boolean
   badge?: string
 }
 
@@ -30,7 +32,13 @@ const NAV_SECTIONS: NavSection[] = [
       { href: '/debitor', label: 'Дебиторка', icon: '📒' },
       { href: '/payments', label: 'Проекты', icon: '📁', badge: 'overdue' },
       { href: '/partners', label: 'Партнёры', icon: '🤝' },
-      { href: '/commissions', label: 'Комиссия', icon: '💰' },
+      {
+        href: '/new-contract',
+        label: 'Новый договор',
+        icon: '📝',
+        accountantHidden: true,
+      },
+      { href: '/commissions', label: 'Комиссия', icon: '💰', administrationHidden: true },
     ],
   },
   {
@@ -38,6 +46,7 @@ const NAV_SECTIONS: NavSection[] = [
     items: [
       { href: '/profile', label: 'Профиль', icon: '👤' },
       { href: '/users', label: 'Пользователи', icon: '👥', adminOnly: true },
+      { href: '/staff', label: 'Команда', icon: '👷', adminOnly: true },
       { href: '/notifications', label: 'Уведомления', icon: '🔔' },
       { href: '/received-payments', label: 'Оплаты', icon: '💳', adminOnly: true },
       { href: '/archive', label: 'Архив', icon: '🗄️', adminOnly: true },
@@ -54,6 +63,43 @@ const sectionHeadingStyle: CSSProperties = {
   padding: '10px 10px 8px',
 }
 
+function CompanyWorkspaceSelect() {
+  const { companies, companySlug, switchCompany } = useAuth()
+  const onChange = useCallback(
+    (e: ChangeEvent<HTMLSelectElement>) => {
+      void switchCompany(e.target.value)
+    },
+    [switchCompany]
+  )
+  return (
+    <select
+      value={companySlug}
+      onChange={onChange}
+      aria-label="Организация"
+      style={{
+        marginTop: 4,
+        width: '100%',
+        maxWidth: '100%',
+        fontSize: 11.5,
+        fontWeight: 600,
+        color: '#5c6378',
+        border: '1px solid #e8e9ef',
+        borderRadius: 8,
+        padding: '5px 8px',
+        background: '#fafbfc',
+        cursor: 'pointer',
+        fontFamily: 'inherit',
+      }}
+    >
+      {companies.map((c) => (
+        <option key={c.slug} value={c.slug}>
+          {c.name}
+        </option>
+      ))}
+    </select>
+  )
+}
+
 export default function Layout({ children }: { children: ReactNode }) {
   const { user, loading, logout } = useAuth()
   const router = useRouter()
@@ -62,6 +108,12 @@ export default function Layout({ children }: { children: ReactNode }) {
     if (!loading && !user) router.push('/login')
   }, [user, loading, router])
 
+  useEffect(() => {
+    if (!loading && user?.role === 'employee' && router.pathname !== '/my-work') {
+      router.replace('/my-work')
+    }
+  }, [loading, user, router.pathname, router])
+
   if (loading || !user) return (
     <div style={{ minHeight: '100vh', display: 'flex', alignItems: 'center', justifyContent: 'center', background: '#f5f6fa' }}>
       <div style={{ color: '#8a8fa8', fontSize: 14 }}>Загрузка...</div>
@@ -69,7 +121,63 @@ export default function Layout({ children }: { children: ReactNode }) {
   )
 
   const initials = user.name.split(' ').map(w => w[0]).join('').slice(0, 2).toUpperCase()
-  const roleLabel = { admin: 'Администратор', manager: 'Менеджер', accountant: 'Бухгалтерия' }[user.role]
+  const roleLabel = {
+    admin: 'Администратор',
+    manager: 'Менеджер',
+    accountant: 'Бухгалтерия',
+    administration: 'Администрация',
+    employee: 'Сотрудник',
+  }[user.role]
+
+  if (user.role === 'employee') {
+    const active = router.pathname === '/my-work'
+    return (
+      <div style={{ display: 'flex', height: '100vh', overflow: 'hidden', background: '#f5f6fa' }}>
+        <aside style={{ width: 220, background: '#fff', borderRight: '1px solid #e8e9ef', display: 'flex', flexDirection: 'column', flexShrink: 0 }}>
+          <div style={{ padding: '20px 16px 16px', borderBottom: '1px solid #e8e9ef' }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+              <img src="/kelyanmedia-logo.png" alt="" style={{ height: 28, width: 'auto', maxWidth: 56, objectFit: 'contain' }} />
+              <div style={{ fontSize: 12, fontWeight: 700, color: '#1a1d23' }}>Задачи</div>
+            </div>
+            <div style={{ marginTop: 10 }}>
+              <CompanyWorkspaceSelect />
+            </div>
+          </div>
+          <nav style={{ padding: 14, flex: 1 }}>
+            <Link href="/my-work" style={{ textDecoration: 'none' }}>
+              <div
+                style={{
+                  padding: '10px 12px',
+                  borderRadius: 9,
+                  fontSize: 14,
+                  fontWeight: 600,
+                  background: active ? '#e8f5ee' : 'transparent',
+                  color: active ? '#1a6b3c' : '#8a8fa8',
+                  borderLeft: active ? '2px solid #1a6b3c' : '2px solid transparent',
+                }}
+              >
+                📋 Мои задачи
+              </div>
+            </Link>
+            <div style={{ fontSize: 11, color: '#8a8fa8', marginTop: 16, lineHeight: 1.45, padding: '0 4px' }}>
+              Здесь только ваши задачи и выплаты. Остальной модуль недоступен.
+            </div>
+          </nav>
+          <div style={{ padding: '14px 10px', borderTop: '1px solid #e8e9ef' }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '10px 12px', background: '#f5f6fa', borderRadius: 9 }}>
+              <div style={{ width: 32, height: 32, borderRadius: '50%', background: '#1a6b3c', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 12, fontWeight: 700, color: '#fff' }}>{initials}</div>
+              <div style={{ flex: 1, minWidth: 0 }}>
+                <div style={{ fontSize: 13, fontWeight: 600, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{user.name}</div>
+                <div style={{ fontSize: 11, color: '#8a8fa8' }}>{roleLabel}</div>
+              </div>
+              <button type="button" onClick={logout} title="Выйти" style={{ background: 'none', border: 'none', cursor: 'pointer', color: '#8a8fa8', fontSize: 16, padding: 2 }}>↩</button>
+            </div>
+          </div>
+        </aside>
+        <div style={{ flex: 1, display: 'flex', flexDirection: 'column', overflow: 'hidden', minWidth: 0 }}>{children}</div>
+      </div>
+    )
+  }
 
   return (
     <div style={{ display: 'flex', height: '100vh', overflow: 'hidden', background: '#f5f6fa' }}>
@@ -94,7 +202,7 @@ export default function Layout({ children }: { children: ReactNode }) {
             >
               Финансовый модуль
             </div>
-            <div style={{ fontSize: 11, color: '#8a8fa8', marginTop: 1 }}>KelyanMedia</div>
+            <CompanyWorkspaceSelect />
           </div>
         </div>
 
@@ -103,7 +211,9 @@ export default function Layout({ children }: { children: ReactNode }) {
           {NAV_SECTIONS.map((section, si) => {
             const visible = section.items.filter(n => {
               if (n.adminOnly && user.role !== 'admin') return false
-              if (n.managerHidden && user.role === 'manager') return false
+              if (n.accountantHidden && user.role === 'accountant') return false
+              if (n.administrationHidden && user.role === 'administration') return false
+              if (n.managerHidden && (user.role === 'manager' || user.role === 'administration')) return false
               return true
             })
             if (visible.length === 0) return null
@@ -156,7 +266,18 @@ export default function Layout({ children }: { children: ReactNode }) {
       </aside>
 
       {/* Main — отступ справа под фиксированный колокольчик (40px + бейдж), чтобы шапки и фильтры не перекрывались */}
-      <div style={{ flex: 1, display: 'flex', flexDirection: 'column', overflow: 'hidden', position: 'relative', paddingRight: 72 }}>
+      <div
+        style={{
+          flex: 1,
+          display: 'flex',
+          flexDirection: 'column',
+          overflow: 'hidden',
+          position: 'relative',
+          paddingRight: 72,
+          minWidth: 0,
+          width: '100%',
+        }}
+      >
         <div style={{ position: 'fixed', top: 12, right: 20, zIndex: 50 }}>
           <NotificationBell />
         </div>

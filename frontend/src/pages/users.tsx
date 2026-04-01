@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react'
 import { useRouter } from 'next/router'
 import Layout from '@/components/Layout'
-import { PageHeader, Card, Th, Td, statusBadge, BtnPrimary, BtnOutline, BtnIconEdit, Modal, ConfirmModal, Field, Input, Select, Empty, Badge } from '@/components/ui'
+import { PageHeader, Card, Th, Td, statusBadge, BtnPrimary, BtnOutline, BtnIconEdit, Modal, ConfirmModal, Field, Input, Select, Empty, Badge, IntegerGroupedInput, formatMoneyNumber } from '@/components/ui'
 import { useAuth } from '@/context/AuthContext'
 import api from '@/lib/api'
 
@@ -10,6 +10,8 @@ interface User {
   telegram_chat_id?: number; telegram_username?: string; is_active: boolean
   web_access?: boolean
   see_all_partners?: boolean
+  visible_manager_ids?: number[]
+  payment_details?: string | null
   last_login_at?: string | null
 }
 interface PartnerRow { id: number; name: string }
@@ -25,7 +27,7 @@ interface TelegramJoinRequest {
 
 const EMPTY = {
   name: '', email: '', password: '', role: 'manager', telegram_chat_id: '', telegram_username: '', is_active: 'true',
-  see_all_partners: 'false', new_password: '',
+  see_all_partners: 'false', new_password: '', payment_details: '',
 }
 
 export default function UsersPage() {
@@ -45,6 +47,8 @@ export default function UsersPage() {
   const [assignedPartnerIds, setAssignedPartnerIds] = useState<number[]>([])
   const [rejectJoinId, setRejectJoinId] = useState<number | null>(null)
   const [deleteUserId, setDeleteUserId] = useState<number | null>(null)
+  const [visibleManagerIds, setVisibleManagerIds] = useState<number[]>([])
+  const [managerOptions, setManagerOptions] = useState<User[]>([])
 
   const loadAll = () => {
     api.get('users').then(r => setUsers(r.data)).catch(() => setUsers([]))
@@ -60,6 +64,7 @@ export default function UsersPage() {
     setEditing(null)
     setForm({ ...EMPTY })
     setAssignedPartnerIds([])
+    setVisibleManagerIds([])
     setError('')
     setModal(true)
   }
@@ -75,9 +80,11 @@ export default function UsersPage() {
       is_active: String(u.is_active),
       see_all_partners: u.see_all_partners ? 'true' : 'false',
       new_password: '',
+      payment_details: u.payment_details || '',
     })
     setError('')
     setAssignedPartnerIds([])
+    setVisibleManagerIds(Array.isArray(u.visible_manager_ids) ? u.visible_manager_ids : [])
     if (u.role === 'manager') {
       try {
         const [ap, pr] = await Promise.all([
@@ -95,8 +102,20 @@ export default function UsersPage() {
     setModal(true)
   }
 
+  useEffect(() => {
+    if (!modal || form.role !== 'administration') return
+    api
+      .get<User[]>('users')
+      .then(r => setManagerOptions(r.data.filter(x => x.role === 'manager')))
+      .catch(() => setManagerOptions([]))
+  }, [modal, form.role])
+
   const save = async () => {
     if (!form.name || !form.email) { setError('Заполните имя и email'); return }
+    if (form.role === 'administration' && visibleManagerIds.length === 0) {
+      setError('Отметьте хотя бы одного менеджера, чьи компании и проекты видит администрация')
+      return
+    }
     setSaving(true)
     try {
       if (editing) {
@@ -108,6 +127,8 @@ export default function UsersPage() {
         }
         if (form.telegram_chat_id) payload.telegram_chat_id = Number(form.telegram_chat_id)
         if (form.role === 'manager') payload.see_all_partners = form.see_all_partners === 'true'
+        if (form.role === 'administration') payload.visible_manager_ids = visibleManagerIds
+        if (form.role === 'employee') payload.payment_details = form.payment_details.trim() || null
         if (form.new_password.trim()) payload.password = form.new_password.trim()
         await api.patch(`users/${editing.id}`, payload)
         if (form.role === 'manager' && form.see_all_partners === 'false') {
@@ -125,6 +146,8 @@ export default function UsersPage() {
           telegram_chat_id: form.telegram_chat_id ? Number(form.telegram_chat_id) : null,
           telegram_username: form.telegram_username || null,
           see_all_partners: form.role === 'manager' ? form.see_all_partners === 'true' : false,
+          visible_manager_ids: form.role === 'administration' ? visibleManagerIds : undefined,
+          payment_details: form.role === 'employee' ? (form.payment_details.trim() || null) : undefined,
         })
       }
       setModal(false)
@@ -141,6 +164,8 @@ export default function UsersPage() {
     admin: 'Все уведомления',
     manager: 'Свои партнёры',
     accountant: 'Только счёт-фактуры',
+    administration: 'Партнёры выбранных менеджеров',
+    employee: 'Только учёт задач (веб)',
   }
 
   const openApprove = (r: TelegramJoinRequest) => {
@@ -209,6 +234,18 @@ export default function UsersPage() {
     <Layout>
       <PageHeader title="Пользователи" subtitle="Роли и Telegram-доступы" action={<BtnPrimary onClick={openAdd}>+ Добавить пользователя</BtnPrimary>} />
       <div style={{ padding: '22px 24px', overflowY: 'auto', flex: 1 }}>
+        <Card style={{ marginBottom: 18, padding: '16px 20px', display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexWrap: 'wrap', gap: 14 }}>
+          <div style={{ maxWidth: 560 }}>
+            <div style={{ fontWeight: 700, fontSize: 15, color: '#1a1d23' }}>Сотрудники (freelance)</div>
+            <div style={{ fontSize: 13, color: '#6b7280', marginTop: 6, lineHeight: 1.5 }}>
+              Выдайте роль <b>Сотрудник</b> — человек увидит только раздел «Мои задачи». Реквизиты (Visa, Uzcard…) и сводка по месяцам для выплат — в разделе{' '}
+              <b>Команда</b>.
+            </div>
+          </div>
+          <BtnOutline onClick={() => router.push('/staff')} style={{ padding: '8px 16px', fontWeight: 600 }}>
+            Команда →
+          </BtnOutline>
+        </Card>
         {pending.length > 0 && (
           <Card style={{ marginBottom: 18 }}>
             <div style={{ fontWeight: 700, marginBottom: 12, fontSize: 15 }}>Заявки из Telegram (модерация)</div>
@@ -218,7 +255,7 @@ export default function UsersPage() {
                   <div>
                     <div style={{ fontWeight: 600 }}>{r.full_name || 'Без имени'}</div>
                     <div style={{ fontSize: 12, color: '#8a8fa8' }}>
-                      @{r.telegram_username || '—'} · Chat ID: {r.telegram_chat_id}
+                      @{r.telegram_username || '—'} · Chat ID: {formatMoneyNumber(r.telegram_chat_id)}
                     </div>
                   </div>
                   <div style={{ display: 'flex', gap: 8 }}>
@@ -261,13 +298,21 @@ export default function UsersPage() {
                   <Td>{statusBadge(u.role)}</Td>
                   <Td>
                     {u.telegram_username ? <span style={{ fontFamily: 'monospace', fontSize: 12 }}>@{u.telegram_username}</span> : '—'}
-                    {u.telegram_chat_id && <div style={{ fontSize: 11, color: '#8a8fa8' }}>ID: {u.telegram_chat_id}</div>}
+                    {u.telegram_chat_id != null && u.telegram_chat_id !== 0 && (
+                      <div style={{ fontSize: 11, color: '#8a8fa8' }}>ID: {formatMoneyNumber(u.telegram_chat_id)}</div>
+                    )}
                   </Td>
                   <Td style={{ fontSize: 12, color: '#8a8fa8' }}>
                     {u.web_access === false ? 'Только Telegram' : roleNotifLabel[u.role]}
                   </Td>
                   <Td style={{ fontSize: 11, color: '#8a8fa8' }}>
-                    {u.role === 'manager' ? (u.see_all_partners ? 'Все партнёры' : 'Только назначенные') : '—'}
+                    {u.role === 'manager'
+                      ? (u.see_all_partners ? 'Все партнёры' : 'Только назначенные')
+                      : u.role === 'administration'
+                        ? `${(u.visible_manager_ids || []).length} менеджер(ов)`
+                        : u.role === 'employee'
+                          ? 'Только «Мои задачи»'
+                          : '—'}
                   </Td>
                   <Td style={{ fontSize: 12, color: '#6b7280', whiteSpace: 'nowrap' }}>{formatLastLogin(u.last_login_at)}</Td>
                   <Td><Badge variant={u.is_active ? 'green' : 'gray'}>{u.is_active ? 'Да' : 'Нет'}</Badge></Td>
@@ -319,10 +364,19 @@ export default function UsersPage() {
         )}
         <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
           <Field label="Роль">
-            <Select value={form.role} onChange={e => setForm(f => ({ ...f, role: e.target.value }))}>
+            <Select
+              value={form.role}
+              onChange={e => {
+                const r = e.target.value
+                setForm(f => ({ ...f, role: r }))
+                if (r !== 'administration') setVisibleManagerIds([])
+              }}
+            >
               <option value="admin">Администратор</option>
               <option value="manager">Менеджер</option>
               <option value="accountant">Бухгалтерия</option>
+              <option value="administration">Администрация</option>
+              <option value="employee">Сотрудник (freelance)</option>
             </Select>
           </Field>
           <Field label="Активен">
@@ -332,6 +386,55 @@ export default function UsersPage() {
             </Select>
           </Field>
         </div>
+        {form.role === 'administration' && (
+          <div style={{ marginBottom: 14 }}>
+            <div style={{ fontSize: 12, fontWeight: 600, marginBottom: 8 }}>
+              Менеджеры, чьих партнёров и проекты видит эта учётная запись *
+            </div>
+            <div style={{ maxHeight: 200, overflowY: 'auto', border: '1px solid #e8e9ef', borderRadius: 8, padding: 8 }}>
+              {managerOptions.length === 0 ? (
+                <div style={{ fontSize: 12, color: '#8a8fa8' }}>Загрузка списка менеджеров…</div>
+              ) : (
+                managerOptions.map(m => (
+                  <label key={m.id} style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '4px 0', fontSize: 13, cursor: 'pointer' }}>
+                    <input
+                      type="checkbox"
+                      checked={visibleManagerIds.includes(m.id)}
+                      onChange={(e) => {
+                        setVisibleManagerIds(prev =>
+                          e.target.checked ? [...prev, m.id] : prev.filter(x => x !== m.id),
+                        )
+                      }}
+                    />
+                    {m.name}
+                  </label>
+                ))
+              )}
+            </div>
+            <div style={{ fontSize: 11, color: '#8a8fa8', marginTop: 6, lineHeight: 1.45 }}>
+              При создании компании и проекта пользователь выбирает одного из отмеченных менеджеров как ответственного.
+            </div>
+          </div>
+        )}
+        {form.role === 'employee' && (
+          <Field label="Реквизиты для выплат (Visa, Uzcard, карта, IBAN…)">
+            <textarea
+              value={form.payment_details}
+              onChange={e => setForm(f => ({ ...f, payment_details: e.target.value }))}
+              placeholder="Всё в одном поле — как вам удобно копировать раз в месяц"
+              rows={4}
+              style={{
+                width: '100%',
+                border: '1px solid #e8e9ef',
+                borderRadius: 9,
+                padding: '10px 12px',
+                fontSize: 13,
+                fontFamily: 'inherit',
+                resize: 'vertical',
+              }}
+            />
+          </Field>
+        )}
         {form.role === 'manager' && (
           <Field label="Менеджер видит проекты всех партнёров">
             <Select value={form.see_all_partners} onChange={e => setForm(f => ({ ...f, see_all_partners: e.target.value }))}>
@@ -364,7 +467,11 @@ export default function UsersPage() {
             <Input value={form.telegram_username} onChange={e => setForm(f => ({ ...f, telegram_username: e.target.value }))} placeholder="username (без @)" />
           </Field>
           <Field label="Telegram Chat ID">
-            <Input type="number" value={form.telegram_chat_id} onChange={e => setForm(f => ({ ...f, telegram_chat_id: e.target.value }))} placeholder="123456789" />
+            <IntegerGroupedInput
+              value={form.telegram_chat_id}
+              onChange={v => setForm(f => ({ ...f, telegram_chat_id: v }))}
+              placeholder="123456789"
+            />
           </Field>
         </div>
         <div style={{ padding: '10px 12px', background: '#f5f6fa', borderRadius: 9, fontSize: 12, color: '#8a8fa8' }}>
