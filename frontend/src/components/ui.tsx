@@ -247,14 +247,35 @@ export function BtnPrimary({ children, onClick, disabled, type = 'button', style
   )
 }
 
-export function BtnOutline({ children, onClick, style }: { children: ReactNode; onClick?: () => void; style?: CSSProperties }) {
+export function BtnOutline({
+  children,
+  onClick,
+  style,
+  type = 'button',
+  disabled,
+}: {
+  children: ReactNode
+  onClick?: () => void
+  style?: CSSProperties
+  type?: 'button' | 'submit' | 'reset'
+  disabled?: boolean
+}) {
   return (
-    <button onClick={onClick} style={{
-      display: 'inline-flex', alignItems: 'center', gap: 6,
-      padding: '8px 16px', borderRadius: 9, fontSize: 13, fontWeight: 600,
-      background: '#fff', color: '#1a1d23', border: '1px solid #e8e9ef',
-      cursor: 'pointer', fontFamily: 'inherit', ...style,
-    }}>{children}</button>
+    <button
+      type={type}
+      onClick={onClick}
+      disabled={disabled}
+      style={{
+        display: 'inline-flex', alignItems: 'center', gap: 6,
+        padding: '8px 16px', borderRadius: 9, fontSize: 13, fontWeight: 600,
+        background: '#fff', color: '#1a1d23', border: '1px solid #e8e9ef',
+        cursor: disabled ? 'not-allowed' : 'pointer',
+        opacity: disabled ? 0.6 : 1,
+        fontFamily: 'inherit', ...style,
+      }}
+    >
+      {children}
+    </button>
   )
 }
 
