@@ -30,18 +30,28 @@ def _build_company_urls() -> Dict[str, str]:
     lower = base.lower()
     is_pg = "postgresql" in lower or lower.startswith("postgres:")
 
+    use_derived = settings.DATABASE_SEPARATE_DBS or bool(ww_opt) or bool(eg_opt)
+
     if is_pg:
-        ww = ww_opt or _swap_postgres_dbname(base, "enterdebt_whiteway")
-        eg = eg_opt or _swap_postgres_dbname(base, "enterdebt_enter_group_media")
-    else:
+        if use_derived:
+            ww = ww_opt or _swap_postgres_dbname(base, "enterdebt_whiteway")
+            eg = eg_opt or _swap_postgres_dbname(base, "enterdebt_enter_group_media")
+        else:
+            ww = ww_opt or km
+            eg = eg_opt or km
+    elif use_derived:
         ww = ww_opt or "sqlite:///./data_whiteway.db"
         eg = eg_opt or "sqlite:///./data_enter_group_media.db"
+    else:
+        ww = ww_opt or km
+        eg = eg_opt or km
 
     urls = {"kelyanmedia": km, "whiteway": ww, "enter_group_media": eg}
     if urls["kelyanmedia"] == urls["whiteway"] == urls["enter_group_media"]:
         log.warning(
             "Все три компании указывают на один и тот же DATABASE_URL — данные не изолированы. "
-            "Задайте DATABASE_URL_WHITEWAY и DATABASE_URL_ENTER_GROUP_MEDIA (или отдельные имена БД в PostgreSQL)."
+            "Для раздельных БД задайте DATABASE_URL_WHITEWAY / DATABASE_URL_ENTER_GROUP_MEDIA "
+            "или DATABASE_SEPARATE_DBS=true и создайте базы enterdebt_whiteway и enterdebt_enter_group_media."
         )
     return urls
 

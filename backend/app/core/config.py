@@ -6,8 +6,11 @@ import os
 
 class Settings(BaseSettings):
     DATABASE_URL: str = os.environ.get("DATABASE_URL", "postgresql://enterdebt:enterdebt123@localhost:5432/enterdebt")
-    # Необязательные URL отдельных БД по компаниям. Если не заданы — для PostgreSQL
-    # подставляются базы enterdebt_whiteway и enterdebt_enter_group_media (тот же хост/юзер).
+    # Необязательные URL отдельных БД по компаниям.
+    # По умолчанию (false) WhiteWay и Enter Group Media используют ту же БД, что и KelyanMedia —
+    # так деплой на одну базу (Hetzner и т.п.) не падает на отсутствии enterdebt_whiteway.
+    # True — старое поведение: пустые URL → имена БД enterdebt_whiteway / enterdebt_enter_group_media.
+    DATABASE_SEPARATE_DBS: bool = False
     DATABASE_URL_KELYANMEDIA: Optional[str] = None
     DATABASE_URL_WHITEWAY: Optional[str] = None
     DATABASE_URL_ENTER_GROUP_MEDIA: Optional[str] = None
