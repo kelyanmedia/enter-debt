@@ -58,19 +58,23 @@ docker run -d -e POSTGRES_DB=enterdebt -e POSTGRES_USER=enterdebt \
 echo "DATABASE_URL=postgresql://enterdebt:enterdebt_secret@localhost:5432/enterdebt" > .env
 echo "TELEGRAM_BOT_TOKEN=ваш_токен" >> .env
 
-uvicorn main:app --reload --port 8000
+uvicorn app.main:app --reload --host 127.0.0.1 --port 8000
 ```
+
+В браузере: **http://127.0.0.1:8000/** — подсказка и ссылки; **http://127.0.0.1:8000/health** — только JSON (это не «сломанная» страница).
 
 ### Frontend
 ```bash
 cd frontend
 npm install
 
-# Создать .env.local
-echo "NEXT_PUBLIC_API_URL=http://localhost:8000" > .env.local
+# Роут /api/* проксируется на бэкенд (порт как у uvicorn, обычно 8000)
+cp .env.example .env.local   # или: echo "BACKEND_URL=http://127.0.0.1:8000" > .env.local
 
 npm run dev
 ```
+
+**Панель:** http://127.0.0.1:3000/login — не путать с портом **8000** (там только API).
 
 ---
 

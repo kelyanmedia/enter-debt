@@ -5,6 +5,7 @@ from apscheduler.schedulers.background import BackgroundScheduler
 from zoneinfo import ZoneInfo
 from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import HTMLResponse
 from starlette.responses import JSONResponse
 
 from app.core.companies import normalize_company_slug
@@ -28,6 +29,39 @@ from app.core.config import settings
 from app.core.security import get_password_hash
 
 app = FastAPI(title="EnterDebt API", version="1.0.0", redirect_slashes=False)
+
+
+@app.get("/", response_class=HTMLResponse, include_in_schema=False)
+def api_root():
+    """Подсказка в браузере: :8000 — API, панель на :3000."""
+    return """<!DOCTYPE html>
+<html lang="ru">
+<head>
+<meta charset="utf-8"/>
+<meta name="viewport" content="width=device-width, initial-scale=1"/>
+<title>EnterDebt API</title>
+<style>
+body{font-family:system-ui,-apple-system,sans-serif;max-width:560px;margin:40px auto;padding:0 20px;color:#1e293b;line-height:1.55}
+h1{font-size:1.2rem;font-weight:700}
+a{color:#1a6b3c}
+ul{padding-left:1.15rem}
+.note{color:#64748b;font-size:.875rem;margin-top:1.75rem;border-top:1px solid #e2e8f0;padding-top:1rem}
+code{background:#f1f5f9;padding:2px 6px;border-radius:4px;font-size:.9em}
+</style>
+</head>
+<body>
+<h1>Это API (порт 8000)</h1>
+<p>Страница <code>/health</code> отдаёт только JSON — в браузере может выглядеть «пусто»; так и нужно для проверки сервера.</p>
+<p><strong>Веб-панель</strong> запускается отдельно:</p>
+<ul>
+  <li><a href="http://127.0.0.1:3000/login">Войти в панель</a> — Next.js, обычно порт <strong>3000</strong></li>
+  <li><a href="/docs">Документация API (/docs)</a></li>
+  <li><a href="/health">/health</a> (JSON)</li>
+</ul>
+<p class="note">Сначала поднимите бэкенд (uvicorn), затем в другом терминале <code>npm run dev</code> в папке frontend.</p>
+</body>
+</html>"""
+
 
 _scheduler: Optional[BackgroundScheduler] = None
 log = logging.getLogger(__name__)
