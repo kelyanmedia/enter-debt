@@ -14,7 +14,9 @@ COPY package.json package-lock.json ./
 RUN npm ci
 
 COPY . .
-RUN npm run build
+# Меняется на каждый коммит → Docker не отдаёт старый .next из кэша
+ARG GIT_COMMIT=unknown
+RUN echo "GIT_COMMIT=${GIT_COMMIT}" && npm run build
 
 EXPOSE 3000
 

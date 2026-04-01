@@ -46,6 +46,7 @@ jobs:
 
             git fetch origin main
             git reset --hard origin/main
+            export GIT_COMMIT="$(git rev-parse HEAD)"
 
             # Free disk space: clean orphaned git objects and unused docker images
             git gc --prune=all --quiet
@@ -68,15 +69,15 @@ jobs:
             $COMPOSE stop 2>/dev/null || true
             $COMPOSE rm -f 2>/dev/null || true
 
-            # Build new images
-            if $COMPOSE build; then
-              echo "Build succeeded"
-            else
-              echo "Build FAILED - will use existing images"
+            # Build images (GIT_COMMIT сбрасывает кэш слоя npm run build у frontend)
+            if ! $COMPOSE build --pull; then
+              echo "ERROR: docker compose build failed — оставляем старые контейнеры, деплой прерван."
+              exit 1
             fi
+            echo "Build succeeded"
 
-            # Start containers fresh
-            $COMPOSE up -d
+            # Новые контейнеры из свежих образов (иначе иногда остаётся старый UI)
+            $COMPOSE up -d --force-recreate --remove-orphans
 
             # Give containers time to initialize (Next.js needs a few seconds)
             sleep 12
