@@ -41,6 +41,7 @@ class ProfileSelfUpdate(BaseModel):
     current_password: str
     email: EmailStr
     new_password: Optional[str] = None
+    payment_details: Optional[str] = None  # только role=employee, через exclude_unset в patch
 
 
 # ── USERS ─────────────────────────────────────────────────────────────────────
@@ -89,6 +90,7 @@ class UserOut(UserBase):
     email: str
     last_login_at: Optional[datetime] = None
     visible_manager_ids: VisibleManagerIds = Field(default_factory=list)
+    payment_details_updated_at: Optional[datetime] = None
 
     class Config:
         from_attributes = True
@@ -104,6 +106,7 @@ class EmployeeTaskBase(BaseModel):
     amount: Optional[Decimal] = None
     currency: str = Field(default="USD", max_length=3)
     status: str = Field(default="not_started", max_length=30)
+    paid: bool = False
 
 
 class EmployeeTaskCreate(EmployeeTaskBase):
@@ -124,12 +127,15 @@ class EmployeeTaskUpdate(BaseModel):
     amount: Optional[Decimal] = None
     currency: Optional[str] = Field(None, max_length=3)
     status: Optional[str] = Field(None, max_length=30)
+    paid: Optional[bool] = None
 
 
 class EmployeeTaskOut(EmployeeTaskBase):
     id: int
     user_id: int
     created_at: datetime
+    paid_at: Optional[datetime] = None
+    done_at: Optional[datetime] = None
 
     class Config:
         from_attributes = True
@@ -140,6 +146,7 @@ class StaffEmployeeOut(BaseModel):
     name: str
     email: str
     payment_details: Optional[str] = None
+    payment_details_updated_at: Optional[datetime] = None
     task_count: int = 0
 
 
@@ -150,6 +157,42 @@ class StaffMonthTotalsOut(BaseModel):
     total_usd: Decimal
     total_uzs: Decimal
     total_hours: Decimal
+
+
+# ── SUBSCRIPTION ITEMS (реестр: бытовые / телефоны / сервисы) ─────────────────
+class SubscriptionItemBase(BaseModel):
+    name: str = Field(..., max_length=300)
+    vendor: Optional[str] = Field(None, max_length=300)
+    amount: Optional[Decimal] = None
+    currency: str = Field(default="USD", max_length=3)
+    billing_note: Optional[str] = Field(None, max_length=200)
+    next_due_date: Optional[date] = None
+    notes: Optional[str] = None
+    link_url: Optional[str] = Field(None, max_length=800)
+
+
+class SubscriptionItemCreate(SubscriptionItemBase):
+    category: str = Field(..., max_length=20)
+
+
+class SubscriptionItemUpdate(BaseModel):
+    name: Optional[str] = Field(None, max_length=300)
+    vendor: Optional[str] = Field(None, max_length=300)
+    amount: Optional[Decimal] = None
+    currency: Optional[str] = Field(None, max_length=3)
+    billing_note: Optional[str] = Field(None, max_length=200)
+    next_due_date: Optional[date] = None
+    notes: Optional[str] = None
+    link_url: Optional[str] = Field(None, max_length=800)
+
+
+class SubscriptionItemOut(SubscriptionItemBase):
+    id: int
+    category: str
+    created_at: datetime
+
+    class Config:
+        from_attributes = True
 
 
 # ── PARTNERS ──────────────────────────────────────────────────────────────────

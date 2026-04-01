@@ -19,6 +19,8 @@ interface User {
   telegram_username?: string
   telegram_chat_id?: number | null
   is_active: boolean
+  payment_details?: string | null
+  payment_details_updated_at?: string | null
 }
 
 export interface CompanyOption {

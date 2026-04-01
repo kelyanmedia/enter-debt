@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from 'react'
+import { useCallback, useEffect, useMemo, useState, type CSSProperties, type ReactNode } from 'react'
 import { useRouter } from 'next/router'
 import { useAuth } from '@/context/AuthContext'
 import Layout from '@/components/Layout'
@@ -13,13 +13,27 @@ import {
   writeTaskSummaryCurrency,
   type TaskSummaryCurrency,
 } from '@/lib/taskSummaryCurrency'
+import {
+  exportStaffTasksPdf,
+  exportStaffTasksPng,
+  taskStatusRu,
+  type StaffExportOptions,
+} from '@/lib/staffTasksExport'
 
 interface StaffEmployee {
   id: number
   name: string
   email: string
   payment_details?: string | null
+  payment_details_updated_at?: string | null
   task_count: number
+}
+
+function requisitesRecentlyUpdated(iso?: string | null) {
+  if (!iso) return false
+  const t = new Date(iso).getTime()
+  if (!Number.isFinite(t)) return false
+  return Date.now() - t < 30 * 86400000
 }
 
 interface TaskRow {
@@ -33,6 +47,7 @@ interface TaskRow {
   amount?: string | null
   currency: string
   status: string
+  paid?: boolean
   created_at: string
 }
 
@@ -57,6 +72,92 @@ function num(v: string | null | undefined) {
   return Number.isFinite(n) ? n : null
 }
 
+const STAFF_TASK_HINTS = {
+  move:
+    'Перенос в следующий месяц: дата задачи сдвигается на следующий календарный месяц, строка пропадает из текущего месяца. Подходит, если работа ещё не закрыта и переносится.',
+  paid:
+    'Оплачено: отмечает строку как закрытую по выплате — текст зачёркивается, сумма не входит в итоги «к выплате». Повторный клик снимает отметку.',
+  duplicate:
+    'Дубль: создаётся новая строка в следующем месяце с тем же проектом и суммой; текущая строка не меняется. Удобно для повторяющихся оплат каждый месяц.',
+  edit: 'Редактирование: открыть форму и изменить дату, проект, сумму, статус и другие поля.',
+  delete: 'Удаление: строка удаляется без восстановления.',
+} as const
+
+/** Тултип только при наведении на строку и на конкретную кнопку (состояние staffTipRow / staffTipKey на tr). */
+function StaffActionWithTip({
+  hint,
+  tipKey,
+  rowId,
+  tipRowId,
+  tipKeyActive,
+  onTipKey,
+  children,
+}: {
+  hint: string
+  tipKey: string
+  rowId: number
+  tipRowId: number | null
+  tipKeyActive: string | null
+  onTipKey: (key: string | null) => void
+  children: ReactNode
+}) {
+  const open = tipRowId === rowId && tipKeyActive === tipKey
+  return (
+    <div
+      style={{
+        position: 'relative',
+        display: 'inline-flex',
+        alignItems: 'center',
+        justifyContent: 'center',
+        zIndex: open ? 30 : 1,
+      }}
+      onMouseEnter={() => onTipKey(tipKey)}
+      onMouseLeave={() => onTipKey(null)}
+    >
+      {open && (
+        <div
+          role="tooltip"
+          style={{
+            position: 'absolute',
+            bottom: '100%',
+            left: '50%',
+            transform: 'translate(-50%, -10px)',
+            padding: '10px 12px',
+            background: '#0f172a',
+            color: '#f1f5f9',
+            fontSize: 11,
+            fontWeight: 500,
+            lineHeight: 1.45,
+            borderRadius: 10,
+            width: 248,
+            maxWidth: 'min(268px, 90vw)',
+            boxShadow: '0 10px 28px rgba(15, 23, 42, 0.38)',
+            pointerEvents: 'none',
+            textAlign: 'left',
+          }}
+        >
+          {hint}
+          <span
+            aria-hidden
+            style={{
+              position: 'absolute',
+              top: '100%',
+              left: '50%',
+              marginLeft: -8,
+              width: 0,
+              height: 0,
+              borderLeft: '8px solid transparent',
+              borderRight: '8px solid transparent',
+              borderTop: '9px solid #0f172a',
+            }}
+          />
+        </div>
+      )}
+      {children}
+    </div>
+  )
+}
+
 export default function StaffPage() {
   const { user, loading } = useAuth()
   const router = useRouter()
@@ -74,6 +175,10 @@ export default function StaffPage() {
   const [saving, setSaving] = useState(false)
   const [taskFormError, setTaskFormError] = useState('')
   const [statusSavingId, setStatusSavingId] = useState<number | null>(null)
+  const [actionBusyId, setActionBusyId] = useState<number | null>(null)
+  const [exportBusy, setExportBusy] = useState(false)
+  const [staffTipRow, setStaffTipRow] = useState<number | null>(null)
+  const [staffTipKey, setStaffTipKey] = useState<string | null>(null)
   const [summaryCurrency, setSummaryCurrency] = useState<TaskSummaryCurrency>(() => readTaskSummaryCurrency())
   const [form, setForm] = useState({
     work_date: '',
@@ -127,10 +232,16 @@ export default function StaffPage() {
 
   const selected = useMemo(() => employees.find(e => e.id === selectedId) || null, [employees, selectedId])
 
+  const requisitesHighlight = useMemo(
+    () => requisitesRecentlyUpdated(selected?.payment_details_updated_at),
+    [selected?.payment_details_updated_at],
+  )
+
   const taskRowTotals = useMemo(
     () =>
       tasks.reduce(
         (acc, t) => {
+          if (t.paid) return acc
           const h = num(t.hours)
           const a = num(t.amount)
           if (h != null) acc.h += h
@@ -259,6 +370,123 @@ export default function StaffPage() {
       loadDetail()
     } finally {
       setStatusSavingId(null)
+    }
+  }
+
+  const postMoveNextMonth = async (taskId: number) => {
+    setActionBusyId(taskId)
+    try {
+      await api.post(`employee-tasks/${taskId}/move-next-month`)
+      loadDetail()
+      loadEmployees()
+    } catch {
+      loadDetail()
+    } finally {
+      setActionBusyId(null)
+    }
+  }
+
+  const postDuplicateNextMonth = async (taskId: number) => {
+    setActionBusyId(taskId)
+    try {
+      await api.post(`employee-tasks/${taskId}/duplicate-next-month`)
+      loadDetail()
+      loadEmployees()
+    } catch {
+      loadDetail()
+    } finally {
+      setActionBusyId(null)
+    }
+  }
+
+  const toggleTaskPaid = async (t: TaskRow) => {
+    setActionBusyId(t.id)
+    try {
+      await api.patch(`employee-tasks/${t.id}`, { paid: !t.paid })
+      loadDetail()
+    } catch {
+      loadDetail()
+    } finally {
+      setActionBusyId(null)
+    }
+  }
+
+  const buildStaffExportOptions = useCallback((): StaffExportOptions | null => {
+    if (!selected) return null
+    const monthLabel = MONTH_OPTIONS.find(m => m.v === month)?.l ?? String(month)
+    const summaryLines: string[] = []
+    if (totals) {
+      summaryLines.push(
+        summaryCurrency === 'USD'
+          ? `Итого · USD: $${formatMoneyNumber(Number(totals.total_usd))}`
+          : `Итого · UZS: ${formatMoneyNumber(Number(totals.total_uzs))} сум`,
+      )
+      summaryLines.push(
+        `Часы (период): ${Number(totals.total_hours).toLocaleString('ru-RU', { maximumFractionDigits: 1 })}`,
+      )
+      if (summaryCurrency === 'UZS' && Number(totals.total_usd) > 0) {
+        summaryLines.push(`Также в USD: $${formatMoneyNumber(Number(totals.total_usd))}`)
+      }
+      if (summaryCurrency === 'USD' && Number(totals.total_uzs) > 0) {
+        summaryLines.push(`Также в UZS: ${formatMoneyNumber(Number(totals.total_uzs))} сум`)
+      }
+    }
+    const footerParts: string[] = []
+    if (taskRowTotals.uzs > 0) footerParts.push(`${formatMoneyNumber(taskRowTotals.uzs)} сум`)
+    if (taskRowTotals.usd > 0) footerParts.push(`$${formatMoneyNumber(taskRowTotals.usd)}`)
+    return {
+      periodTitle: `Задачи за ${monthLabel} ${year}`,
+      employeeName: selected.name,
+      summaryLines,
+      paymentDetails:
+        selected.payment_details?.trim() || '— не заполнено в карточке пользователя',
+      rows: tasks.map(t => ({
+        date: formatDate(t.work_date),
+        project: t.project_name,
+        task: t.task_description,
+        hours: num(t.hours) != null ? String(num(t.hours)) : '—',
+        amount:
+          num(t.amount) != null
+            ? t.currency === 'UZS'
+              ? `${formatMoneyNumber(Number(t.amount))} сум`
+              : `$${formatMoneyNumber(Number(t.amount))}`
+            : '—',
+        status: taskStatusRu(t.status),
+        paid: !!t.paid,
+      })),
+      footerHours:
+        taskRowTotals.h > 0
+          ? taskRowTotals.h.toLocaleString('ru-RU', { maximumFractionDigits: 1 })
+          : '—',
+      footerAmounts: footerParts.length ? footerParts.join(' · ') : '—',
+    }
+  }, [selected, month, year, totals, summaryCurrency, tasks, taskRowTotals])
+
+  const runExportPng = async () => {
+    const opts = buildStaffExportOptions()
+    if (!opts) return
+    setExportBusy(true)
+    try {
+      const base = `zadachi_${selected?.name ?? 'sotrudnik'}_${year}-${String(month).padStart(2, '0')}`
+      await exportStaffTasksPng(opts, base)
+    } catch {
+      /* */
+    } finally {
+      setExportBusy(false)
+    }
+  }
+
+  const runExportPdf = async () => {
+    const opts = buildStaffExportOptions()
+    if (!opts) return
+    setExportBusy(true)
+    try {
+      const base = `zadachi_${selected?.name ?? 'sotrudnik'}_${year}-${String(month).padStart(2, '0')}`
+      await exportStaffTasksPdf(opts, base)
+    } catch {
+      /* */
+    } finally {
+      setExportBusy(false)
     }
   }
 
@@ -418,8 +646,38 @@ export default function StaffPage() {
                 </Card>
               </div>
 
-              <Card style={{ padding: '16px 18px', marginBottom: 18, border: '1px dashed #c5c8d4' }}>
-                <div style={{ fontSize: 11, fontWeight: 700, color: '#8a8fa8', textTransform: 'uppercase', marginBottom: 8 }}>Реквизиты для выплаты</div>
+              <Card
+                style={{
+                  padding: '16px 18px',
+                  marginBottom: 18,
+                  ...(requisitesHighlight
+                    ? {
+                        border: '2px solid #eab308',
+                        background: 'linear-gradient(135deg, #fefce8 0%, #fffbeb 100%)',
+                        boxShadow: '0 2px 12px rgba(234,179,8,.15)',
+                      }
+                    : { border: '1px dashed #c5c8d4' }),
+                }}
+              >
+                <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 8, flexWrap: 'wrap' }}>
+                  <div style={{ fontSize: 11, fontWeight: 700, color: '#8a8fa8', textTransform: 'uppercase' }}>
+                    Реквизиты для выплаты
+                  </div>
+                  {requisitesHighlight && (
+                    <span
+                      style={{
+                        fontSize: 11,
+                        fontWeight: 700,
+                        color: '#854d0e',
+                        background: '#fde047',
+                        padding: '3px 8px',
+                        borderRadius: 6,
+                      }}
+                    >
+                      Реквизиты недавно менялись
+                    </span>
+                  )}
+                </div>
                 <pre style={{
                   margin: 0, fontSize: 13, fontFamily: 'ui-monospace, monospace', whiteSpace: 'pre-wrap',
                   color: '#334155', lineHeight: 1.5,
@@ -429,9 +687,41 @@ export default function StaffPage() {
                 </pre>
               </Card>
 
-              <Card style={{ padding: 0, overflow: 'hidden' }}>
-                <div style={{ padding: '14px 18px', borderBottom: '1px solid #e8e9ef', fontWeight: 700, fontSize: 15 }}>
-                  Задачи за {MONTH_OPTIONS.find(m => m.v === month)?.l} {year}
+              <Card style={{ padding: 0, overflow: 'visible' }}>
+                <div
+                  style={{
+                    padding: '14px 18px',
+                    borderBottom: '1px solid #e8e9ef',
+                    display: 'flex',
+                    alignItems: 'center',
+                    justifyContent: 'space-between',
+                    gap: 12,
+                    flexWrap: 'wrap',
+                  }}
+                >
+                  <div style={{ fontWeight: 700, fontSize: 15 }}>
+                    Задачи за {MONTH_OPTIONS.find(m => m.v === month)?.l} {year}
+                  </div>
+                  <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+                    <BtnOutline
+                      type="button"
+                      disabled={exportBusy || !selected}
+                      onClick={() => void runExportPng()}
+                      style={{ fontSize: 12, padding: '6px 12px', fontWeight: 600 }}
+                      title="Скачать сводку за месяц как PNG — удобно отправить в чат"
+                    >
+                      {exportBusy ? '…' : '🖼 Картинка'}
+                    </BtnOutline>
+                    <BtnOutline
+                      type="button"
+                      disabled={exportBusy || !selected}
+                      onClick={() => void runExportPdf()}
+                      style={{ fontSize: 12, padding: '6px 12px', fontWeight: 600 }}
+                      title="PDF на всю высоту таблицы — удобно листать с телефона"
+                    >
+                      {exportBusy ? '…' : '📄 PDF'}
+                    </BtnOutline>
+                  </div>
                 </div>
                 <table style={{ width: '100%', borderCollapse: 'collapse' }}>
                   <thead>
@@ -441,48 +731,188 @@ export default function StaffPage() {
                       <Th>Задача</Th>
                       <Th>Часы</Th>
                       <Th>Сумма</Th>
-                      <Th>Статус</Th>
-                      <Th style={{ width: 72 }} />
+                      <Th style={{ minWidth: 320 }}>Статус и действия</Th>
                     </tr>
                   </thead>
                   <tbody>
-                    {tasks.map(t => (
-                      <tr key={t.id} style={{ borderBottom: '1px solid #f1f5f9' }}>
-                        <Td style={{ whiteSpace: 'nowrap', fontSize: 13 }}>{formatDate(t.work_date)}</Td>
-                        <Td style={{ fontWeight: 600, fontSize: 13 }}>{t.project_name}</Td>
-                        <Td style={{ fontSize: 13, color: '#64748b', maxWidth: 280 }}>
-                          {t.task_url ? (
-                            <a href={t.task_url} target="_blank" rel="noreferrer" style={{ color: '#2563eb' }}>{t.task_description}</a>
-                          ) : (
-                            t.task_description
-                          )}
-                        </Td>
-                        <Td style={{ fontSize: 13 }}>{num(t.hours) != null ? num(t.hours) : '—'}</Td>
-                        <Td style={{ fontSize: 13, fontWeight: 600 }}>
-                          {num(t.amount) != null
-                            ? t.currency === 'UZS'
-                              ? `${formatMoneyNumber(Number(t.amount))} сум`
-                              : `$${formatMoneyNumber(Number(t.amount))}`
-                            : '—'}
-                        </Td>
-                        <Td>
-                          <EmployeeTaskStatusSelect
-                            value={t.status}
-                            disabled={statusSavingId === t.id}
-                            onChange={next => {
-                              if (next === t.status) return
-                              void patchTaskStatus(t.id, next)
-                            }}
-                          />
-                        </Td>
-                        <Td>
-                          <div style={{ display: 'flex', gap: 4 }}>
-                            <BtnIconEdit onClick={() => openEdit(t)} />
-                            <BtnOutline onClick={() => setDeleteId(t.id)} style={{ padding: '4px 8px', fontSize: 11, color: '#e84040' }}>✕</BtnOutline>
-                          </div>
-                        </Td>
-                      </tr>
-                    ))}
+                    {tasks.map(t => {
+                      const strike = t.paid
+                      const cellStrike = strike ? { textDecoration: 'line-through' as const, color: '#94a3b8' } : {}
+                      const busy = actionBusyId === t.id
+                      const iconBtn: CSSProperties = {
+                        width: 36,
+                        height: 36,
+                        padding: 0,
+                        borderRadius: 8,
+                        border: '1px solid #e8e9ef',
+                        background: '#fff',
+                        cursor: busy ? 'wait' : 'pointer',
+                        fontSize: 16,
+                        lineHeight: 1,
+                        display: 'inline-flex',
+                        alignItems: 'center',
+                        justifyContent: 'center',
+                        color: '#475569',
+                        flexShrink: 0,
+                        opacity: busy ? 0.5 : 1,
+                        boxSizing: 'border-box',
+                      }
+                      return (
+                        <tr
+                          key={t.id}
+                          style={{ borderBottom: '1px solid #f1f5f9', opacity: strike ? 0.88 : 1 }}
+                          onMouseEnter={() => setStaffTipRow(t.id)}
+                          onMouseLeave={() => {
+                            setStaffTipRow(null)
+                            setStaffTipKey(null)
+                          }}
+                        >
+                          <Td style={{ whiteSpace: 'nowrap', fontSize: 13, ...cellStrike }}>{formatDate(t.work_date)}</Td>
+                          <Td style={{ fontWeight: 600, fontSize: 13, ...cellStrike }}>{t.project_name}</Td>
+                          <Td style={{ fontSize: 13, color: strike ? '#94a3b8' : '#64748b', maxWidth: 280, ...cellStrike }}>
+                            {t.task_url ? (
+                              <a href={t.task_url} target="_blank" rel="noreferrer" style={{ color: strike ? '#94a3b8' : '#2563eb' }}>{t.task_description}</a>
+                            ) : (
+                              t.task_description
+                            )}
+                          </Td>
+                          <Td style={{ fontSize: 13, ...cellStrike }}>{num(t.hours) != null ? num(t.hours) : '—'}</Td>
+                          <Td style={{ fontSize: 13, fontWeight: 600, ...cellStrike }}>
+                            {num(t.amount) != null
+                              ? t.currency === 'UZS'
+                                ? `${formatMoneyNumber(Number(t.amount))} сум`
+                                : `$${formatMoneyNumber(Number(t.amount))}`
+                              : '—'}
+                          </Td>
+                          <Td style={{ verticalAlign: 'middle' }}>
+                            <div
+                              style={{
+                                display: 'flex',
+                                flexWrap: 'wrap',
+                                alignItems: 'center',
+                                gap: '10px 14px',
+                              }}
+                            >
+                              <EmployeeTaskStatusSelect
+                                value={t.status}
+                                disabled={statusSavingId === t.id || busy}
+                                onChange={next => {
+                                  if (next === t.status) return
+                                  void patchTaskStatus(t.id, next)
+                                }}
+                              />
+                              <div style={{ display: 'flex', gap: 6, flexWrap: 'nowrap', alignItems: 'center' }}>
+                                <StaffActionWithTip
+                                  hint={STAFF_TASK_HINTS.move}
+                                  tipKey="move"
+                                  rowId={t.id}
+                                  tipRowId={staffTipRow}
+                                  tipKeyActive={staffTipKey}
+                                  onTipKey={setStaffTipKey}
+                                >
+                                  <button
+                                    type="button"
+                                    aria-label={STAFF_TASK_HINTS.move}
+                                    style={iconBtn}
+                                    disabled={busy}
+                                    onClick={() => void postMoveNextMonth(t.id)}
+                                  >
+                                    →
+                                  </button>
+                                </StaffActionWithTip>
+                                <StaffActionWithTip
+                                  hint={STAFF_TASK_HINTS.paid}
+                                  tipKey="paid"
+                                  rowId={t.id}
+                                  tipRowId={staffTipRow}
+                                  tipKeyActive={staffTipKey}
+                                  onTipKey={setStaffTipKey}
+                                >
+                                  <button
+                                    type="button"
+                                    aria-label={STAFF_TASK_HINTS.paid}
+                                    style={{
+                                      ...iconBtn,
+                                      fontWeight: 700,
+                                      fontSize: 15,
+                                      borderColor: t.paid ? '#86efac' : '#e8e9ef',
+                                      background: t.paid ? '#dcfce7' : '#fff',
+                                      color: t.paid ? '#166534' : '#475569',
+                                    }}
+                                    disabled={busy}
+                                    onClick={() => void toggleTaskPaid(t)}
+                                  >
+                                    $
+                                  </button>
+                                </StaffActionWithTip>
+                                <StaffActionWithTip
+                                  hint={STAFF_TASK_HINTS.duplicate}
+                                  tipKey="dup"
+                                  rowId={t.id}
+                                  tipRowId={staffTipRow}
+                                  tipKeyActive={staffTipKey}
+                                  onTipKey={setStaffTipKey}
+                                >
+                                  <button
+                                    type="button"
+                                    aria-label={STAFF_TASK_HINTS.duplicate}
+                                    style={iconBtn}
+                                    disabled={busy}
+                                    onClick={() => void postDuplicateNextMonth(t.id)}
+                                  >
+                                    ⧉
+                                  </button>
+                                </StaffActionWithTip>
+                                <StaffActionWithTip
+                                  hint={STAFF_TASK_HINTS.edit}
+                                  tipKey="edit"
+                                  rowId={t.id}
+                                  tipRowId={staffTipRow}
+                                  tipKeyActive={staffTipKey}
+                                  onTipKey={setStaffTipKey}
+                                >
+                                  <BtnIconEdit
+                                    title={STAFF_TASK_HINTS.edit}
+                                    disabled={busy}
+                                    style={{ width: 36, height: 36 }}
+                                    onClick={() => openEdit(t)}
+                                  />
+                                </StaffActionWithTip>
+                                <StaffActionWithTip
+                                  hint={STAFF_TASK_HINTS.delete}
+                                  tipKey="del"
+                                  rowId={t.id}
+                                  tipRowId={staffTipRow}
+                                  tipKeyActive={staffTipKey}
+                                  onTipKey={setStaffTipKey}
+                                >
+                                  <BtnOutline
+                                    type="button"
+                                    aria-label={STAFF_TASK_HINTS.delete}
+                                    onClick={() => setDeleteId(t.id)}
+                                    disabled={busy}
+                                    style={{
+                                      padding: 0,
+                                      width: 36,
+                                      height: 36,
+                                      minHeight: 36,
+                                      fontSize: 14,
+                                      color: '#e84040',
+                                      display: 'inline-flex',
+                                      alignItems: 'center',
+                                      justifyContent: 'center',
+                                      boxSizing: 'border-box',
+                                    }}
+                                  >
+                                    ✕
+                                  </BtnOutline>
+                                </StaffActionWithTip>
+                              </div>
+                            </div>
+                          </Td>
+                        </tr>
+                      )
+                    })}
                   </tbody>
                   {tasks.length > 0 && (
                     <tfoot>
@@ -509,7 +939,6 @@ export default function StaffPage() {
                             '—'
                           )}
                         </Td>
-                        <Td style={{ borderBottom: 'none', borderTop: '2px solid #e2e8f0' }} />
                         <Td style={{ borderBottom: 'none', borderTop: '2px solid #e2e8f0' }} />
                       </tr>
                     </tfoot>

@@ -22,9 +22,10 @@ import app.models.telegram_join  # noqa: F401 — таблица telegram_join_r
 import app.models.feed_notification  # noqa: F401 — лента событий
 import app.models.ceo_metric_override  # noqa: F401 — ручные значения CEO dashboard
 from app.api.routes import auth, users, partners, payments, dashboard, notifications, archive, payment_months, telegram_join, feed_notifications, contract_requests, employee_tasks
-from app.api.routes import commissions
+from app.api.routes import commissions, subscription_items
 import app.models.commission  # noqa: F401
 import app.models.employee_task  # noqa: F401
+import app.models.subscription_item  # noqa: F401
 from app.core.config import settings
 from app.core.security import get_password_hash
 
@@ -127,6 +128,7 @@ app.include_router(telegram_join.router)
 app.include_router(contract_requests.router)
 app.include_router(employee_tasks.router)
 app.include_router(commissions.router)
+app.include_router(subscription_items.router)
 
 
 @app.on_event("startup")
@@ -199,6 +201,10 @@ def _migrate():
             created_at TIMESTAMP WITH TIME ZONE DEFAULT now(),
             updated_at TIMESTAMP WITH TIME ZONE
         )""",
+        "ALTER TABLE employee_tasks ADD COLUMN IF NOT EXISTS paid BOOLEAN NOT NULL DEFAULT FALSE",
+        "ALTER TABLE employee_tasks ADD COLUMN IF NOT EXISTS paid_at TIMESTAMP WITH TIME ZONE",
+        "ALTER TABLE employee_tasks ADD COLUMN IF NOT EXISTS done_at TIMESTAMP WITH TIME ZONE",
+        "ALTER TABLE users ADD COLUMN IF NOT EXISTS payment_details_updated_at TIMESTAMP WITH TIME ZONE",
         # Commissions table
         """CREATE TABLE IF NOT EXISTS commissions (
             id SERIAL PRIMARY KEY,
@@ -222,6 +228,21 @@ def _migrate():
         "UPDATE partners SET partner_type = 'A' WHERE partner_type IN ('regular', 'recurring')",
         "UPDATE partners SET partner_type = 'B' WHERE partner_type = 'one_time'",
         "UPDATE partners SET partner_type = 'C' WHERE partner_type = 'service'",
+        """CREATE TABLE IF NOT EXISTS subscription_items (
+            id SERIAL PRIMARY KEY,
+            category VARCHAR(20) NOT NULL,
+            name VARCHAR(300) NOT NULL,
+            vendor VARCHAR(300),
+            amount NUMERIC(15,2),
+            currency VARCHAR(3) NOT NULL DEFAULT 'USD',
+            billing_note VARCHAR(200),
+            next_due_date DATE,
+            notes TEXT,
+            link_url VARCHAR(800),
+            created_at TIMESTAMP WITH TIME ZONE DEFAULT now(),
+            updated_at TIMESTAMP WITH TIME ZONE
+        )""",
+        "CREATE INDEX IF NOT EXISTS ix_subscription_items_category ON subscription_items (category)",
     ]
     for sql in migrations:
         # Защита от случайного удаления данных

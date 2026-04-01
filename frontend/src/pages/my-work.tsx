@@ -24,6 +24,9 @@ interface TaskRow {
   amount?: string | null
   currency: string
   status: string
+  paid?: boolean
+  paid_at?: string | null
+  done_at?: string | null
 }
 
 const MONTH_OPTIONS = [
@@ -65,6 +68,8 @@ export default function MyWorkPage() {
   const [form, setForm] = useState({ ...EMPTY_FORM })
   const [summaryCurrency, setSummaryCurrency] = useState<TaskSummaryCurrency>(() => readTaskSummaryCurrency())
   const [statusSavingId, setStatusSavingId] = useState<number | null>(null)
+  const [revertAttempts, setRevertAttempts] = useState<Record<number, number>>({})
+  const [lockExplainOpen, setLockExplainOpen] = useState(false)
 
   const load = useCallback(() => {
     setLoadingData(true)
@@ -122,7 +127,7 @@ export default function MyWorkPage() {
         hours: form.hours ? Number(form.hours.replace(',', '.')) : null,
         amount: form.amount ? Number(form.amount.replace(',', '.')) : null,
         currency: form.currency,
-        status: form.status,
+        status: editing?.status === 'done' ? 'done' : form.status,
       }
       if (editing) {
         await api.patch(`employee-tasks/${editing.id}`, body)
@@ -151,11 +156,31 @@ export default function MyWorkPage() {
     }
   }
 
-  const patchTaskStatus = async (taskId: number, status: string) => {
+  const patchTaskStatus = async (taskId: number, next: string, row: TaskRow) => {
+    if (row.status === 'done' && next !== 'done') {
+      setRevertAttempts(prev => {
+        const n = (prev[taskId] || 0) + 1
+        if (n >= 5) setLockExplainOpen(true)
+        return { ...prev, [taskId]: n }
+      })
+      return
+    }
     setStatusSavingId(taskId)
     try {
-      await api.patch(`employee-tasks/${taskId}`, { status })
-      setTasks(prev => prev.map(t => (t.id === taskId ? { ...t, status } : t)))
+      await api.patch(`employee-tasks/${taskId}`, { status: next })
+      setTasks(prev => prev.map(t => (t.id === taskId ? { ...t, status: next } : t)))
+    } catch {
+      load()
+    } finally {
+      setStatusSavingId(null)
+    }
+  }
+
+  const patchTaskPaid = async (taskId: number) => {
+    setStatusSavingId(taskId)
+    try {
+      await api.patch(`employee-tasks/${taskId}`, { paid: true })
+      await load()
     } catch {
       load()
     } finally {
@@ -268,6 +293,7 @@ export default function MyWorkPage() {
                 <Th>Часы</Th>
                 <Th>Сумма</Th>
                 <Th>Статус</Th>
+                <Th>Оплата</Th>
                 <Th style={{ width: 88 }} />
               </tr>
             </thead>
@@ -297,9 +323,23 @@ export default function MyWorkPage() {
                       disabled={statusSavingId === t.id}
                       onChange={(next) => {
                         if (next === t.status) return
-                        void patchTaskStatus(t.id, next)
+                        void patchTaskStatus(t.id, next, t)
                       }}
                     />
+                  </Td>
+                  <Td>
+                    {t.paid ? (
+                      <span style={{ fontSize: 12, fontWeight: 600, color: '#15803d' }}>Оплачено</span>
+                    ) : (
+                      <BtnOutline
+                        type="button"
+                        disabled={statusSavingId === t.id}
+                        onClick={() => void patchTaskPaid(t.id)}
+                        style={{ padding: '4px 10px', fontSize: 11, fontWeight: 600 }}
+                      >
+                        Отметить оплачено
+                      </BtnOutline>
+                    )}
                   </Td>
                   <Td>
                     <div style={{ display: 'flex', gap: 4 }}>
@@ -329,6 +369,7 @@ export default function MyWorkPage() {
                       '—'
                     )}
                   </Td>
+                  <Td style={{ borderBottom: 'none', borderTop: '2px solid #e2e8f0' }} />
                   <Td style={{ borderBottom: 'none', borderTop: '2px solid #e2e8f0' }} />
                   <Td style={{ borderBottom: 'none', borderTop: '2px solid #e2e8f0' }} />
                 </tr>
@@ -382,12 +423,18 @@ export default function MyWorkPage() {
           </Field>
         </div>
         <Field label="Статус">
-          <Select value={form.status} onChange={e => setForm(f => ({ ...f, status: e.target.value }))}>
-            <option value="not_started">Не начато</option>
-            <option value="in_progress">В процессе</option>
-            <option value="pending_approval">На утверждении</option>
-            <option value="done">Готово</option>
-          </Select>
+          {editing?.status === 'done' ? (
+            <div style={{ fontSize: 13, color: '#64748b', padding: '8px 0', lineHeight: 1.45 }}>
+              Готово — статус нельзя снять самостоятельно. Другие поля можно править; чтобы вернуть статус назад, напишите администратору.
+            </div>
+          ) : (
+            <Select value={form.status} onChange={e => setForm(f => ({ ...f, status: e.target.value }))}>
+              <option value="not_started">Не начато</option>
+              <option value="in_progress">В процессе</option>
+              <option value="pending_approval">На утверждении</option>
+              <option value="done">Готово</option>
+            </Select>
+          )}
         </Field>
       </Modal>
 
@@ -399,6 +446,18 @@ export default function MyWorkPage() {
         confirmLabel="Удалить"
         onConfirm={runDelete}
       />
+
+      <Modal
+        open={lockExplainOpen}
+        onClose={() => setLockExplainOpen(false)}
+        title="Статус и оплата зафиксированы"
+        footer={<BtnPrimary onClick={() => setLockExplainOpen(false)}>Понятно</BtnPrimary>}
+      >
+        <p style={{ margin: 0, fontSize: 14, color: '#475569', lineHeight: 1.55 }}>
+          После «Готово» нельзя вернуть прежний статус самостоятельно. Отметку «Оплачено» тоже может снять только администратор.
+          Если задача закрыта и с момента отметки оплаты прошло больше двух дней, вернуть строку в прежнее состояние может только администратор.
+        </p>
+      </Modal>
     </Layout>
   )
 }

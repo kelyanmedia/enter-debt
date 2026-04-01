@@ -14,6 +14,8 @@ type NavItem = {
   administrationHidden?: boolean
   accountantHidden?: boolean
   badge?: string
+  /** Подсветка пункта для всех путей с этим префиксом (например /subscriptions/*) */
+  activePathPrefix?: string
 }
 
 type NavSection = { title: string; items: NavItem[] }
@@ -39,6 +41,17 @@ const NAV_SECTIONS: NavSection[] = [
         accountantHidden: true,
       },
       { href: '/commissions', label: 'Комиссия', icon: '💰', administrationHidden: true },
+    ],
+  },
+  {
+    title: 'Подписки',
+    items: [
+      {
+        href: '/subscriptions/household',
+        label: 'Подписки',
+        icon: '📑',
+        activePathPrefix: '/subscriptions',
+      },
     ],
   },
   {
@@ -221,7 +234,9 @@ export default function Layout({ children }: { children: ReactNode }) {
               <div key={section.title} style={{ marginTop: si > 0 ? 12 : 0 }}>
                 <div style={sectionHeadingStyle}>{section.title}</div>
                 {visible.map(n => {
-                  const active = router.pathname === n.href
+                  const active = n.activePathPrefix
+                    ? router.pathname.startsWith(n.activePathPrefix)
+                    : router.pathname === n.href
                   return (
                     <Link key={n.href} href={n.href} style={{ textDecoration: 'none' }}>
                       <div

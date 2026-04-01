@@ -16,6 +16,7 @@ class User(Base):
     visible_manager_ids = Column(Text, nullable=True)
     # Реквизиты для выплат (Visa, Uzcard и т.д.) — для роли employee
     payment_details = Column(Text, nullable=True)
+    payment_details_updated_at = Column(DateTime(timezone=True), nullable=True)
     telegram_id = Column(String(50), unique=True, nullable=True)
     telegram_chat_id = Column(BigInteger, unique=True, nullable=True)
     telegram_username = Column(String(100), nullable=True)

@@ -1,4 +1,4 @@
-from sqlalchemy import Column, Integer, String, Date, DateTime, Numeric, ForeignKey
+from sqlalchemy import Boolean, Column, Integer, String, Date, DateTime, Numeric, ForeignKey
 from sqlalchemy.orm import relationship
 from sqlalchemy.sql import func
 
@@ -18,6 +18,9 @@ class EmployeeTask(Base):
     amount = Column(Numeric(15, 2), nullable=True)
     currency = Column(String(3), nullable=False, default="USD")
     status = Column(String(30), nullable=False, default="not_started")
+    paid = Column(Boolean, nullable=False, default=False)
+    paid_at = Column(DateTime(timezone=True), nullable=True)
+    done_at = Column(DateTime(timezone=True), nullable=True)
     created_at = Column(DateTime(timezone=True), server_default=func.now())
     updated_at = Column(DateTime(timezone=True), onupdate=func.now())
 

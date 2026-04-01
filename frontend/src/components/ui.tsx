@@ -253,16 +253,22 @@ export function BtnOutline({
   style,
   type = 'button',
   disabled,
+  title,
+  'aria-label': ariaLabel,
 }: {
   children: ReactNode
   onClick?: () => void
   style?: CSSProperties
   type?: 'button' | 'submit' | 'reset'
   disabled?: boolean
+  title?: string
+  'aria-label'?: string
 }) {
   return (
     <button
       type={type}
+      title={title}
+      aria-label={ariaLabel ?? title}
       onClick={onClick}
       disabled={disabled}
       style={{
@@ -283,15 +289,20 @@ export function BtnOutline({
 export function BtnIconEdit({
   onClick,
   title = 'Редактировать',
+  style: styleProp,
+  disabled,
 }: {
   onClick: (e: MouseEvent<HTMLButtonElement>) => void
   title?: string
+  style?: CSSProperties
+  disabled?: boolean
 }) {
   return (
     <button
       type="button"
       title={title}
       aria-label={title}
+      disabled={disabled}
       onClick={onClick}
       style={{
         display: 'inline-flex',
@@ -302,14 +313,17 @@ export function BtnIconEdit({
         borderRadius: 8,
         border: '1px solid #e8e9ef',
         background: '#fff',
-        cursor: 'pointer',
+        cursor: disabled ? 'not-allowed' : 'pointer',
         color: '#64748b',
         flexShrink: 0,
         transition: 'background .15s, color .15s, border-color .15s, box-shadow .15s',
         boxShadow: '0 1px 2px rgba(0,0,0,.04)',
         fontFamily: 'inherit',
+        opacity: disabled ? 0.5 : 1,
+        ...styleProp,
       }}
       onMouseEnter={e => {
+        if (e.currentTarget.disabled) return
         const t = e.currentTarget
         t.style.background = '#eff6ff'
         t.style.color = '#2563eb'

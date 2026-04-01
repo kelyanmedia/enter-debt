@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react'
 import Layout from '@/components/Layout'
-import { PageHeader, Card, Field, Input, BtnPrimary, BtnOutline } from '@/components/ui'
+import { PageHeader, Card, Field, Input, BtnPrimary, BtnOutline, Modal } from '@/components/ui'
 import { useAuth } from '@/context/AuthContext'
 import api from '@/lib/api'
 
@@ -25,10 +25,16 @@ export default function ProfilePage() {
   const [reportMsg, setReportMsg] = useState('')
   const [tgPingBusy, setTgPingBusy] = useState(false)
   const [tgPingMsg, setTgPingMsg] = useState('')
+  const [paymentDetails, setPaymentDetails] = useState('')
+  const [requisitesHintOpen, setRequisitesHintOpen] = useState(false)
 
   useEffect(() => {
     if (user?.email) setEmail(user.email)
   }, [user?.email])
+
+  useEffect(() => {
+    if (user?.role === 'employee') setPaymentDetails(user.payment_details ?? '')
+  }, [user?.role, user?.payment_details])
 
   const submit = async (e: React.FormEvent) => {
     e.preventDefault()
@@ -42,6 +48,9 @@ export default function ProfilePage() {
     const emailTrim = email.trim().toLowerCase()
     const emailChanged = emailTrim !== user.email
     const wantPw = newPassword.trim() || newPassword2.trim()
+    const pdNorm = (a: string) => a.trim()
+    const paymentDetailsChanged =
+      user.role === 'employee' && pdNorm(paymentDetails) !== pdNorm(user.payment_details ?? '')
     if (wantPw) {
       if (newPassword !== newPassword2) {
         setError('Новые пароли не совпадают')
@@ -52,18 +61,19 @@ export default function ProfilePage() {
         return
       }
     }
-    if (!emailChanged && !wantPw) {
-      setError('Измените email или задайте новый пароль')
+    if (!emailChanged && !wantPw && !paymentDetailsChanged) {
+      setError('Измените email, пароль или реквизиты')
       return
     }
 
     setSaving(true)
     try {
-      const payload: { current_password: string; email: string; new_password?: string } = {
+      const payload: { current_password: string; email: string; new_password?: string; payment_details?: string | null } = {
         current_password: currentPassword,
         email: emailTrim,
       }
       if (wantPw) payload.new_password = newPassword.trim()
+      if (paymentDetailsChanged) payload.payment_details = pdNorm(paymentDetails) || null
       await api.patch('auth/me', payload)
       setCurrentPassword('')
       setNewPassword('')
@@ -203,6 +213,53 @@ export default function ProfilePage() {
               />
             </Field>
 
+            {user.role === 'employee' && (
+              <div style={{ marginBottom: 18 }}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 6 }}>
+                  <span style={{ fontSize: 13, fontWeight: 600, color: '#1a1d23' }}>Реквизиты для выплат</span>
+                  <button
+                    type="button"
+                    onClick={() => setRequisitesHintOpen(true)}
+                    style={{
+                      width: 22,
+                      height: 22,
+                      borderRadius: '50%',
+                      border: '1px solid #c5c8d4',
+                      background: '#f8f9fc',
+                      color: '#64748b',
+                      fontSize: 12,
+                      fontWeight: 700,
+                      cursor: 'pointer',
+                      lineHeight: 1,
+                    }}
+                    title="Справка"
+                  >
+                    ?
+                  </button>
+                </div>
+                <textarea
+                  value={paymentDetails}
+                  onChange={e => setPaymentDetails(e.target.value)}
+                  placeholder="Карта, Uzcard, счёт, ФИО получателя…"
+                  rows={5}
+                  style={{
+                    width: '100%',
+                    boxSizing: 'border-box',
+                    padding: '10px 12px',
+                    borderRadius: 10,
+                    border: '1px solid #e8e9ef',
+                    fontSize: 14,
+                    fontFamily: 'inherit',
+                    resize: 'vertical',
+                    minHeight: 100,
+                  }}
+                />
+                <div style={{ fontSize: 12, color: '#8a8fa8', marginTop: 6, lineHeight: 1.45 }}>
+                  После сохранения в разделе «Команда» у администратора блок реквизитов подсвечивается жёлтым в течение месяца.
+                </div>
+              </div>
+            )}
+
             {error && (
               <div style={{ marginBottom: 12, padding: '10px 12px', background: '#fef0f0', borderRadius: 9, fontSize: 13, color: '#b91c1c' }}>
                 {error}
@@ -283,6 +340,18 @@ export default function ProfilePage() {
           </Card>
         )}
       </div>
+
+      <Modal
+        open={requisitesHintOpen}
+        onClose={() => setRequisitesHintOpen(false)}
+        title="Реквизиты"
+        footer={<BtnPrimary onClick={() => setRequisitesHintOpen(false)}>Понятно</BtnPrimary>}
+      >
+        <p style={{ margin: 0, fontSize: 14, color: '#475569', lineHeight: 1.55 }}>
+          Укажите данные для перевода выплаты (карта, банк, телефон и т.д.). Изменения видит администратор в разделе «Команда»;
+          при обновлении текст подсвечивается жёлтым один месяц, чтобы бухгалтерия заметила правку.
+        </p>
+      </Modal>
     </Layout>
   )
 }

@@ -1,4 +1,5 @@
 import json
+from datetime import datetime, timezone
 
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
@@ -107,6 +108,12 @@ def _apply_update(user: User, data: UserUpdate):
             setattr(user, "hashed_password", get_password_hash(pv))
         elif field == "email" and value is not None:
             setattr(user, "email", normalize_email(str(value)))
+        elif field == "payment_details":
+            nv = None if value is None else (str(value).strip() or None)
+            ov = (user.payment_details or "").strip() or None
+            user.payment_details = nv
+            if user.role == "employee" and nv != ov:
+                user.payment_details_updated_at = datetime.now(timezone.utc)
         else:
             setattr(user, field, value)
 

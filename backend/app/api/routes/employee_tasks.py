@@ -1,4 +1,5 @@
-from datetime import date
+import calendar
+from datetime import date, datetime, timezone
 from decimal import Decimal
 from typing import List, Optional, Union
 
@@ -74,6 +75,14 @@ def _month_key(d: date) -> str:
     return f"{d.year}-{d.month:02d}"
 
 
+def _add_one_calendar_month(d: date) -> date:
+    y, m = d.year, d.month + 1
+    if m > 12:
+        m, y = 1, y + 1
+    last = calendar.monthrange(y, m)[1]
+    return date(y, m, min(d.day, last))
+
+
 @router.get("/staff/employees", response_model=List[StaffEmployeeOut])
 def list_staff_employees(
     db: Session = Depends(get_db),
@@ -94,6 +103,7 @@ def list_staff_employees(
                 name=u.name,
                 email=u.email,
                 payment_details=u.payment_details,
+                payment_details_updated_at=u.payment_details_updated_at,
                 task_count=int(cnt),
             )
         )
@@ -124,6 +134,8 @@ def staff_month_totals(
     total_uzs = Decimal(0)
     total_hours = Decimal(0)
     for t in rows:
+        if getattr(t, "paid", False):
+            continue
         if t.hours is not None:
             total_hours += Decimal(str(t.hours))
         if t.amount is not None:
@@ -191,6 +203,9 @@ def create_task(
         raise HTTPException(status_code=403, detail="Нет доступа")
 
     _validate_payload(data, partial=False)
+    paid_flag = bool(data.paid) if current_user.role == "admin" else False
+    st = data.status or "not_started"
+    now = datetime.now(timezone.utc)
     t = EmployeeTask(
         user_id=target_uid,
         work_date=data.work_date,
@@ -200,7 +215,10 @@ def create_task(
         hours=data.hours,
         amount=data.amount,
         currency=(data.currency or "USD").upper(),
-        status=data.status or "not_started",
+        status=st,
+        paid=paid_flag,
+        done_at=now if st == "done" else None,
+        paid_at=now if paid_flag else None,
     )
     db.add(t)
     db.commit()
@@ -223,6 +241,33 @@ def update_task(
 
     _validate_payload(data, partial=True)
     upd = data.model_dump(exclude_unset=True)
+    old_status = t.status
+    old_paid = t.paid
+
+    if current_user.role != "admin":
+        if "paid" in upd:
+            if upd["paid"] is False:
+                raise HTTPException(
+                    status_code=403,
+                    detail="Снять отметку «Оплачено» может только администратор.",
+                )
+            if t.paid:
+                upd.pop("paid", None)
+
+    next_status = upd["status"] if "status" in upd else t.status
+    next_paid = upd["paid"] if "paid" in upd else t.paid
+    if current_user.role == "employee":
+        if t.status == "done" and next_status != "done":
+            raise HTTPException(
+                status_code=403,
+                detail="Статус «Готово» нельзя отменить самостоятельно. Обратитесь к администратору.",
+            )
+        if t.paid and next_paid is False:
+            raise HTTPException(
+                status_code=403,
+                detail="Снять оплату может только администратор.",
+            )
+
     if "project_name" in upd and upd["project_name"] is not None:
         upd["project_name"] = str(upd["project_name"]).strip()
     if "task_description" in upd and upd["task_description"] is not None:
@@ -234,9 +279,65 @@ def update_task(
         upd["currency"] = str(upd["currency"]).upper()
     for k, v in upd.items():
         setattr(t, k, v)
+
+    now = datetime.now(timezone.utc)
+    if t.status == "done" and old_status != "done":
+        t.done_at = now
+    elif t.status != "done":
+        t.done_at = None
+    if t.paid and not old_paid:
+        t.paid_at = now
+    elif not t.paid:
+        t.paid_at = None
+
     db.commit()
     db.refresh(t)
     return EmployeeTaskOut.model_validate(t)
+
+
+@router.post("/{task_id}/move-next-month", response_model=EmployeeTaskOut)
+def move_task_next_month(
+    task_id: int,
+    db: Session = Depends(get_db),
+    _: User = Depends(require_admin),
+):
+    """Переносит задачу на следующий календарный месяц (та же строка)."""
+    t = db.query(EmployeeTask).filter(EmployeeTask.id == task_id).first()
+    if not t:
+        raise HTTPException(status_code=404, detail="Задача не найдена")
+    t.work_date = _add_one_calendar_month(t.work_date)
+    db.commit()
+    db.refresh(t)
+    return EmployeeTaskOut.model_validate(t)
+
+
+@router.post("/{task_id}/duplicate-next-month", response_model=EmployeeTaskOut)
+def duplicate_task_next_month(
+    task_id: int,
+    db: Session = Depends(get_db),
+    _: User = Depends(require_admin),
+):
+    """Копия строки в следующем месяце; исходная остаётся."""
+    src = db.query(EmployeeTask).filter(EmployeeTask.id == task_id).first()
+    if not src:
+        raise HTTPException(status_code=404, detail="Задача не найдена")
+    new_d = _add_one_calendar_month(src.work_date)
+    clone = EmployeeTask(
+        user_id=src.user_id,
+        work_date=new_d,
+        project_name=src.project_name,
+        task_description=src.task_description,
+        task_url=src.task_url,
+        hours=src.hours,
+        amount=src.amount,
+        currency=(src.currency or "USD").upper(),
+        status="not_started",
+        paid=False,
+    )
+    db.add(clone)
+    db.commit()
+    db.refresh(clone)
+    return EmployeeTaskOut.model_validate(clone)
 
 
 @router.delete("/{task_id}")

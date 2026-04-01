@@ -146,13 +146,15 @@ def patch_me(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
-    """Свой email и/или пароль. Администратор по-прежнему управляет всеми учётками в /api/users."""
+    """Свой email, пароль и (для сотрудника) реквизиты. Остальные роли — /api/users у админа."""
     pwd = (data.current_password or "").strip()
     user = db.query(User).filter(User.id == current_user.id).first()
     if not user:
         raise HTTPException(status_code=404, detail="User not found")
     if not verify_password(pwd, user.hashed_password):
         raise HTTPException(status_code=400, detail="Неверный текущий пароль")
+
+    payload = data.model_dump(exclude_unset=True)
 
     email_norm = normalize_email(str(data.email))
     changed = False
@@ -170,9 +172,23 @@ def patch_me(
             user.hashed_password = get_password_hash(pv)
             changed = True
 
+    if "payment_details" in payload:
+        if user.role != "employee":
+            raise HTTPException(status_code=400, detail="Реквизиты можно менять только в профиле сотрудника")
+        raw = payload["payment_details"]
+        new_val = None if raw is None else str(raw).strip() or None
+        old_val = (user.payment_details or "").strip() or None
+        if new_val != old_val:
+            user.payment_details = new_val
+            user.payment_details_updated_at = datetime.now(timezone.utc)
+            changed = True
+
     if not changed:
-        raise HTTPException(status_code=400, detail="Нет изменений: укажите другой email или новый пароль")
+        raise HTTPException(
+            status_code=400,
+            detail="Нет изменений: другой email, новый пароль или обновлённые реквизиты",
+        )
 
     db.commit()
     db.refresh(user)
-    return user
+    return UserOut.model_validate(user)
