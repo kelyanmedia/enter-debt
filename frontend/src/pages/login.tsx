@@ -36,7 +36,9 @@ export default function LoginPage() {
     setLoading(true)
     try {
       const u = await login(email, password, remember)
-      router.push(u.role === 'employee' ? '/my-work' : '/')
+      router.push(
+        u.role === 'employee' ? '/my-work' : u.role === 'financier' ? '/ceo' : '/',
+      )
     } catch (err: any) {
       const status = err?.response?.status
       const detail = err?.response?.data?.detail

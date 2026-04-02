@@ -30,6 +30,8 @@ def fetch_received_payment_rows_range(
         .options(joinedload(PaymentMonth.confirmed_by_user))
         .filter(
             Payment.is_archived == False,
+            Payment.trashed_at.is_(None),
+            Partner.trashed_at.is_(None),
             PaymentMonth.status == "paid",
             PaymentMonth.paid_at.isnot(None),
             PaymentMonth.paid_at >= start_at,
@@ -65,6 +67,8 @@ def fetch_received_payment_rows_range(
         .options(joinedload(Payment.confirmed_by_user))
         .filter(
             Payment.is_archived == False,
+            Payment.trashed_at.is_(None),
+            Partner.trashed_at.is_(None),
             Payment.status == "paid",
             Payment.paid_at.isnot(None),
             ~Payment.id.in_(has_months_sq),

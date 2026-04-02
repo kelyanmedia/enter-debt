@@ -11,7 +11,7 @@ class User(Base):
     name = Column(String(100), nullable=False)
     email = Column(String(200), unique=True, index=True, nullable=False)
     hashed_password = Column(String(255), nullable=False)
-    role = Column(String(20), nullable=False, default="manager")  # admin / manager / accountant / administration / employee
+    role = Column(String(20), nullable=False, default="manager")  # admin / manager / accountant / financier / administration / employee
     # JSON-массив id менеджеров (только role=administration): видимость партнёров и проектов
     visible_manager_ids = Column(Text, nullable=True)
     # Реквизиты для выплат (Visa, Uzcard и т.д.) — для роли employee

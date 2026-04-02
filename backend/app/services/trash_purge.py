@@ -1,0 +1,37 @@
+"""Очистка корзины: записи старше TRASH_RETENTION_DAYS удаляются из БД."""
+from __future__ import annotations
+
+from datetime import datetime, timedelta, timezone
+
+from sqlalchemy.orm import Session
+
+from app.models.partner import Partner
+from app.models.payment import NotificationLog, Payment
+
+TRASH_RETENTION_DAYS = 30
+
+
+def purge_expired_trash(db: Session) -> dict:
+    cutoff = datetime.now(timezone.utc) - timedelta(days=TRASH_RETENTION_DAYS)
+    removed_p = 0
+    removed_part = 0
+    for p in (
+        db.query(Payment)
+        .filter(Payment.trashed_at.isnot(None), Payment.trashed_at < cutoff)
+        .all()
+    ):
+        db.query(NotificationLog).filter(NotificationLog.payment_id == p.id).delete(synchronize_session=False)
+        db.delete(p)
+        removed_p += 1
+    for part in (
+        db.query(Partner)
+        .filter(Partner.trashed_at.isnot(None), Partner.trashed_at < cutoff)
+        .all()
+    ):
+        for pay in list(part.payments or []):
+            db.query(NotificationLog).filter(NotificationLog.payment_id == pay.id).delete(synchronize_session=False)
+            db.delete(pay)
+        db.delete(part)
+        removed_part += 1
+    db.commit()
+    return {"purged_payments": removed_p, "purged_partners": removed_part}

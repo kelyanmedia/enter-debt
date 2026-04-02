@@ -2,7 +2,7 @@ import { useEffect, useState, useCallback, useMemo } from 'react'
 import { useRouter } from 'next/router'
 import { useAuth } from '@/context/AuthContext'
 import Layout from '@/components/Layout'
-import { PageHeader, Card, Th, Td, PartnerAvatar, statusBadge, formatAmount, formatMoneyNumber, formatDate, daysLeft, daysLeftSortKey, BtnPrimary, BtnOutline, BtnIconEdit, Modal, ConfirmModal, Field, Input, Select, Empty, MoneyInput } from '@/components/ui'
+import { PageHeader, Card, Th, Td, PartnerAvatar, statusBadge, formatAmount, formatMoneyNumber, formatDate, daysLeft, daysLeftSortKey, BtnPrimary, BtnOutline, BtnIconEdit, BtnIconDelete, Modal, ConfirmModal, Field, Input, Select, Empty, MoneyInput } from '@/components/ui'
 import api from '@/lib/api'
 
 interface Partner { id: number; name: string }
@@ -19,9 +19,10 @@ interface Payment {
   contract_months?: number; remind_days_before: number; created_at: string; postponed_until?: string
   notify_accounting: boolean; contract_url?: string; service_period?: string
   project_category?: string | null
-  /** Ближайший неоплаченный месяц графика (ISO date) */
+  /** Ближайший срок для дебиторки: по графику (мин. due среди неоплаченных) или по договору */
   next_payment_due_date?: string | null
   next_payment_month?: string | null
+  days_until_due?: number | null
   partner: { id: number; name: string; manager?: { id: number; name: string } }
   months?: PaymentMonth[]
 }
@@ -32,6 +33,19 @@ function listDueDateStr(p: Payment): string | null | undefined {
 }
 function listDueDayOfMonth(p: Payment): number | null | undefined {
   return p.next_payment_due_date ? undefined : p.day_of_month
+}
+
+function dueSourceHint(p: Payment): string {
+  if (p.next_payment_month) {
+    return `По графику: ближайший срок среди неоплаченных строк (${monthLabel(p.next_payment_month)})`
+  }
+  if (p.deadline_date) {
+    return 'По договору: фиксированная дата (меняется в «Редактировать проект»)'
+  }
+  if (p.day_of_month) {
+    return `По договору: ${p.day_of_month}-е число месяца (ближайший расчётный срок)`
+  }
+  return 'Срок не задан — укажите в редактировании проекта или добавьте месяц в график с датой оплаты.'
 }
 
 const EMPTY_FORM = {
@@ -152,8 +166,6 @@ export default function PaymentsPage() {
   const [users, setUsers] = useState<User[]>([])
   const [modal, setModal] = useState(false)
   const [editingId, setEditingId] = useState<number | null>(null)
-  const [confirmModal, setConfirmModal] = useState<Payment | null>(null)
-  const [postponeDays, setPostponeDays] = useState(0)
   const [form, setForm] = useState({ ...EMPTY_FORM })
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState('')
@@ -176,6 +188,15 @@ export default function PaymentsPage() {
   const [monthSaved, setMonthSaved] = useState<number | null>(null)
   const [deletePaymentId, setDeletePaymentId] = useState<number | null>(null)
   const [deleteMonthId, setDeleteMonthId] = useState<number | null>(null)
+
+  const syncDrawerPayment = useCallback(async (paymentId: number) => {
+    try {
+      const pr = await api.get<Payment>(`payments/${paymentId}`)
+      setDrawer((d) => (d && d.id === paymentId ? pr.data : d))
+    } catch {
+      /* ignore */
+    }
+  }, [])
 
   const load = useCallback(() => {
     const params = new URLSearchParams()
@@ -291,6 +312,7 @@ export default function PaymentsPage() {
       }
       if (editingId) {
         await api.put(`payments/${editingId}`, payload)
+        if (drawer?.id === editingId) await syncDrawerPayment(editingId)
       } else {
         await api.post('payments', payload)
       }
@@ -301,12 +323,6 @@ export default function PaymentsPage() {
     } finally {
       setSaving(false)
     }
-  }
-
-  const confirmPaid = async (payment: Payment, days: number) => {
-    await api.post(`payments/${payment.id}/confirm`, days ? { postpone_days: days } : {})
-    setConfirmModal(null)
-    load()
   }
 
   const runDeletePayment = async () => {
@@ -333,8 +349,12 @@ export default function PaymentsPage() {
     })
     setMonthSaved(null)
     try {
-      const r = await api.get(`payments/${p.id}/months`)
-      setDrawerMonths(r.data)
+      const [monthsRes, payRes] = await Promise.all([
+        api.get<PaymentMonth[]>(`payments/${p.id}/months`),
+        api.get<Payment>(`payments/${p.id}`),
+      ])
+      setDrawerMonths(monthsRes.data)
+      setDrawer(payRes.data)
     } finally {
       setDrawerLoading(false)
     }
@@ -356,6 +376,7 @@ export default function PaymentsPage() {
       })
       setDrawerMonths(prev => [...prev, r.data].sort((a, b) => a.month.localeCompare(b.month)))
       setAddMonthOpen(false)
+      await syncDrawerPayment(drawer.id)
       const nextMonth = addMonthForm.month
       const autoDesc = `${drawer.description} ${MONTHS_RU[parseInt(nextMonth.split('-')[1]) - 1]} ${nextMonth.split('-')[0]} Акт/СФ`
       const ymNext = currentYM()
@@ -383,6 +404,7 @@ export default function PaymentsPage() {
       setDrawerMonths(prev => prev.map(m => m.id === monthId ? r.data : m))
       setMonthSaved(monthId)
       setTimeout(() => setMonthSaved(null), 3000)
+      await syncDrawerPayment(drawer.id)
     } finally {
       setConfirmingMonth(null)
     }
@@ -407,6 +429,7 @@ export default function PaymentsPage() {
     try {
       const r = await api.post<PaymentMonth>(`payments/${drawer.id}/months/${monthId}/duplicate-next`, {})
       setDrawerMonths(prev => [...prev, r.data].sort((a, b) => a.month.localeCompare(b.month)))
+      await syncDrawerPayment(drawer.id)
     } catch (e: unknown) {
       alert(formatApiError(e))
     } finally {
@@ -418,6 +441,7 @@ export default function PaymentsPage() {
     if (!drawer || deleteMonthId === null) return
     await api.delete(`payments/${drawer.id}/months/${deleteMonthId}`)
     setDrawerMonths(prev => prev.filter(m => m.id !== deleteMonthId))
+    await syncDrawerPayment(drawer.id)
   }
 
   const bulkAddMonths = async () => {
@@ -442,6 +466,7 @@ export default function PaymentsPage() {
       } catch { /* skip duplicate month or validation */ }
     }
     setAddMonthOpen(false)
+    await syncDrawerPayment(drawer.id)
   }
 
   const paidMonths = drawerMonths.filter(m => m.status === 'paid').length
@@ -510,14 +535,15 @@ export default function PaymentsPage() {
         <Card style={{ width: '100%', minWidth: 0 }}>
           <table style={{ width: '100%', borderCollapse: 'collapse', tableLayout: 'fixed' }}>
             <colgroup>
-              <col style={{ width: '17%' }} />
-              <col style={{ width: '26%' }} />
+              <col style={{ width: '16%' }} />
+              <col style={{ width: '22%' }} />
               <col style={{ width: '7%' }} />
-              <col style={{ width: '9%' }} />
-              <col style={{ width: '10%' }} />
-              <col style={{ width: '11%' }} />
               <col style={{ width: '8%' }} />
               <col style={{ width: '9%' }} />
+              <col style={{ width: '10%' }} />
+              <col style={{ width: '8%' }} />
+              <col style={{ width: '8%' }} />
+              <col style={{ width: 112, minWidth: 112 }} />
             </colgroup>
             <thead>
               <tr>
@@ -542,7 +568,7 @@ export default function PaymentsPage() {
                   Осталось{sortByRemaining === 'urgency' ? ' ↓' : ''}
                 </Th>
                 <Th>Статус</Th>
-                <Th style={{ width: '1%', whiteSpace: 'nowrap' }} />
+                <Th style={{ whiteSpace: 'nowrap' }} />
               </tr>
             </thead>
             <tbody>
@@ -596,12 +622,16 @@ export default function PaymentsPage() {
                     <Td><span style={{ fontWeight: 600, color: dl.color }}>{dl.label}</span></Td>
                     <Td>{statusBadge(p.status)}</Td>
                     <Td style={{ verticalAlign: 'middle', whiteSpace: 'nowrap' }}>
-                      <div style={{ display: 'flex', gap: 6, alignItems: 'center', flexWrap: 'nowrap' }} onClick={e => e.stopPropagation()}>
-                        {p.status !== 'paid' && (
-                          <BtnOutline onClick={() => { setPostponeDays(0); setConfirmModal(p) }} style={{ padding: '5px 10px', fontSize: 12 }}>✅ Оплачено</BtnOutline>
+                      <div
+                        style={{ display: 'flex', gap: 6, alignItems: 'center', justifyContent: 'flex-end' }}
+                        onClick={e => e.stopPropagation()}
+                      >
+                        {['admin', 'manager', 'administration', 'accountant'].includes(user?.role || '') && (
+                          <>
+                            <BtnIconEdit onClick={() => openEdit(p)} />
+                            <BtnIconDelete onClick={() => setDeletePaymentId(p.id)} title="Удалить в корзину" />
+                          </>
                         )}
-                        <BtnIconEdit onClick={() => openEdit(p)} />
-                        <BtnOutline onClick={() => setDeletePaymentId(p.id)} style={{ padding: '5px 10px', fontSize: 12, color: '#e84040' }}>✕</BtnOutline>
                       </div>
                     </Td>
                   </tr>
@@ -663,6 +693,51 @@ export default function PaymentsPage() {
                       {drawer.service_period === 'yearly' ? '📅 Ежегодно' : '🗓 Ежемесячно'}
                     </span>
                   )}
+                </div>
+                <div
+                  style={{
+                    marginTop: 12,
+                    padding: '12px 14px',
+                    background: '#f8fafc',
+                    borderRadius: 10,
+                    border: '1px solid #e8e9ef',
+                  }}
+                >
+                  <div
+                    style={{
+                      fontSize: 10,
+                      fontWeight: 700,
+                      color: '#64748b',
+                      letterSpacing: '.06em',
+                      textTransform: 'uppercase',
+                    }}
+                  >
+                    Срок оплаты (как в таблице «Проекты»)
+                  </div>
+                  {listDueDateStr(drawer) ? (
+                    <>
+                      <div style={{ fontSize: 16, fontWeight: 700, color: '#1a1d23', marginTop: 4 }}>
+                        {formatDate(listDueDateStr(drawer)!)}
+                      </div>
+                      {(() => {
+                        const dl = daysLeft(listDueDateStr(drawer), listDueDayOfMonth(drawer))
+                        if (dl.label === '—') return null
+                        return (
+                          <div style={{ fontSize: 13, fontWeight: 600, color: dl.color, marginTop: 2 }}>
+                            Осталось: {dl.label}
+                          </div>
+                        )
+                      })()}
+                    </>
+                  ) : (
+                    <div style={{ fontSize: 14, color: '#94a3b8', marginTop: 4 }}>Не задан</div>
+                  )}
+                  <div style={{ fontSize: 11, color: '#8a8fa8', lineHeight: 1.45, marginTop: 8 }}>
+                    {dueSourceHint(drawer)}
+                  </div>
+                  <div style={{ fontSize: 11, color: '#94a3b8', lineHeight: 1.4, marginTop: 6 }}>
+                    Дату договора меняйте в «Редактировать проект» (✎). Срок по строке графика — в самой строке месяца (поле «Срок оплаты»).
+                  </div>
                 </div>
                 {drawer.contract_url && (
                   <a
@@ -1058,42 +1133,11 @@ export default function PaymentsPage() {
         </div>
       </Modal>
 
-      {/* Confirm payment modal */}
-      <Modal open={!!confirmModal} onClose={() => setConfirmModal(null)} title="Подтвердить оплату"
-        footer={<>
-          <BtnOutline onClick={() => setConfirmModal(null)}>Отмена</BtnOutline>
-          {postponeDays > 0
-            ? <BtnPrimary onClick={() => confirmPaid(confirmModal!, postponeDays)}>⏰ Отложить на {postponeDays} дн.</BtnPrimary>
-            : <BtnPrimary onClick={() => confirmPaid(confirmModal!, 0)}>✅ Подтвердить оплату</BtnPrimary>
-          }
-        </>}
-      >
-        {confirmModal && (
-          <div>
-            <div style={{ marginBottom: 16, padding: '14px', background: '#f5f6fa', borderRadius: 10, fontSize: 13 }}>
-              <div><b>{confirmModal.partner.name}</b> · {confirmModal.description}</div>
-              <div style={{ marginTop: 4, fontWeight: 700, color: '#1a6b3c' }}>{formatAmount(confirmModal.amount)}</div>
-            </div>
-            <Field label="Или отложить напоминание">
-              <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
-                {[0, 1, 2, 3, 5, 7].map(d => (
-                  <button key={d} onClick={() => setPostponeDays(d)} style={{
-                    padding: '6px 14px', borderRadius: 20, border: '1px solid #e8e9ef', fontSize: 12, fontWeight: 600,
-                    background: postponeDays === d ? '#1a6b3c' : '#fff', color: postponeDays === d ? '#fff' : '#1a1d23',
-                    cursor: 'pointer', fontFamily: 'inherit',
-                  }}>{d === 0 ? 'Оплачено' : `${d} дн.`}</button>
-                ))}
-              </div>
-            </Field>
-          </div>
-        )}
-      </Modal>
-
       <ConfirmModal
         open={deletePaymentId !== null}
         onClose={() => setDeletePaymentId(null)}
         title="Удалить проект?"
-        message="Проект и связанные данные будут удалены без возможности восстановления."
+        message="Проект уйдёт в корзину на 30 суток (только админ может восстановить или удалить навсегда). Раздел «Архив» для архивной базы не меняется."
         confirmLabel="Удалить"
         onConfirm={runDeletePayment}
       />

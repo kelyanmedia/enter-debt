@@ -555,6 +555,7 @@ export default function StaffPage() {
             marginBottom: 4,
             borderBottom: '1px solid #e8e9ef',
             WebkitOverflowScrolling: 'touch',
+            flexShrink: 0,
           }}
         >
           {employees.map(e => {
@@ -601,7 +602,7 @@ export default function StaffPage() {
           )}
         </div>
 
-        <div style={{ flex: 1, minWidth: 0, paddingTop: 8 }}>
+        <div style={{ flex: 1, minWidth: 0, minHeight: 0, paddingTop: 12 }}>
           {!selected ? (
             <Card style={{ padding: 40 }}><Empty text={employees.length ? 'Выберите сотрудника выше' : 'Добавьте пользователей с ролью «Сотрудник»'} /></Card>
           ) : (
@@ -609,7 +610,7 @@ export default function StaffPage() {
               <div
                 style={{
                   display: 'flex',
-                  alignItems: 'stretch',
+                  alignItems: 'flex-start',
                   flexWrap: 'wrap',
                   gap: 12,
                   marginBottom: 16,
@@ -681,7 +682,8 @@ export default function StaffPage() {
                     display: 'flex',
                     flexDirection: 'column',
                     gap: 4,
-                    justifyContent: 'center',
+                    justifyContent: 'flex-start',
+                    alignSelf: 'flex-start',
                     minHeight: 62,
                     boxSizing: 'border-box',
                     ...(requisitesHighlight

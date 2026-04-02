@@ -7,8 +7,10 @@ import { PageHeader, Card } from '@/components/ui'
 import { CeoEditPencil, CeoMetricEditModal } from '@/components/CeoMetricEditor'
 import { useAuth } from '@/context/AuthContext'
 import api from '@/lib/api'
+import { buildNetProfitSeriesFromPl, type PLReportForNet } from '@/lib/plNetProfitSeries'
 
 const CeoTurnoverChart = dynamic(() => import('@/components/CeoTurnoverChart'), { ssr: false })
+const CeoNetProfitChart = dynamic(() => import('@/components/CeoNetProfitChart'), { ssr: false })
 const CeoLtvChart = dynamic(() => import('@/components/CeoLtvChart'), { ssr: false })
 const CeoClientHistoryChart = dynamic(() => import('@/components/CeoClientHistoryChart'), { ssr: false })
 
@@ -232,6 +234,13 @@ export default function CeoDashboardPage() {
   const [clientYear, setClientYear] = useState(() => new Date().getFullYear())
   const [clientPoints, setClientPoints] = useState<ClientHistoryPoint[]>([])
 
+  const [netProfitYear, setNetProfitYear] = useState(() => new Date().getFullYear())
+  const [netProfitPoints, setNetProfitPoints] = useState<
+    { month: string; label: string; amount: number; previous_year_amount: number }[]
+  >([])
+  const [netProfitLoading, setNetProfitLoading] = useState(false)
+  const [netProfitError, setNetProfitError] = useState<string | null>(null)
+
   const [editMetric, setEditMetric] = useState<null | 'client_history' | 'turnover' | 'ltv'>(null)
   const [dataTick, setDataTick] = useState(0)
   const bumpData = useCallback(() => setDataTick(t => t + 1), [])
@@ -260,6 +269,41 @@ export default function CeoDashboardPage() {
       .then(r => setClientPoints(r.data.points || []))
       .catch(() => setClientPoints([]))
   }, [clientYear, dataTick])
+
+  useEffect(() => {
+    let cancelled = false
+    const y = netProfitYear
+    setNetProfitLoading(true)
+    setNetProfitError(null)
+    const run = async () => {
+      try {
+        const cur = await api.get<PLReportForNet>(`finance/pl?year=${y}`)
+        if (cancelled) return
+        let prevReport: PLReportForNet | null = null
+        if (y > 2000) {
+          try {
+            const pr = await api.get<PLReportForNet>(`finance/pl?year=${y - 1}`)
+            if (!cancelled) prevReport = pr.data
+          } catch {
+            /* нет доступа или сеть — пунктир год назад будет нулевым */
+          }
+        }
+        if (cancelled) return
+        setNetProfitPoints(buildNetProfitSeriesFromPl(y, cur.data, prevReport))
+      } catch {
+        if (!cancelled) {
+          setNetProfitPoints([])
+          setNetProfitError('Не удалось загрузить P&L. Раздел «P&L» в меню Финансы.')
+        }
+      } finally {
+        if (!cancelled) setNetProfitLoading(false)
+      }
+    }
+    void run()
+    return () => {
+      cancelled = true
+    }
+  }, [netProfitYear])
 
   const editInitialMonths = useMemo(() => {
     if (editMetric === 'client_history') return buildMonthRecord(clientPoints, 'count')
@@ -303,7 +347,7 @@ export default function CeoDashboardPage() {
       {!loading && user && user.role !== 'manager' && user.role !== 'administration' && <>
       <PageHeader
         title="CEO Dashboard"
-        subtitle="Проекты по линиям, активные партнёры по месяцам, оборот и LTV."
+        subtitle="Проекты по линиям, активные партнёры по месяцам, оборот, чистая прибыль по P&L и LTV."
       />
       <div style={{ padding: '22px 24px', overflowY: 'auto', flex: 1 }}>
         <div
@@ -482,6 +526,66 @@ export default function CeoDashboardPage() {
               previous_year_amount: Number(p.previous_year_amount),
             }))}
           />
+        </Card>
+
+        <Card style={{ marginBottom: 20, padding: '4px 4px 8px' }}>
+          <div
+            style={{
+              padding: '16px 18px 8px',
+              display: 'flex',
+              flexWrap: 'wrap',
+              alignItems: 'flex-start',
+              justifyContent: 'space-between',
+              gap: 12,
+            }}
+          >
+            <div style={{ flex: 1, minWidth: 220 }}>
+              <div style={{ fontSize: 15, fontWeight: 700, color: '#1a1d23' }}>Чистая прибыль (P&L)</div>
+              <div style={{ fontSize: 12, color: '#8a8fa8', marginTop: 4, lineHeight: 1.5 }}>
+                Строка «Чистая прибыль» из отчёта P&L по месяцам (выручка − расходы, в сумах). Пунктир — тот же месяц{' '}
+                {netProfitYear - 1} года. Наведите курсор на график для сумм.
+                {isAdmin && (
+                  <>
+                    {' '}
+                    <Link href="/finance/pl" style={{ color: '#1a6b3c', fontWeight: 600 }}>
+                      Открыть P&L →
+                    </Link>
+                  </>
+                )}
+              </div>
+              {netProfitError && (
+                <div style={{ marginTop: 8, fontSize: 12, color: '#b91c1c' }}>{netProfitError}</div>
+              )}
+            </div>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>
+              <label style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 13, color: '#6b7280' }}>
+                <span style={{ fontWeight: 600 }}>Год</span>
+                <select
+                  value={netProfitYear}
+                  onChange={e => setNetProfitYear(Number(e.target.value))}
+                  style={{
+                    border: '1px solid #e8e9ef',
+                    borderRadius: 9,
+                    padding: '8px 12px',
+                    fontSize: 13,
+                    fontFamily: 'inherit',
+                    color: '#1a1d23',
+                    background: '#fff',
+                    cursor: 'pointer',
+                    minWidth: 120,
+                  }}
+                >
+                  {YEAR_OPTIONS.map(y => (
+                    <option key={y} value={y}>
+                      {y}
+                    </option>
+                  ))}
+                </select>
+              </label>
+              {netProfitLoading && <span style={{ fontSize: 12, color: '#94a3b8' }}>Загрузка…</span>}
+            </div>
+          </div>
+          <CeoNetProfitChart data={netProfitPoints} />
         </Card>
 
         <Card style={{ marginBottom: 20, padding: '4px 4px 12px', overflow: 'hidden' }}>

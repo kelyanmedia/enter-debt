@@ -65,7 +65,7 @@ def create_user(data: UserCreate, db: Session = Depends(get_db), _=Depends(requi
     plain = (data.password or "").strip()
     if len(plain) < 4:
         raise HTTPException(status_code=400, detail="Пароль: минимум 4 символа")
-    if data.role not in ("admin", "manager", "accountant", "administration", "employee"):
+    if data.role not in ("admin", "manager", "accountant", "financier", "administration", "employee"):
         raise HTTPException(status_code=400, detail="Недопустимая роль")
     vm_json = None
     if data.role == "administration":
@@ -177,7 +177,11 @@ def get_assigned_partners(user_id: int, db: Session = Depends(get_db), _=Depends
         raise HTTPException(status_code=400, detail="Только для менеджеров")
     ids = (
         db.query(Partner.id)
-        .filter(Partner.manager_id == user_id, Partner.is_deleted == False)
+        .filter(
+            Partner.manager_id == user_id,
+            Partner.is_deleted == False,
+            Partner.trashed_at.is_(None),
+        )
         .all()
     )
     return {"partner_ids": [r[0] for r in ids]}
@@ -197,7 +201,15 @@ def set_assigned_partners(
         {Partner.manager_id: None}, synchronize_session=False
     )
     for pid in body.partner_ids:
-        p = db.query(Partner).filter(Partner.id == pid, Partner.is_deleted == False).first()
+        p = (
+            db.query(Partner)
+            .filter(
+                Partner.id == pid,
+                Partner.is_deleted == False,
+                Partner.trashed_at.is_(None),
+            )
+            .first()
+        )
         if p:
             p.manager_id = user_id
     db.commit()

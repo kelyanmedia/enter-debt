@@ -11,6 +11,8 @@ type NavItem = {
   label: string
   icon: string
   adminOnly?: boolean
+  /** P&L, ДДС, Projects Cost, Оплаты, Расходы — админ и роль «Финансист» */
+  financeTeam?: boolean
   managerHidden?: boolean
   administrationHidden?: boolean
   accountantHidden?: boolean
@@ -19,18 +21,17 @@ type NavItem = {
   activePathPrefix?: string
 }
 
-type NavSection = { title: string; items: NavItem[] }
+type NavSection = { title: string; items: NavItem[]; hideForFinancier?: boolean }
 
 const NAV_SECTIONS: NavSection[] = [
   {
     title: 'Аналитика',
-    items: [
-      { href: '/', label: 'Дашборд', icon: '▦', managerHidden: true },
-      { href: '/ceo', label: 'CEO Dashboard', icon: '📊', managerHidden: true },
-    ],
+    hideForFinancier: true,
+    items: [{ href: '/', label: 'Дашборд', icon: '▦', managerHidden: true }],
   },
   {
     title: 'Проекты',
+    hideForFinancier: true,
     items: [
       { href: '/debitor', label: 'Дебиторка', icon: '📒' },
       { href: '/payments', label: 'Проекты', icon: '📁', badge: 'overdue' },
@@ -45,7 +46,19 @@ const NAV_SECTIONS: NavSection[] = [
     ],
   },
   {
+    title: 'Финансы',
+    items: [
+      { href: '/ceo', label: 'CEO Dashboard', icon: '📊', managerHidden: true },
+      { href: '/finance/pl', label: 'P&L', icon: '📈', financeTeam: true },
+      { href: '/finance/cashflow', label: 'ДДС', icon: '💸', financeTeam: true },
+      { href: '/finance/projects-cost', label: 'Projects Cost', icon: '🧮', financeTeam: true },
+      { href: '/received-payments', label: 'Оплаты', icon: '💳', financeTeam: true },
+      { href: '/finance/expenses', label: 'Расходы', icon: '📤', financeTeam: true },
+    ],
+  },
+  {
     title: 'Подписки',
+    hideForFinancier: true,
     items: [
       {
         href: '/subscriptions/household',
@@ -68,7 +81,6 @@ const NAV_SECTIONS: NavSection[] = [
       { href: '/users', label: 'Пользователи', icon: '👥', adminOnly: true },
       { href: '/staff', label: 'Команда', icon: '👷', adminOnly: true },
       { href: '/notifications', label: 'Уведомления', icon: '🔔' },
-      { href: '/received-payments', label: 'Оплаты', icon: '💳', adminOnly: true },
       { href: '/archive', label: 'Архив', icon: '🗄️', adminOnly: true },
     ],
   },
@@ -184,6 +196,7 @@ export default function Layout({ children }: { children: ReactNode }) {
     admin: 'Администратор',
     manager: 'Менеджер',
     accountant: 'Бухгалтерия',
+    financier: 'Финансист',
     administration: 'Администрация',
     employee: 'Сотрудник',
   }[user.role]
@@ -301,8 +314,16 @@ export default function Layout({ children }: { children: ReactNode }) {
         {/* Nav */}
         <nav style={{ padding: '14px 10px', flex: 1, overflowY: 'auto' }}>
           {NAV_SECTIONS.map((section, si) => {
+            if (section.hideForFinancier && user.role === 'financier') return null
             const visible = section.items.filter(n => {
               if (n.adminOnly && user.role !== 'admin') return false
+              if (
+                n.financeTeam &&
+                user.role !== 'admin' &&
+                user.role !== 'financier'
+              ) {
+                return false
+              }
               if (n.accountantHidden && user.role === 'accountant') return false
               if (n.administrationHidden && user.role === 'administration') return false
               if (n.managerHidden && (user.role === 'manager' || user.role === 'administration')) return false
@@ -352,6 +373,33 @@ export default function Layout({ children }: { children: ReactNode }) {
             )
           })}
         </nav>
+
+        {user.role === 'admin' && (
+          <div style={{ padding: '10px 10px 12px', borderTop: '1px solid #e8e9ef', flexShrink: 0 }}>
+            <Link href="/trash" style={{ textDecoration: 'none' }}>
+              <div
+                style={{
+                  display: 'flex',
+                  alignItems: 'center',
+                  gap: 10,
+                  padding: '9px 12px',
+                  borderRadius: 9,
+                  fontSize: 13.5,
+                  fontWeight: 500,
+                  background: router.pathname === '/trash' ? '#f1f5f9' : 'transparent',
+                  color: router.pathname === '/trash' ? '#475569' : '#94a3b8',
+                  borderLeft: router.pathname === '/trash' ? '2px solid #64748b' : '2px solid transparent',
+                }}
+              >
+                <span style={{ fontSize: 15 }}>🗑️</span>
+                Корзина
+              </div>
+            </Link>
+            <div style={{ fontSize: 10, color: '#94a3b8', lineHeight: 1.35, padding: '4px 12px 0' }}>
+              Удалённые проекты и компании до 30 дней; архив — в разделе «Архив».
+            </div>
+          </div>
+        )}
 
         {/* User */}
         <div style={{ padding: '14px 10px', borderTop: '1px solid #e8e9ef' }}>

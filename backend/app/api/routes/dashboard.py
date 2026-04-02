@@ -22,7 +22,7 @@ from app.schemas.schemas import (
     CeoClientHistoryPoint,
     CeoOverridePut,
 )
-from app.core.security import get_current_user, require_admin, require_admin_or_accountant
+from app.core.security import get_current_user, require_admin, require_admin_or_accountant, require_admin_or_financier
 from app.core.access import accessible_partner_ids, filter_payments_query, filter_partners_query, parse_visible_manager_ids
 from app.models.user import User
 from app.services.weekly_tg_report import run_weekly_cash_report
@@ -189,7 +189,7 @@ def received_payments_cashflow(
     year: int = Query(..., ge=2000, le=2100),
     month: int = Query(..., ge=1, le=12),
     db: Session = Depends(get_db),
-    _: User = Depends(require_admin),
+    _: User = Depends(require_admin_or_financier),
 ):
     """
     Все зафиксированные поступления за календарный месяц (по дате paid_at) для ДДС.
@@ -206,6 +206,8 @@ def received_payments_cashflow(
         .options(joinedload(PaymentMonth.confirmed_by_user))
         .filter(
             Payment.is_archived == False,
+            Payment.trashed_at.is_(None),
+            Partner.trashed_at.is_(None),
             PaymentMonth.status == "paid",
             PaymentMonth.paid_at.isnot(None),
             func.date(PaymentMonth.paid_at) >= start_date,
@@ -241,6 +243,8 @@ def received_payments_cashflow(
         .options(joinedload(Payment.confirmed_by_user))
         .filter(
             Payment.is_archived == False,
+            Payment.trashed_at.is_(None),
+            Partner.trashed_at.is_(None),
             Payment.status == "paid",
             Payment.paid_at.isnot(None),
             ~Payment.id.in_(has_months_sq),
@@ -274,7 +278,7 @@ def received_payments_cashflow(
 @router.post("/weekly-cash-report/send", response_model=WeeklyCashReportSendOut)
 def post_weekly_cash_report_send(
     db: Session = Depends(get_db),
-    _: User = Depends(require_admin),
+    _: User = Depends(require_admin_or_financier),
 ):
     """
     Отправить в Telegram тот же отчёт, что и по расписанию (пт 18:00 Ташкент):
@@ -307,7 +311,7 @@ def _debitor_filter_by_manager(manager_id: Optional[int], current_user: User) ->
     """Админ/бухгалтерия — любой менеджер; администрация — только из своего списка."""
     if manager_id is None:
         return False
-    if current_user.role in ("admin", "accountant"):
+    if current_user.role in ("admin", "accountant", "financier"):
         return True
     if current_user.role == "administration":
         return manager_id in parse_visible_manager_ids(current_user)

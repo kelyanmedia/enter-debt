@@ -28,7 +28,7 @@ def get_archived_payments(
         joinedload(Payment.partner).joinedload(Partner.manager),
         joinedload(Payment.confirmed_by_user),
         joinedload(Payment.months),
-    ).filter(Payment.is_archived == True)
+    ).filter(Payment.is_archived == True, Payment.trashed_at.is_(None))
 
     if date_from:
         q = q.filter(Payment.created_at >= datetime.combine(date_from, datetime.min.time()))
@@ -50,7 +50,11 @@ def get_archived_partners(
 ):
     q = db.query(Partner).options(
         joinedload(Partner.manager)
-    ).filter(Partner.status == "archive", Partner.is_deleted == False)
+    ).filter(
+        Partner.status == "archive",
+        Partner.is_deleted == False,
+        Partner.trashed_at.is_(None),
+    )
 
     if date_from:
         q = q.filter(Partner.created_at >= datetime.combine(date_from, datetime.min.time()))
@@ -61,8 +65,14 @@ def get_archived_partners(
     result = []
     for partner in partners:
         out = PartnerOut.model_validate(partner)
-        out.open_payments_count = sum(1 for p in partner.payments if not p.is_archived and p.status not in ("paid",))
-        out.overdue_count = sum(1 for p in partner.payments if p.status == "overdue")
+        out.open_payments_count = sum(
+            1
+            for p in partner.payments
+            if p.trashed_at is None and not p.is_archived and p.status not in ("paid",)
+        )
+        out.overdue_count = sum(
+            1 for p in partner.payments if p.trashed_at is None and p.status == "overdue"
+        )
         result.append(out)
     return result
 
@@ -95,6 +105,11 @@ def permanently_delete_archived_payment(
         raise HTTPException(
             status_code=400,
             detail="Можно безвозвратно удалить только архивный проект",
+        )
+    if p.trashed_at is not None:
+        raise HTTPException(
+            status_code=400,
+            detail="Сначала восстановите проект из корзины или удалите его там",
         )
     db.query(NotificationLog).filter(NotificationLog.payment_id == payment_id).delete(
         synchronize_session=False

@@ -15,7 +15,7 @@ interface User {
   id: number
   name: string
   email: string
-  role: 'admin' | 'manager' | 'accountant' | 'administration' | 'employee'
+  role: 'admin' | 'manager' | 'accountant' | 'financier' | 'administration' | 'employee'
   telegram_username?: string
   telegram_chat_id?: number | null
   is_active: boolean

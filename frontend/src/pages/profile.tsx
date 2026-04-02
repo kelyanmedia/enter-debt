@@ -8,6 +8,7 @@ const roleLabel: Record<string, string> = {
   admin: 'Администратор',
   manager: 'Менеджер',
   accountant: 'Бухгалтерия',
+  financier: 'Финансист',
   administration: 'Администрация',
   employee: 'Сотрудник',
 }
@@ -97,9 +98,11 @@ export default function ProfilePage() {
         subtitle={
           user.role === 'admin'
             ? 'Логин и пароль своей учётной записи. Остальных пользователей — в разделе «Пользователи».'
-            : user.role === 'employee'
-              ? 'Смена пароля, email и реквизиты для выплат (нужен текущий пароль для сохранения).'
-              : 'Логин (email) и пароль для входа в панель'
+            : user.role === 'financier'
+              ? 'Логин и пароль. Доступ к разделу «Финансы» (CEO, P&L, ДДС, оплаты, расходы).'
+              : user.role === 'employee'
+                ? 'Смена пароля, email и реквизиты для выплат (нужен текущий пароль для сохранения).'
+                : 'Логин (email) и пароль для входа в панель'
         }
       />
       <div style={{ padding: '22px 24px', overflowY: 'auto', flex: 1, maxWidth: 520 }}>
@@ -177,9 +180,11 @@ export default function ProfilePage() {
             >
               {tgPingBusy ? 'Отправка…' : 'Отправить тестовое уведомление в Telegram'}
             </BtnOutline>
-            {user.role === 'admin' && (
+            {(user.role === 'admin' || user.role === 'financier') && (
               <div style={{ fontSize: 12, color: '#8a8fa8', marginTop: 10, lineHeight: 1.45 }}>
-                Как администратору: так вы проверяете, что до вашего чата доходят сервисные сообщения и отчёты.
+                {user.role === 'admin'
+                  ? 'Как администратору: так вы проверяете, что до вашего чата доходят сервисные сообщения и отчёты.'
+                  : 'Проверка доставки сообщений бота в ваш Telegram.'}
               </div>
             )}
           </div>
@@ -279,7 +284,7 @@ export default function ProfilePage() {
           </form>
         </Card>
 
-        {user.role === 'admin' && (
+        {(user.role === 'admin' || user.role === 'financier') && (
           <Card style={{ padding: '22px 24px', marginTop: 20 }}>
             <div style={{ fontSize: 15, fontWeight: 700, color: '#1a1d23', marginBottom: 8 }}>
               Отчёт о поступлениях в Telegram
@@ -288,7 +293,7 @@ export default function ProfilePage() {
               Каждую пятницу в <b>18:00</b> по Ташкенту в Telegram уходит текстовый отчёт: общая сумма поступлений за
               текущую неделю (с понедельника 00:00 до пятницы 18:00 или до момента отправки) и разбивка по каждому
               проекту — те же данные, что в разделе «Оплаты» по дате зачисления (<code style={{ fontSize: 12 }}>paid_at</code>
-              ). Получатель — ваш привязанный Telegram (как у бота); если у нескольких админов есть chat id — всем.
+              ). Получатель — привязанный Telegram; у нескольких администраторов с chat id — всем админам.
             </div>
             {reportMsg && (
               <div

@@ -25,6 +25,7 @@ class Payment(Base):
 
     last_notified_at = Column(DateTime(timezone=True), nullable=True)
     is_archived = Column(Boolean, default=False)
+    trashed_at = Column(DateTime(timezone=True), nullable=True, index=True)
     notify_accounting = Column(Boolean, default=True)
     contract_url = Column(String(500), nullable=True)
     service_period = Column(String(20), nullable=True)  # monthly / yearly — for service_expiry type

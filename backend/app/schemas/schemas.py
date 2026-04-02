@@ -163,6 +163,22 @@ class EmployeePaymentRecordOut(BaseModel):
     created_at: datetime
 
 
+class EmployeePayrollExpenseOut(BaseModel):
+    """Выплата сотруднику, внесённая админом (Команда → запись о выплате) — для раздела «Финансы → Расходы»."""
+
+    id: int
+    user_id: int
+    employee_name: str
+    paid_on: date
+    period_year: Optional[int] = None
+    period_month: Optional[int] = None
+    amount: Decimal
+    currency: str
+    note: Optional[str] = None
+    has_receipt: bool
+    created_at: datetime
+
+
 class StaffEmployeeOut(BaseModel):
     id: int
     name: str
@@ -384,6 +400,7 @@ class PartnerUpdate(BaseModel):
 class PartnerOut(PartnerBase):
     id: int
     created_at: datetime
+    trashed_at: Optional[datetime] = None
     manager: Optional[UserOut] = None
     open_payments_count: Optional[int] = 0
     overdue_count: Optional[int] = 0
@@ -469,6 +486,7 @@ class PaymentOut(PaymentBase):
     postponed_until: Optional[date] = None
     last_notified_at: Optional[datetime] = None
     is_archived: bool
+    trashed_at: Optional[datetime] = None
     notify_accounting: Optional[bool] = True
     contract_url: Optional[str] = None
     service_period: Optional[str] = None
@@ -487,6 +505,195 @@ class PaymentOut(PaymentBase):
 
     class Config:
         from_attributes = True
+
+
+# ── FINANCE / PROJECTS COST ─────────────────────────────────────────────────────
+class ProjectCostScheduleMonthOut(BaseModel):
+    """Одна строка графика оплат по проекту (payment_months)."""
+
+    month: str  # YYYY-MM
+    amount: Decimal
+    status: str
+    due_date: Optional[date] = None
+    paid_at: Optional[datetime] = None
+    description: Optional[str] = None
+
+
+class PLCellOut(BaseModel):
+    """Одна ячейка P&L за месяц (выручка в UZS; выплаты команды — UZS и/или USD)."""
+
+    uzs: Decimal = Decimal("0")
+    usd: Decimal = Decimal("0")
+
+
+class PLDataRowOut(BaseModel):
+    row_id: str
+    label: str
+    section: str  # revenue | expenses_fixed | summary
+    is_calculated: bool = False
+    cells: List[PLCellOut]
+
+
+class PLReportOut(BaseModel):
+    year: int
+    columns: List[str]  # YYYY-MM, 12 шт.
+    rows: List[PLDataRowOut]
+
+
+class CashFlowTemplateLineOut(BaseModel):
+    id: int
+    template_group: str
+    sort_order: int
+    label: str
+    default_amount_uzs: Decimal
+    default_amount_usd: Decimal
+    flow_category: str
+    payment_method: str
+    direction: str
+
+    class Config:
+        from_attributes = True
+
+
+class CashFlowTemplateLineCreate(BaseModel):
+    template_group: str = Field(..., min_length=1, max_length=40)
+    label: str = Field(..., min_length=1, max_length=200)
+    default_amount_uzs: Decimal = Decimal("0")
+    default_amount_usd: Decimal = Decimal("0")
+    flow_category: str = Field(..., max_length=64)
+    payment_method: str = "transfer"
+    direction: Literal["income", "expense"] = "expense"
+    sort_order: Optional[int] = None
+
+    @field_validator("payment_method")
+    @classmethod
+    def _tpl_pm(cls, v: str) -> str:
+        ok = {"cash", "card", "transfer"}
+        if v not in ok:
+            raise ValueError("Форма оплаты: cash, card или transfer")
+        return v
+
+
+class CashFlowTemplateLineUpdate(BaseModel):
+    template_group: Optional[str] = Field(None, max_length=40)
+    label: Optional[str] = Field(None, max_length=200)
+    default_amount_uzs: Optional[Decimal] = None
+    default_amount_usd: Optional[Decimal] = None
+    flow_category: Optional[str] = Field(None, max_length=64)
+    payment_method: Optional[str] = None
+    direction: Optional[Literal["income", "expense"]] = None
+    sort_order: Optional[int] = None
+
+    @field_validator("payment_method")
+    @classmethod
+    def _tpl_pm2(cls, v: Optional[str]) -> Optional[str]:
+        if v is None:
+            return v
+        ok = {"cash", "card", "transfer"}
+        if v not in ok:
+            raise ValueError("Форма оплаты: cash, card или transfer")
+        return v
+
+
+class CashFlowEntryOut(BaseModel):
+    id: int
+    period_month: str
+    direction: str
+    label: str
+    amount_uzs: Decimal
+    amount_usd: Decimal
+    payment_method: str
+    flow_category: Optional[str] = None
+    recipient: Optional[str] = None
+    payment_id: Optional[int] = None
+    notes: Optional[str] = None
+    template_line_id: Optional[int] = None
+    created_at: datetime
+
+    class Config:
+        from_attributes = True
+
+
+class CashFlowEntryCreate(BaseModel):
+    period_month: str = Field(..., pattern=r"^\d{4}-\d{2}$")
+    direction: Literal["income", "expense"]
+    label: str = Field(..., min_length=1, max_length=300)
+    amount_uzs: Decimal = Decimal("0")
+    amount_usd: Decimal = Decimal("0")
+    payment_method: str = "transfer"
+    flow_category: Optional[str] = Field(None, max_length=64)
+    recipient: Optional[str] = Field(None, max_length=120)
+    payment_id: Optional[int] = None
+    notes: Optional[str] = Field(None, max_length=500)
+
+    @field_validator("payment_method")
+    @classmethod
+    def _pm(cls, v: str) -> str:
+        ok = {"cash", "card", "transfer"}
+        if v not in ok:
+            raise ValueError("Форма оплаты: cash, card или transfer")
+        return v
+
+
+class CashFlowEntryUpdate(BaseModel):
+    label: Optional[str] = Field(None, max_length=300)
+    amount_uzs: Optional[Decimal] = None
+    amount_usd: Optional[Decimal] = None
+    payment_method: Optional[str] = None
+    flow_category: Optional[str] = Field(None, max_length=64)
+    recipient: Optional[str] = Field(None, max_length=120)
+    payment_id: Optional[int] = None
+    notes: Optional[str] = Field(None, max_length=500)
+
+    @field_validator("payment_method")
+    @classmethod
+    def _pm2(cls, v: Optional[str]) -> Optional[str]:
+        if v is None:
+            return v
+        ok = {"cash", "card", "transfer"}
+        if v not in ok:
+            raise ValueError("Форма оплаты: cash, card или transfer")
+        return v
+
+
+class ApplyCashFlowTemplateIn(BaseModel):
+    period_month: str = Field(..., pattern=r"^\d{4}-\d{2}$")
+    template_groups: List[str] = Field(..., min_length=1)
+
+
+class CashFlowMetaOut(BaseModel):
+    payment_methods: List[Dict[str, str]]
+    expense_categories: List[Dict[str, str]]
+    income_categories: List[Dict[str, str]]
+    template_groups: List[Dict[str, str]]
+
+
+class CashFlowPaymentOptionOut(BaseModel):
+    id: int
+    label: str
+    partner_name: str
+
+
+class ProjectCostRowOut(BaseModel):
+    """Сводка по проекту для отчёта «Projects Cost»: синхронизировано с payments / payment_months."""
+
+    payment_id: int
+    partner_id: int
+    partner_name: str
+    project_name: str
+    project_category: Optional[str] = None
+    payment_type: str
+    is_recurring_billing: bool
+    amount_basis: str  # monthly | contract_total
+    contract_total: Optional[Decimal] = None
+    billing_unit_amount: Decimal
+    sum_paid_actual: Decimal
+    paid_percent: Optional[Decimal] = None
+    pm_name: Optional[str] = None
+    project_start: date
+    schedule_months: List[ProjectCostScheduleMonthOut] = []
+    internal_cost_sum: Decimal = Decimal("0")
+    profit_actual: Decimal
 
 
 # ── DASHBOARD ─────────────────────────────────────────────────────────────────

@@ -2,7 +2,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session, joinedload
 from typing import List, Optional
-from datetime import date, datetime
+from datetime import date, datetime, timezone
 from calendar import monthrange
 from app.db.database import get_db
 from app.models.payment import Payment, PaymentMonth
@@ -15,12 +15,20 @@ from app.models.user import User
 router = APIRouter(prefix="/api/payments", tags=["payments"])
 
 
-def compute_days_until_due(p: Payment) -> Optional[int]:
-    today = date.today()
+def _require_payment_not_trashed(p: Optional[Payment]) -> Payment:
+    if not p:
+        raise HTTPException(status_code=404, detail="Payment not found")
+    if p.trashed_at is not None:
+        raise HTTPException(status_code=404, detail="Проект в корзине или удалён")
+    return p
+
+
+def project_calendar_due_date(p: Payment, today: date) -> Optional[date]:
+    """Срок «по договору» без графика месяцев: фиксированная дата или ближайший расчётный день месяца."""
     if p.status in ("paid", "archived"):
         return None
     if p.deadline_date:
-        return (p.deadline_date - today).days
+        return p.deadline_date
     if p.day_of_month:
         try:
             dom = int(p.day_of_month)
@@ -31,10 +39,16 @@ def compute_days_until_due(p: Payment) -> Optional[int]:
                 if today.month < 12
                 else today.replace(year=today.year + 1, month=1, day=dom)
             )
-            return (d - today).days
+            return d
         except (ValueError, OverflowError):
             return None
     return None
+
+
+def compute_days_until_due(p: Payment) -> Optional[int]:
+    today = date.today()
+    d = project_calendar_due_date(p, today)
+    return (d - today).days if d else None
 
 
 def load_payment(db: Session, payment_id: int) -> Payment:
@@ -46,19 +60,25 @@ def load_payment(db: Session, payment_id: int) -> Payment:
 
 
 def enrich(p: Payment) -> PaymentOut:
+    """
+    Ближайший срок для дебиторки:
+    - есть неоплаченные строки графика — минимальная due_date по этим строкам (ближайший календарный срок);
+    - иначе — срок проекта: deadline_date или расчётный день месяца (day_of_month).
+    """
     out = PaymentOut.model_validate(p)
     today = date.today()
-    unpaid = sorted([m for m in (p.months or []) if m.status != "paid"], key=lambda x: x.month)
+    unpaid = [m for m in (p.months or []) if m.status != "paid"]
     if unpaid:
-        pm = unpaid[0]
+        pm = min(unpaid, key=lambda m: _due_date_for_payment_month(m, p))
         due = _due_date_for_payment_month(pm, p)
         out.next_payment_due_date = due
         out.next_payment_month = pm.month
         out.days_until_due = (due - today).days
     else:
-        out.next_payment_due_date = None
+        pdue = project_calendar_due_date(p, today)
+        out.next_payment_due_date = pdue
         out.next_payment_month = None
-        out.days_until_due = compute_days_until_due(p)
+        out.days_until_due = (pdue - today).days if pdue else None
     out.source_payment_month_id = None
     out.service_month = None
     return out
@@ -246,8 +266,7 @@ def get_payment(payment_id: int, db: Session = Depends(get_db), current_user: Us
         joinedload(Payment.confirmed_by_user),
         joinedload(Payment.months),
     ).filter(Payment.id == payment_id).first()
-    if not p:
-        raise HTTPException(status_code=404, detail="Payment not found")
+    p = _require_payment_not_trashed(p)
     assert_partner_access(db, current_user, p.partner_id)
     return enrich(p)
 
@@ -286,8 +305,7 @@ def update_payment(
     current_user: User = Depends(require_payment_write),
 ):
     p = db.query(Payment).filter(Payment.id == payment_id).first()
-    if not p:
-        raise HTTPException(status_code=404, detail="Payment not found")
+    p = _require_payment_not_trashed(p)
     assert_partner_access(db, current_user, p.partner_id)
     upd = data.model_dump(exclude_none=True)
     if "partner_id" in upd:
@@ -307,8 +325,7 @@ def confirm_payment(
     current_user: User = Depends(get_current_user),
 ):
     p = db.query(Payment).filter(Payment.id == payment_id).first()
-    if not p:
-        raise HTTPException(status_code=404, detail="Payment not found")
+    p = _require_payment_not_trashed(p)
     assert_partner_access(db, current_user, p.partner_id)
     if data.postpone_days and data.postpone_days > 0:
         from datetime import timedelta
@@ -333,7 +350,9 @@ def delete_payment(
     p = db.query(Payment).filter(Payment.id == payment_id).first()
     if not p:
         raise HTTPException(status_code=404, detail="Payment not found")
+    if p.trashed_at is not None:
+        raise HTTPException(status_code=404, detail="Проект уже в корзине")
     assert_partner_access(db, current_user, p.partner_id)
-    p.is_archived = True
+    p.trashed_at = datetime.now(timezone.utc)
     db.commit()
     return {"ok": True}

@@ -53,7 +53,7 @@ def accessible_partner_ids(db: Session, user: User) -> Optional[Set[int]]:
     set() — нет доступа ни к одному партнёру.
     {ids} — только эти партнёры.
     """
-    if user.role in ("admin", "accountant"):
+    if user.role in ("admin", "accountant", "financier"):
         return None
     if user.role == "administration":
         mids = parse_visible_manager_ids(user)
@@ -61,7 +61,11 @@ def accessible_partner_ids(db: Session, user: User) -> Optional[Set[int]]:
             return set()
         rows = (
             db.query(Partner.id)
-            .filter(Partner.manager_id.in_(mids), Partner.is_deleted == False)
+            .filter(
+                Partner.manager_id.in_(mids),
+                Partner.is_deleted == False,
+                Partner.trashed_at.is_(None),
+            )
             .all()
         )
         return {r[0] for r in rows}
@@ -71,14 +75,26 @@ def accessible_partner_ids(db: Session, user: User) -> Optional[Set[int]]:
         return None
     rows = (
         db.query(Partner.id)
-        .filter(Partner.manager_id == user.id, Partner.is_deleted == False)
+        .filter(
+            Partner.manager_id == user.id,
+            Partner.is_deleted == False,
+            Partner.trashed_at.is_(None),
+        )
         .all()
     )
     return {r[0] for r in rows}
 
 
 def assert_partner_access(db: Session, user: User, partner_id: int) -> None:
-    partner = db.query(Partner).filter(Partner.id == partner_id, Partner.is_deleted == False).first()
+    partner = (
+        db.query(Partner)
+        .filter(
+            Partner.id == partner_id,
+            Partner.is_deleted == False,
+            Partner.trashed_at.is_(None),
+        )
+        .first()
+    )
     if not partner:
         raise HTTPException(status_code=404, detail="Компания не найдена или удалена")
 
@@ -102,6 +118,7 @@ def assert_payment_access(db: Session, user: User, payment: Payment) -> None:
 
 
 def filter_payments_query(q, db: Session, user: User):
+    q = q.filter(Payment.trashed_at.is_(None))
     ids = accessible_partner_ids(db, user)
     if ids is None:
         return q
@@ -111,6 +128,7 @@ def filter_payments_query(q, db: Session, user: User):
 
 
 def filter_partners_query(q, db: Session, user: User):
+    q = q.filter(Partner.trashed_at.is_(None))
     ids = accessible_partner_ids(db, user)
     if ids is None:
         return q

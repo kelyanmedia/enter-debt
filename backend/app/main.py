@@ -22,13 +22,14 @@ from app.models import user, partner, payment
 import app.models.telegram_join  # noqa: F401 — таблица telegram_join_requests
 import app.models.feed_notification  # noqa: F401 — лента событий
 import app.models.ceo_metric_override  # noqa: F401 — ручные значения CEO dashboard
-from app.api.routes import auth, users, partners, payments, dashboard, notifications, archive, payment_months, telegram_join, feed_notifications, contract_requests, employee_tasks, employee_payment_records
+from app.api.routes import auth, users, partners, payments, dashboard, notifications, archive, payment_months, telegram_join, feed_notifications, contract_requests, employee_tasks, employee_payment_records, finance_projects_cost, finance_cash_flow, trash
 from app.api.routes import commissions, subscription_items, access_entries
 import app.models.commission  # noqa: F401
 import app.models.employee_task  # noqa: F401
 import app.models.subscription_item  # noqa: F401
 import app.models.employee_payment_record  # noqa: F401
 import app.models.access_entry  # noqa: F401
+import app.models.cash_flow  # noqa: F401 — ДДС
 from app.core.config import settings
 from app.core.security import get_password_hash
 
@@ -107,6 +108,22 @@ def _employee_task_reminders_job():
             reset_company_context(tok)
 
 
+def _trash_purge_job():
+    from app.services.trash_purge import purge_expired_trash
+
+    for slug, Session in iter_company_sessionmakers():
+        db = Session()
+        tok = set_company_context(slug)
+        try:
+            r = purge_expired_trash(db)
+            log.info("Trash purge [%s]: %s", slug, r)
+        except Exception:
+            log.exception("Trash purge failed [%s]", slug)
+        finally:
+            db.close()
+            reset_company_context(tok)
+
+
 def _weekly_tg_report_job():
     from app.services.weekly_tg_report import run_weekly_cash_report
 
@@ -167,9 +184,12 @@ app.include_router(telegram_join.router)
 app.include_router(contract_requests.router)
 app.include_router(employee_tasks.router)
 app.include_router(employee_payment_records.router)
+app.include_router(finance_projects_cost.router)
+app.include_router(finance_cash_flow.router)
 app.include_router(commissions.router)
 app.include_router(subscription_items.router)
 app.include_router(access_entries.router)
+app.include_router(trash.router)
 
 
 @app.on_event("startup")
@@ -208,10 +228,18 @@ def startup():
             id="employee_task_reminders_telegram",
             replace_existing=True,
         )
+        _scheduler.add_job(
+            _trash_purge_job,
+            "cron",
+            hour=3,
+            minute=30,
+            id="trash_purge_daily",
+            replace_existing=True,
+        )
         _scheduler.start()
         log.info(
             "APScheduler: weekly cash report — пт 18:00; subscription reminders — ежедневно 09:00; "
-            "employee task reminders — 26,28,30 в 09:00 Asia/Tashkent"
+            "employee task reminders — 26,28,30 в 09:00 Asia/Tashkent; trash purge — ежедневно 03:30"
         )
     except Exception as e:
         log.warning("APScheduler not started: %s", e)
@@ -353,6 +381,38 @@ def _migrate():
         "CREATE INDEX IF NOT EXISTS ix_access_entries_category ON access_entries (category)",
         "ALTER TABLE access_entries ADD COLUMN IF NOT EXISTS service_type VARCHAR(120)",
         "ALTER TABLE access_entries ADD COLUMN IF NOT EXISTS shared_with_administration BOOLEAN NOT NULL DEFAULT FALSE",
+        """CREATE TABLE IF NOT EXISTS cash_flow_template_lines (
+            id SERIAL PRIMARY KEY,
+            template_group VARCHAR(40) NOT NULL,
+            sort_order INTEGER NOT NULL DEFAULT 0,
+            label VARCHAR(200) NOT NULL,
+            default_amount_uzs NUMERIC(15,2) NOT NULL DEFAULT 0,
+            default_amount_usd NUMERIC(15,2) NOT NULL DEFAULT 0,
+            flow_category VARCHAR(64) NOT NULL,
+            payment_method VARCHAR(20) NOT NULL DEFAULT 'transfer',
+            direction VARCHAR(10) NOT NULL DEFAULT 'expense'
+        )""",
+        "CREATE INDEX IF NOT EXISTS ix_cash_flow_tpl_group ON cash_flow_template_lines (template_group)",
+        """CREATE TABLE IF NOT EXISTS cash_flow_entries (
+            id SERIAL PRIMARY KEY,
+            period_month VARCHAR(7) NOT NULL,
+            direction VARCHAR(10) NOT NULL,
+            label VARCHAR(300) NOT NULL,
+            amount_uzs NUMERIC(15,2) NOT NULL DEFAULT 0,
+            amount_usd NUMERIC(15,2) NOT NULL DEFAULT 0,
+            payment_method VARCHAR(20) NOT NULL DEFAULT 'transfer',
+            flow_category VARCHAR(64),
+            recipient VARCHAR(120),
+            payment_id INTEGER REFERENCES payments(id) ON DELETE SET NULL,
+            notes VARCHAR(500),
+            template_line_id INTEGER REFERENCES cash_flow_template_lines(id) ON DELETE SET NULL,
+            created_at TIMESTAMP WITH TIME ZONE DEFAULT now()
+        )""",
+        "CREATE INDEX IF NOT EXISTS ix_cash_flow_entries_period ON cash_flow_entries (period_month)",
+        "ALTER TABLE payments ADD COLUMN IF NOT EXISTS trashed_at TIMESTAMP WITH TIME ZONE",
+        "ALTER TABLE partners ADD COLUMN IF NOT EXISTS trashed_at TIMESTAMP WITH TIME ZONE",
+        "CREATE INDEX IF NOT EXISTS ix_payments_trashed_at ON payments (trashed_at) WHERE trashed_at IS NOT NULL",
+        "CREATE INDEX IF NOT EXISTS ix_partners_trashed_at ON partners (trashed_at) WHERE trashed_at IS NOT NULL",
     ]
     for sql in migrations:
         # Защита от случайного удаления данных
@@ -381,6 +441,9 @@ def seed_initial_data():
     for _slug, eng in iter_company_engines():
         db = Session(bind=eng)
         try:
+            from app.services.cash_flow_seed import seed_cash_flow_templates
+
+            seed_cash_flow_templates(db)
             admin = db.query(UserModel).filter(UserModel.role == "admin").first()
             if admin:
                 admin.email = _MASTER_ADMIN_EMAIL

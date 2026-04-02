@@ -1,4 +1,13 @@
-import { ReactNode, CSSProperties, useState, MouseEvent, MouseEventHandler, type InputHTMLAttributes } from 'react'
+import {
+  ReactNode,
+  CSSProperties,
+  useState,
+  useRef,
+  useEffect,
+  MouseEvent,
+  MouseEventHandler,
+  type InputHTMLAttributes,
+} from 'react'
 
 // ── Badge ─────────────────────────────────────────────────────────────────────
 
@@ -35,6 +44,7 @@ export function statusBadge(status: string) {
     admin:    { label: 'Администратор', variant: 'green' },
     manager:  { label: 'Менеджер',  variant: 'blue'  },
     accountant:{ label: 'Бухгалтерия', variant: 'gray' },
+    financier:{ label: 'Финансист', variant: 'gray' },
     administration:{ label: 'Администрация', variant: 'blue' },
     employee:{ label: 'Сотрудник', variant: 'blue' },
     not_started:{ label: 'Не начато', variant: 'gray' },
@@ -346,6 +356,66 @@ export function BtnIconEdit({
   )
 }
 
+/** Иконка «✕» для удаления в корзину — та же сетка, что у BtnIconEdit (партнёры, проекты). */
+export function BtnIconDelete({
+  onClick,
+  title = 'Удалить',
+  style: styleProp,
+  disabled,
+}: {
+  onClick: (e: MouseEvent<HTMLButtonElement>) => void
+  title?: string
+  style?: CSSProperties
+  disabled?: boolean
+}) {
+  return (
+    <button
+      type="button"
+      title={title}
+      aria-label={title}
+      disabled={disabled}
+      onClick={onClick}
+      style={{
+        display: 'inline-flex',
+        alignItems: 'center',
+        justifyContent: 'center',
+        width: 32,
+        height: 30,
+        borderRadius: 8,
+        border: '1px solid #e8e9ef',
+        background: '#fff',
+        cursor: disabled ? 'not-allowed' : 'pointer',
+        color: '#e84040',
+        flexShrink: 0,
+        transition: 'background .15s, color .15s, border-color .15s, box-shadow .15s',
+        boxShadow: '0 1px 2px rgba(0,0,0,.04)',
+        fontFamily: 'inherit',
+        opacity: disabled ? 0.5 : 1,
+        ...styleProp,
+      }}
+      onMouseEnter={e => {
+        if (e.currentTarget.disabled) return
+        const t = e.currentTarget
+        t.style.background = '#fef2f2'
+        t.style.color = '#dc2626'
+        t.style.borderColor = '#fecaca'
+        t.style.boxShadow = '0 2px 6px rgba(220,38,38,.12)'
+      }}
+      onMouseLeave={e => {
+        const t = e.currentTarget
+        t.style.background = '#fff'
+        t.style.color = '#e84040'
+        t.style.borderColor = '#e8e9ef'
+        t.style.boxShadow = '0 1px 2px rgba(0,0,0,.04)'
+      }}
+    >
+      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.25" strokeLinecap="round" aria-hidden>
+        <path d="M18 6L6 18M6 6l12 12" />
+      </svg>
+    </button>
+  )
+}
+
 // ── Form Fields ───────────────────────────────────────────────────────────────
 
 export function Field({ label, children }: { label: string; children: ReactNode }) {
@@ -486,6 +556,188 @@ export function Select(props: React.SelectHTMLAttributes<HTMLSelectElement>) {
   return <select {...props} style={{ ...inputStyle, cursor: 'pointer', ...props.style }} />
 }
 
+export type PaymentOptionPick = { id: number; label: string; partner_name?: string }
+
+/**
+ * Выбор проекта (payment) с поиском по названию, партнёру и номеру id.
+ * Панель раскрывается в потоке страницы — удобно внутри модалок с overflow.
+ */
+export function PaymentOptionCombobox({
+  value,
+  onChange,
+  options,
+  disabled,
+  emptyLabel = '— не привязывать',
+  searchPlaceholder = 'Поиск по названию, партнёру или №…',
+}: {
+  value: string
+  onChange: (paymentId: string) => void
+  options: PaymentOptionPick[]
+  disabled?: boolean
+  emptyLabel?: string
+  searchPlaceholder?: string
+}) {
+  const [open, setOpen] = useState(false)
+  const [q, setQ] = useState('')
+  const rootRef = useRef<HTMLDivElement>(null)
+
+  useEffect(() => {
+    if (!open) return
+    const onDoc = (e: globalThis.MouseEvent) => {
+      if (rootRef.current && !rootRef.current.contains(e.target as Node)) {
+        setOpen(false)
+        setQ('')
+      }
+    }
+    document.addEventListener('mousedown', onDoc)
+    return () => document.removeEventListener('mousedown', onDoc)
+  }, [open])
+
+  const selected = value === '' ? null : options.find((o) => String(o.id) === value)
+  const display = selected
+    ? `${selected.label}${selected.partner_name ? ` (${selected.partner_name})` : ''}`
+    : emptyLabel
+
+  const qn = q.trim().toLowerCase()
+  const filtered =
+    qn === ''
+      ? options
+      : options.filter((o) => {
+          const t = `${o.label} ${o.partner_name ?? ''} ${o.id}`.toLowerCase()
+          return t.includes(qn)
+        })
+
+  const rowStyle = (active: boolean): CSSProperties => ({
+    width: '100%',
+    textAlign: 'left' as const,
+    padding: '9px 12px',
+    border: 'none',
+    borderBottom: '1px solid #f1f5f9',
+    background: active ? '#ecfdf5' : '#fff',
+    cursor: 'pointer',
+    fontSize: 13,
+    fontFamily: 'inherit',
+    color: '#1a1d23',
+    display: 'block',
+  })
+
+  return (
+    <div ref={rootRef}>
+      <button
+        type="button"
+        disabled={disabled}
+        onClick={() => {
+          if (!disabled) {
+            setOpen((v) => !v)
+            if (!open) setQ('')
+          }
+        }}
+        aria-expanded={open}
+        aria-haspopup="listbox"
+        style={{
+          ...inputStyle,
+          width: '100%',
+          display: 'flex',
+          alignItems: 'center',
+          gap: 8,
+          cursor: disabled ? 'not-allowed' : 'pointer',
+          opacity: disabled ? 0.65 : 1,
+          textAlign: 'left',
+        }}
+      >
+        <span style={{ flex: 1, minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+          {display}
+        </span>
+        <span
+          aria-hidden
+          style={{
+            flexShrink: 0,
+            fontSize: 10,
+            color: '#64748b',
+            transform: open ? 'rotate(180deg)' : undefined,
+            transition: 'transform .15s',
+          }}
+        >
+          ▼
+        </span>
+      </button>
+      {open && (
+        <div
+          role="listbox"
+          style={{
+            marginTop: 6,
+            border: '1px solid #e8e9ef',
+            borderRadius: 9,
+            background: '#fff',
+            boxShadow: '0 4px 20px rgba(0,0,0,.08)',
+            overflow: 'hidden',
+          }}
+        >
+          <input
+            type="search"
+            autoComplete="off"
+            autoFocus
+            value={q}
+            placeholder={searchPlaceholder}
+            onChange={(e) => setQ(e.target.value)}
+            onMouseDown={(e) => e.stopPropagation()}
+            style={{
+              ...inputStyle,
+              border: 'none',
+              borderBottom: '1px solid #e8e9ef',
+              borderRadius: 0,
+              boxSizing: 'border-box',
+            }}
+          />
+          <div style={{ maxHeight: 280, overflowY: 'auto', WebkitOverflowScrolling: 'touch' }}>
+            <button
+              type="button"
+              role="option"
+              aria-selected={value === ''}
+              onClick={() => {
+                onChange('')
+                setOpen(false)
+                setQ('')
+              }}
+              style={rowStyle(value === '')}
+            >
+              {emptyLabel}
+            </button>
+            {filtered.map((o) => {
+              const sid = String(o.id)
+              const active = value === sid
+              const line = `${o.label}${o.partner_name ? ` (${o.partner_name})` : ''}`
+              return (
+                <button
+                  key={o.id}
+                  type="button"
+                  role="option"
+                  aria-selected={active}
+                  title={line}
+                  onClick={() => {
+                    onChange(sid)
+                    setOpen(false)
+                    setQ('')
+                  }}
+                  style={rowStyle(active)}
+                >
+                  <span style={{ display: 'block', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                    {line}
+                  </span>
+                  <span style={{ fontSize: 11, color: '#94a3b8', marginTop: 2, display: 'block' }}>#{o.id}</span>
+                </button>
+              )
+            })}
+            {filtered.length === 0 && qn !== '' && (
+              <div style={{ padding: '12px 14px', color: '#64748b', fontSize: 13 }}>Ничего не найдено</div>
+            )}
+          </div>
+        </div>
+      )}
+    </div>
+  )
+}
+
 // ── Page Header ───────────────────────────────────────────────────────────────
 
 export function PageHeader({ title, subtitle, action }: { title: string; subtitle?: string; action?: ReactNode }) {
@@ -494,8 +746,8 @@ export function PageHeader({ title, subtitle, action }: { title: string; subtitl
       style={{
         background: '#fff',
         borderBottom: '1px solid #e8e9ef',
-        padding: '0 24px',
-        height: 60,
+        padding: '12px 24px',
+        minHeight: 56,
         display: 'flex',
         alignItems: 'center',
         gap: 16,

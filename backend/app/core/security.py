@@ -77,8 +77,15 @@ def require_payment_write(current_user=Depends(get_current_user)):
     return current_user
 
 
+def require_admin_or_financier(current_user=Depends(get_current_user)):
+    """Полный доступ к разделу «Финансы» (ДДС, оплаты и т.д.) — админ и финансист."""
+    if current_user.role not in ("admin", "financier"):
+        raise HTTPException(status_code=403, detail="Доступ запрещён")
+    return current_user
+
+
 def require_admin_or_accountant(current_user=Depends(get_current_user)):
-    """CEO Dashboard и агрегированная аналитика — только админ и бухгалтерия, не менеджеры."""
-    if current_user.role not in ("admin", "accountant"):
+    """CEO Dashboard и агрегированная аналитика — админ, бухгалтерия, финансист; не менеджеры."""
+    if current_user.role not in ("admin", "accountant", "financier"):
         raise HTTPException(status_code=403, detail="Доступ запрещён")
     return current_user

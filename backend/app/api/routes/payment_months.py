@@ -15,6 +15,7 @@ from app.schemas.schemas import PaymentMonthCreate, PaymentMonthOut
 from app.core.security import get_current_user, require_manager_or_admin
 from app.core.access import assert_payment_access
 from app.core.config import settings
+from app.api.routes.payments import _require_payment_not_trashed
 
 router = APIRouter(prefix="/api/payments", tags=["payment-months"])
 
@@ -96,9 +97,7 @@ def list_months(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
-    p = db.query(Payment).filter(Payment.id == payment_id).first()
-    if not p:
-        raise HTTPException(status_code=404, detail="Payment not found")
+    p = _require_payment_not_trashed(db.query(Payment).filter(Payment.id == payment_id).first())
     assert_payment_access(db, current_user, p)
     return db.query(PaymentMonth).filter(
         PaymentMonth.payment_id == payment_id
@@ -112,9 +111,7 @@ def add_month(
     db: Session = Depends(get_db),
     current_user: User = Depends(require_manager_or_admin),
 ):
-    p = db.query(Payment).filter(Payment.id == payment_id).first()
-    if not p:
-        raise HTTPException(status_code=404, detail="Payment not found")
+    p = _require_payment_not_trashed(db.query(Payment).filter(Payment.id == payment_id).first())
     assert_payment_access(db, current_user, p)
     existing = db.query(PaymentMonth).filter(
         PaymentMonth.payment_id == payment_id,
@@ -167,9 +164,7 @@ def duplicate_month_to_next_month(
     Копия строки графика на следующий календарный месяц: та же сумма, новое описание «… Май 2026 Акт/СФ»,
     срок оплаты по правилам договора; акт и оплата — сброшены (как у новой строки).
     """
-    p = db.query(Payment).filter(Payment.id == payment_id).first()
-    if not p:
-        raise HTTPException(status_code=404, detail="Payment not found")
+    p = _require_payment_not_trashed(db.query(Payment).filter(Payment.id == payment_id).first())
     assert_payment_access(db, current_user, p)
     pm = db.query(PaymentMonth).filter(
         PaymentMonth.id == month_id,
@@ -264,9 +259,7 @@ async def mark_act_issued(
     current_user: User = Depends(require_manager_or_admin),
 ):
     """Фиксация «Акт выставлен» — независимо от оплаты. Уведомление бухгалтерии: Акт + кнопка «Добавить»."""
-    pay = db.query(Payment).filter(Payment.id == payment_id).first()
-    if not pay:
-        raise HTTPException(status_code=404, detail="Payment not found")
+    pay = _require_payment_not_trashed(db.query(Payment).filter(Payment.id == payment_id).first())
     assert_payment_access(db, current_user, pay)
     pm = db.query(PaymentMonth).filter(
         PaymentMonth.id == month_id,
@@ -284,11 +277,14 @@ async def mark_act_issued(
     else:
         db.refresh(pm)
 
-    payment = db.query(Payment).options(
-        joinedload(Payment.partner).joinedload(Partner.manager)
-    ).filter(Payment.id == payment_id).first()
+    payment = _require_payment_not_trashed(
+        db.query(Payment)
+        .options(joinedload(Payment.partner).joinedload(Partner.manager))
+        .filter(Payment.id == payment_id)
+        .first()
+    )
 
-    if payment and payment.notify_accounting and not already:
+    if payment.notify_accounting and not already:
         amount_val = pm.amount or payment.amount
         month_label = _month_label(pm.month)
         desc = pm.description or f"{payment.description} {month_label}"
@@ -333,9 +329,7 @@ async def confirm_month(
     current_user: User = Depends(get_current_user),
 ):
     """Только «Оплата прошла» — независимо от акта (предоплата и т.д.)."""
-    pay = db.query(Payment).filter(Payment.id == payment_id).first()
-    if not pay:
-        raise HTTPException(status_code=404, detail="Payment not found")
+    pay = _require_payment_not_trashed(db.query(Payment).filter(Payment.id == payment_id).first())
     assert_payment_access(db, current_user, pay)
     pm = db.query(PaymentMonth).filter(
         PaymentMonth.id == month_id,
@@ -354,12 +348,14 @@ async def confirm_month(
     else:
         db.refresh(pm)
 
-    # Load payment with all relations for notifications
-    payment = db.query(Payment).options(
-        joinedload(Payment.partner).joinedload(Partner.manager)
-    ).filter(Payment.id == payment_id).first()
+    payment = _require_payment_not_trashed(
+        db.query(Payment)
+        .options(joinedload(Payment.partner).joinedload(Partner.manager))
+        .filter(Payment.id == payment_id)
+        .first()
+    )
 
-    if payment and not already_paid:
+    if not already_paid:
         amount_val = pm.amount or payment.amount
         month_label = _month_label(pm.month)
         desc = pm.description or f"{payment.description} {month_label}"
@@ -411,9 +407,7 @@ def delete_month(
     db: Session = Depends(get_db),
     current_user: User = Depends(require_manager_or_admin),
 ):
-    pay = db.query(Payment).filter(Payment.id == payment_id).first()
-    if not pay:
-        raise HTTPException(status_code=404, detail="Payment not found")
+    pay = _require_payment_not_trashed(db.query(Payment).filter(Payment.id == payment_id).first())
     assert_payment_access(db, current_user, pay)
     pm = db.query(PaymentMonth).filter(
         PaymentMonth.id == month_id,

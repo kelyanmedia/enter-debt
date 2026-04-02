@@ -111,6 +111,18 @@ function today() {
   return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`
 }
 
+/** Первый и последний день предыдущего календарного месяца (локальное время) */
+function boundsPrevMonth(): [string, string] {
+  const d = new Date()
+  const prev = new Date(d.getFullYear(), d.getMonth() - 1, 1)
+  const py = prev.getFullYear()
+  const pm = prev.getMonth()
+  const first = `${py}-${String(pm + 1).padStart(2, '0')}-01`
+  const lastD = new Date(py, pm + 1, 0).getDate()
+  const last = `${py}-${String(pm + 1).padStart(2, '0')}-${String(lastD).padStart(2, '0')}`
+  return [first, last]
+}
+
 /** Первый и последний день следующего календарного месяца (локальное время) */
 function boundsNextMonth(): [string, string] {
   const d = new Date()
@@ -361,6 +373,26 @@ export default function DebitorPage() {
             }}
           >
             Этот месяц
+          </button>
+          <button
+            type="button"
+            onClick={() => {
+              const [f, t] = boundsPrevMonth()
+              handleDateChange(f, t)
+            }}
+            style={{
+              fontSize: 11,
+              color: '#9a3412',
+              background: '#fff7ed',
+              border: '1px solid #fed7aa',
+              borderRadius: 7,
+              padding: '5px 10px',
+              cursor: 'pointer',
+              fontWeight: 600,
+              fontFamily: 'inherit',
+            }}
+          >
+            Прошлый месяц
           </button>
           <button
             type="button"

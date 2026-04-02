@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react'
 import { useAuth } from '@/context/AuthContext'
 import Layout from '@/components/Layout'
-import { PageHeader, Card, Th, Td, PartnerAvatar, statusBadge, BtnPrimary, BtnOutline, BtnIconEdit, Modal, ConfirmModal, Field, Input, Select, Empty, formatDate } from '@/components/ui'
+import { PageHeader, Card, Th, Td, PartnerAvatar, statusBadge, BtnPrimary, BtnOutline, BtnIconEdit, BtnIconDelete, Modal, ConfirmModal, Field, Input, Select, Empty, formatDate } from '@/components/ui'
 import api from '@/lib/api'
 
 interface User { id: number; name: string }
@@ -180,7 +180,9 @@ export default function PartnersPage() {
                   <Td>
                     <div style={{ display: 'flex', gap: 6, alignItems: 'center' }}>
                       <BtnIconEdit onClick={() => openEdit(p)} />
-                      <BtnOutline onClick={() => setDeleteConfirmId(p.id)} style={{ padding: '5px 10px', fontSize: 12, color: '#e84040' }}>✕</BtnOutline>
+                      {['admin', 'manager', 'administration'].includes(user?.role || '') && (
+                        <BtnIconDelete onClick={() => setDeleteConfirmId(p.id)} title="Удалить в корзину" />
+                      )}
                     </div>
                   </Td>
                 </tr>
@@ -265,7 +267,7 @@ export default function PartnersPage() {
         open={deleteConfirmId !== null}
         onClose={() => setDeleteConfirmId(null)}
         title="Удалить партнёра?"
-        message="Будут удалены партнёр и все связанные платежи. Это действие нельзя отменить."
+        message="Компания и её проекты скроются из списков и попадут в корзину на 30 суток (полное удаление — только администратор в разделе «Корзина»). Архивные проекты в разделе «Архив» хранятся отдельно."
         confirmLabel="Удалить"
         onConfirm={confirmDeletePartner}
       />

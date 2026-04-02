@@ -16,7 +16,7 @@ from app.core.security import get_current_user
 from app.db.database import get_db
 from app.models.employee_payment_record import EmployeePaymentRecord
 from app.models.user import User
-from app.schemas.schemas import EmployeePaymentRecordOut
+from app.schemas.schemas import EmployeePaymentRecordOut, EmployeePayrollExpenseOut
 
 router = APIRouter(prefix="/api/employee-payment-records", tags=["employee-payment-records"])
 
@@ -116,6 +116,43 @@ def list_payment_records(
         .all()
     )
     return [_record_out(r) for r in rows]
+
+
+@router.get("/payroll-expenses", response_model=List[EmployeePayrollExpenseOut])
+def list_payroll_expenses_for_finance(
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """Все выплаты сотрудникам, созданные администратором (раздел «Расходы»). Данные в БД текущей компании (X-Company-Slug)."""
+    if current_user.role not in ("admin", "financier"):
+        raise HTTPException(status_code=403, detail="Нет доступа")
+
+    rows = (
+        db.query(EmployeePaymentRecord, User.name)
+        .join(User, User.id == EmployeePaymentRecord.user_id)
+        .filter(User.role == "employee")
+        .filter(EmployeePaymentRecord.created_by_user_id.isnot(None))
+        .order_by(EmployeePaymentRecord.paid_on.desc(), EmployeePaymentRecord.id.desc())
+        .all()
+    )
+    out: List[EmployeePayrollExpenseOut] = []
+    for r, employee_name in rows:
+        out.append(
+            EmployeePayrollExpenseOut(
+                id=r.id,
+                user_id=r.user_id,
+                employee_name=employee_name or "—",
+                paid_on=r.paid_on,
+                period_year=r.period_year,
+                period_month=r.period_month,
+                amount=Decimal(str(r.amount)),
+                currency=(r.currency or "USD").upper(),
+                note=r.note,
+                has_receipt=bool(r.receipt_path),
+                created_at=r.created_at,
+            )
+        )
+    return out
 
 
 @router.post("", response_model=EmployeePaymentRecordOut)

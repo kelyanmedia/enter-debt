@@ -1,3 +1,5 @@
+from datetime import datetime, timezone
+
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session, joinedload
 from sqlalchemy import func, case
@@ -17,7 +19,11 @@ def enrich_partner(partner: Partner, db: Session) -> PartnerOut:
     counts = db.query(
         func.count(Payment.id).label("total"),
         func.sum(case((Payment.status == "overdue", 1), else_=0)).label("overdue")
-    ).filter(Payment.partner_id == partner.id, Payment.is_archived == False).first()
+    ).filter(
+        Payment.partner_id == partner.id,
+        Payment.is_archived == False,
+        Payment.trashed_at.is_(None),
+    ).first()
     out.open_payments_count = counts.total or 0
     out.overdue_count = int(counts.overdue or 0)
     return out
@@ -46,7 +52,9 @@ def list_partners(
 @router.get("/{partner_id}", response_model=PartnerOut)
 def get_partner(partner_id: int, db: Session = Depends(get_db), current_user=Depends(get_current_user)):
     partner = db.query(Partner).options(joinedload(Partner.manager)).filter(
-        Partner.id == partner_id, Partner.is_deleted == False
+        Partner.id == partner_id,
+        Partner.is_deleted == False,
+        Partner.trashed_at.is_(None),
     ).first()
     if not partner:
         raise HTTPException(status_code=404, detail="Partner not found")
@@ -77,7 +85,11 @@ def update_partner(
     db: Session = Depends(get_db),
     current_user=Depends(require_manager_or_admin),
 ):
-    partner = db.query(Partner).filter(Partner.id == partner_id, Partner.is_deleted == False).first()
+    partner = db.query(Partner).filter(
+        Partner.id == partner_id,
+        Partner.is_deleted == False,
+        Partner.trashed_at.is_(None),
+    ).first()
     if not partner:
         raise HTTPException(status_code=404, detail="Partner not found")
     assert_partner_access(db, current_user, partner_id)
@@ -101,6 +113,6 @@ def delete_partner(partner_id: int, db: Session = Depends(get_db), current_user=
     if not partner:
         raise HTTPException(status_code=404, detail="Partner not found")
     assert_partner_access(db, current_user, partner_id)
-    partner.is_deleted = True
+    partner.trashed_at = datetime.now(timezone.utc)
     db.commit()
     return {"ok": True}

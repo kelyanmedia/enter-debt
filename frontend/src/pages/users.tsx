@@ -181,6 +181,7 @@ export default function UsersPage() {
     admin: 'Все уведомления',
     manager: 'Свои партнёры',
     accountant: 'Только счёт-фактуры',
+    financier: 'Раздел «Финансы» (веб)',
     administration: 'Партнёры выбранных менеджеров',
     employee: 'Только учёт задач (веб)',
   }
@@ -329,7 +330,9 @@ export default function UsersPage() {
                         ? `${(u.visible_manager_ids || []).length} менеджер(ов) · Подписки: ${u.can_view_subscriptions ? 'да' : 'нет'} · Доступы: ${u.can_view_accesses ? 'да' : 'нет'}`
                         : u.role === 'employee'
                           ? 'Только «Мои задачи»'
-                          : '—'}
+                          : u.role === 'financier'
+                            ? 'CEO, P&L, ДДС, оплаты, расходы'
+                            : '—'}
                   </Td>
                   <Td style={{ fontSize: 12, color: '#6b7280', whiteSpace: 'nowrap' }}>{formatLastLogin(u.last_login_at)}</Td>
                   <Td><Badge variant={u.is_active ? 'green' : 'gray'}>{u.is_active ? 'Да' : 'Нет'}</Badge></Td>
@@ -392,6 +395,7 @@ export default function UsersPage() {
               <option value="admin">Администратор</option>
               <option value="manager">Менеджер</option>
               <option value="accountant">Бухгалтерия</option>
+              <option value="financier">Финансист</option>
               <option value="administration">Администрация</option>
               <option value="employee">Сотрудник (freelance)</option>
             </Select>

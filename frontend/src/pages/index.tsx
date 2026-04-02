@@ -58,6 +58,7 @@ export default function Dashboard() {
 
   useEffect(() => {
     if (!loading && user && (user.role === 'manager' || user.role === 'administration')) router.replace('/debitor')
+    if (!loading && user && user.role === 'financier') router.replace('/ceo')
   }, [user, loading, router])
 
   const [stats, setStats] = useState<Stats | null>(null)
@@ -83,7 +84,7 @@ export default function Dashboard() {
   }
 
   useEffect(() => {
-    if (!user || user.role === 'manager' || user.role === 'administration') return
+    if (!user || user.role === 'manager' || user.role === 'administration' || user.role === 'financier') return
     loadStats(dateFrom, dateTo)
     Promise.all([
       api.get('payments?status=overdue&expand_month_lines=1'),
@@ -132,6 +133,7 @@ export default function Dashboard() {
 
   const redirectingToDebitor =
     !loading && user && (user.role === 'manager' || user.role === 'administration')
+  const redirectingToCeo = !loading && user && user.role === 'financier'
 
   return (
     <Layout>
@@ -153,8 +155,25 @@ export default function Dashboard() {
           Переход в дебиторку…
         </div>
       )}
+      {redirectingToCeo && (
+        <div
+          style={{
+            flex: 1,
+            display: 'flex',
+            flexDirection: 'column',
+            alignItems: 'center',
+            justifyContent: 'center',
+            minHeight: 240,
+            color: '#8a8fa8',
+            fontSize: 14,
+            gap: 8,
+          }}
+        >
+          Переход в CEO Dashboard…
+        </div>
+      )}
       {/* Layout обрабатывает редирект на /login и spinner; дашборд — только admin / accountant */}
-      {!loading && user && user.role !== 'manager' && user.role !== 'administration' && <>
+      {!loading && user && user.role !== 'manager' && user.role !== 'administration' && user.role !== 'financier' && <>
       {/* Header with global date filter */}
       <div style={{ background: '#fff', borderBottom: '1px solid #e8e9ef', padding: '0 24px', minHeight: 60, display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexShrink: 0, flexWrap: 'wrap', gap: 12 }}>
         <div>
