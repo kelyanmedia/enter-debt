@@ -20,9 +20,14 @@ VALID_STATUS = frozenset({"active", "inactive"})
 VALID_PAYER = frozenset({"KM", "WW"})
 
 
-def _reject_employee(user: User) -> None:
+def _ensure_subscriptions_access(user: User) -> None:
+    if user.role == "admin":
+        return
+    if user.role == "administration" and bool(getattr(user, "can_view_subscriptions", False)):
+        return
     if user.role == "employee":
         raise HTTPException(status_code=403, detail="Нет доступа")
+    raise HTTPException(status_code=403, detail="Нет доступа к подпискам")
 
 
 @router.get("", response_model=List[SubscriptionItemOut])
@@ -31,7 +36,7 @@ def list_items(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
-    _reject_employee(current_user)
+    _ensure_subscriptions_access(current_user)
     if category not in VALID_CATEGORIES:
         raise HTTPException(
             status_code=400,
@@ -56,7 +61,7 @@ def create_item(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
-    _reject_employee(current_user)
+    _ensure_subscriptions_access(current_user)
     if data.category not in VALID_CATEGORIES:
         raise HTTPException(status_code=400, detail="Недопустимая категория")
     cur = (data.currency or "USD").upper()
@@ -104,7 +109,7 @@ def update_item(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
-    _reject_employee(current_user)
+    _ensure_subscriptions_access(current_user)
     row = db.query(SubscriptionItem).filter(SubscriptionItem.id == item_id).first()
     if not row:
         raise HTTPException(status_code=404, detail="Запись не найдена")
@@ -160,7 +165,7 @@ def delete_item(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
-    _reject_employee(current_user)
+    _ensure_subscriptions_access(current_user)
     row = db.query(SubscriptionItem).filter(SubscriptionItem.id == item_id).first()
     if not row:
         raise HTTPException(status_code=404, detail="Запись не найдена")

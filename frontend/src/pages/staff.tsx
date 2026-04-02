@@ -61,6 +61,16 @@ interface MonthTotals {
   total_hours: string
 }
 
+interface PendingPaymentMonth {
+  year: number
+  month: number
+  label: string
+  total_usd: string
+  total_uzs: string
+  total_hours: string
+  task_count: number
+}
+
 const MONTH_OPTIONS = [
   { v: 1, l: 'Январь' }, { v: 2, l: 'Февраль' }, { v: 3, l: 'Март' }, { v: 4, l: 'Апрель' },
   { v: 5, l: 'Май' }, { v: 6, l: 'Июнь' }, { v: 7, l: 'Июль' }, { v: 8, l: 'Август' },
@@ -191,7 +201,8 @@ export default function StaffPage() {
     currency: 'USD',
     status: 'in_progress',
   })
-  const [staffSection, setStaffSection] = useState<'tasks' | 'payments'>('tasks')
+  const [staffSection, setStaffSection] = useState<'tasks' | 'payments' | 'pending'>('tasks')
+  const [pendingMonths, setPendingMonths] = useState<PendingPaymentMonth[]>([])
 
   useEffect(() => {
     if (!loading && user && user.role !== 'admin') router.replace('/')
@@ -220,14 +231,17 @@ export default function StaffPage() {
     Promise.all([
       api.get<TaskRow[]>('employee-tasks', { params: { user_id: selectedId, year, month } }),
       api.get<MonthTotals>('employee-tasks/staff/month-totals', { params: { user_id: selectedId, year, month } }),
+      api.get<PendingPaymentMonth[]>('employee-tasks/staff/pending-payments-summary', { params: { user_id: selectedId } }),
     ])
-      .then(([tr, tt]) => {
+      .then(([tr, tt, pp]) => {
         setTasks(tr.data)
         setTotals(tt.data)
+        setPendingMonths(pp.data)
       })
       .catch(() => {
         setTasks([])
         setTotals(null)
+        setPendingMonths([])
       })
       .finally(() => setLoadingData(false))
   }, [selectedId, year, month])
@@ -623,19 +637,37 @@ export default function StaffPage() {
                   >
                     История выплат
                   </button>
+                  <button
+                    type="button"
+                    onClick={() => setStaffSection('pending')}
+                    style={{
+                      padding: '8px 16px',
+                      borderRadius: 9,
+                      border: staffSection === 'pending' ? '2px solid #1a6b3c' : '1px solid #e8e9ef',
+                      background: staffSection === 'pending' ? '#f0faf4' : '#fff',
+                      fontSize: 13,
+                      fontWeight: 600,
+                      color: staffSection === 'pending' ? '#1a6b3c' : '#64748b',
+                      cursor: 'pointer',
+                      fontFamily: 'inherit',
+                    }}
+                  >
+                    Ожидают оплаты
+                  </button>
                 </div>
 
                 <div
                   style={{
-                    flex: '1 1 220px',
-                    minWidth: 0,
+                    flex: '1 1 360px',
+                    minWidth: 260,
+                    maxWidth: 560,
                     padding: '8px 12px',
                     borderRadius: 10,
                     display: 'flex',
                     flexDirection: 'column',
                     gap: 4,
                     justifyContent: 'center',
-                    maxHeight: 88,
+                    minHeight: 62,
                     boxSizing: 'border-box',
                     ...(requisitesHighlight
                       ? {
@@ -651,7 +683,7 @@ export default function StaffPage() {
                       : 'Не заполнено в карточке пользователя'
                   }
                 >
-                  <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 8, whiteSpace: 'nowrap' }}>
                     <span style={{ fontSize: 10, fontWeight: 700, color: '#8a8fa8', textTransform: 'uppercase', letterSpacing: '.04em' }}>
                       Реквизиты для выплаты
                     </span>
@@ -671,22 +703,20 @@ export default function StaffPage() {
                       </span>
                     )}
                   </div>
-                  <pre
+                  <div
                     style={{
                       margin: 0,
-                      fontSize: 11,
+                      fontSize: 12,
                       fontFamily: 'ui-monospace, monospace',
-                      whiteSpace: 'pre-wrap',
-                      wordBreak: 'break-word',
+                      whiteSpace: 'nowrap',
+                      textOverflow: 'ellipsis',
                       color: '#334155',
-                      lineHeight: 1.35,
-                      overflow: 'auto',
-                      flex: 1,
-                      minHeight: 0,
+                      lineHeight: 1.4,
+                      overflow: 'hidden',
                     }}
                   >
                     {selected.payment_details?.trim() || '— не заполнено в карточке пользователя'}
-                  </pre>
+                  </div>
                 </div>
 
                 {staffSection === 'tasks' && (
@@ -1044,6 +1074,66 @@ export default function StaffPage() {
               {staffSection === 'payments' && selected && (
                 <Card style={{ padding: '18px 20px' }}>
                   <EmployeePaymentHistory mode="admin" userId={selected.id} key={selected.id} />
+                </Card>
+              )}
+
+              {staffSection === 'pending' && (
+                <Card style={{ padding: '14px 18px' }}>
+                  <div style={{ fontSize: 12, color: '#64748b', marginBottom: 10 }}>
+                    Все месяцы, где есть неоплаченные задачи сотрудника. Нажмите строку, чтобы открыть этот месяц в разделе «Задачи».
+                  </div>
+                  {pendingMonths.length === 0 ? (
+                    <Empty text="По сотруднику нет ожидающих оплат" />
+                  ) : (
+                    <table style={{ width: '100%', borderCollapse: 'collapse' }}>
+                      <thead>
+                        <tr style={{ background: '#f8fafc' }}>
+                          <Th>Период</Th>
+                          <Th>Задач</Th>
+                          <Th>К выплате</Th>
+                          <Th>Часы</Th>
+                          <Th />
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {pendingMonths.map((row) => (
+                          <tr key={`${row.year}-${row.month}`} style={{ borderBottom: '1px solid #eef2f7' }}>
+                            <Td style={{ fontWeight: 600 }}>{row.label}</Td>
+                            <Td>{row.task_count}</Td>
+                            <Td>
+                              <div style={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
+                                {Number(row.total_uzs) > 0 && (
+                                  <span>{formatMoneyNumber(Number(row.total_uzs))} сум</span>
+                                )}
+                                {Number(row.total_usd) > 0 && (
+                                  <span>${formatMoneyNumber(Number(row.total_usd))}</span>
+                                )}
+                                {Number(row.total_uzs) <= 0 && Number(row.total_usd) <= 0 && <span>—</span>}
+                              </div>
+                            </Td>
+                            <Td>
+                              {Number(row.total_hours) > 0
+                                ? Number(row.total_hours).toLocaleString('ru-RU', { maximumFractionDigits: 1 })
+                                : '—'}
+                            </Td>
+                            <Td style={{ textAlign: 'right' }}>
+                              <BtnOutline
+                                type="button"
+                                onClick={() => {
+                                  setYear(row.year)
+                                  setMonth(row.month)
+                                  setStaffSection('tasks')
+                                }}
+                                style={{ padding: '6px 10px', fontSize: 12 }}
+                              >
+                                Открыть месяц
+                              </BtnOutline>
+                            </Td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  )}
                 </Card>
               )}
             </>

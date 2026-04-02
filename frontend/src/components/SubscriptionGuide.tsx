@@ -4,6 +4,7 @@ import { useRouter } from 'next/router'
 import Layout from '@/components/Layout'
 import { PageHeader, Card } from '@/components/ui'
 import { SubscriptionItemsSection, type SubscriptionCategory } from '@/components/SubscriptionItemsSection'
+import { useAuth } from '@/context/AuthContext'
 
 type Step = { title: string; body: ReactNode }
 
@@ -26,10 +27,30 @@ export const SUBSCRIPTION_TABS = [
     icon: '🔄',
     title: 'SaaS, домены, лицензии',
   },
+  {
+    href: '/subscriptions/accesses',
+    label: 'Доступы',
+    icon: '🔐',
+    title: 'Доступы сотрудников к сервисам и технике',
+  },
+  {
+    href: '/subscriptions/service-accesses',
+    label: 'Доступы сервисов',
+    icon: '🧩',
+    title: 'Отдельный список доступов к сервисам',
+  },
 ] as const
 
 export function SubscriptionsTopTabs() {
   const router = useRouter()
+  const { user } = useAuth()
+  const tabs = SUBSCRIPTION_TABS.filter((tab) => {
+    if (user?.role !== 'administration') return true
+    if (tab.href === '/subscriptions/accesses' || tab.href === '/subscriptions/service-accesses') {
+      return !!user.can_view_accesses
+    }
+    return !!user.can_view_subscriptions
+  })
   return (
     <div
       style={{
@@ -45,7 +66,7 @@ export function SubscriptionsTopTabs() {
         Категории
       </div>
       <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8, paddingBottom: 12 }}>
-        {SUBSCRIPTION_TABS.map((tab) => {
+        {tabs.map((tab) => {
           const on = router.pathname === tab.href
           return (
             <Link key={tab.href} href={tab.href} style={{ textDecoration: 'none' }} title={tab.title}>

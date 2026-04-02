@@ -19,6 +19,8 @@ interface User {
   telegram_username?: string
   telegram_chat_id?: number | null
   is_active: boolean
+  can_view_subscriptions?: boolean
+  can_view_accesses?: boolean
   payment_details?: string | null
   payment_details_updated_at?: string | null
   /** Только сотрудник: переключение компаний в кабинете (иначе закреплена компания входа). */

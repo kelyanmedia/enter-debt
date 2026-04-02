@@ -23,11 +23,12 @@ import app.models.telegram_join  # noqa: F401 — таблица telegram_join_r
 import app.models.feed_notification  # noqa: F401 — лента событий
 import app.models.ceo_metric_override  # noqa: F401 — ручные значения CEO dashboard
 from app.api.routes import auth, users, partners, payments, dashboard, notifications, archive, payment_months, telegram_join, feed_notifications, contract_requests, employee_tasks, employee_payment_records
-from app.api.routes import commissions, subscription_items
+from app.api.routes import commissions, subscription_items, access_entries
 import app.models.commission  # noqa: F401
 import app.models.employee_task  # noqa: F401
 import app.models.subscription_item  # noqa: F401
 import app.models.employee_payment_record  # noqa: F401
+import app.models.access_entry  # noqa: F401
 from app.core.config import settings
 from app.core.security import get_password_hash
 
@@ -168,6 +169,7 @@ app.include_router(employee_tasks.router)
 app.include_router(employee_payment_records.router)
 app.include_router(commissions.router)
 app.include_router(subscription_items.router)
+app.include_router(access_entries.router)
 
 
 @app.on_event("startup")
@@ -230,6 +232,8 @@ def _migrate():
     log = logging.getLogger(__name__)
     migrations = [
         "ALTER TABLE users ADD COLUMN IF NOT EXISTS web_access BOOLEAN DEFAULT TRUE",
+        "ALTER TABLE users ADD COLUMN IF NOT EXISTS can_view_subscriptions BOOLEAN NOT NULL DEFAULT FALSE",
+        "ALTER TABLE users ADD COLUMN IF NOT EXISTS can_view_accesses BOOLEAN NOT NULL DEFAULT FALSE",
         "UPDATE users SET web_access = TRUE WHERE web_access IS NULL",
         "ALTER TABLE users ADD COLUMN IF NOT EXISTS see_all_partners BOOLEAN DEFAULT FALSE",
         "UPDATE users SET see_all_partners = FALSE WHERE see_all_partners IS NULL",
@@ -327,6 +331,28 @@ def _migrate():
             created_at TIMESTAMP WITH TIME ZONE DEFAULT now()
         )""",
         "CREATE INDEX IF NOT EXISTS ix_employee_payment_records_user_id ON employee_payment_records (user_id)",
+        """CREATE TABLE IF NOT EXISTS access_entries (
+            id SERIAL PRIMARY KEY,
+            employee_name VARCHAR(160) NOT NULL,
+            category VARCHAR(24) NOT NULL,
+            title VARCHAR(220) NOT NULL,
+            login VARCHAR(320),
+            password TEXT,
+            phone_number VARCHAR(40),
+            twofa_code VARCHAR(120),
+            reserve_email VARCHAR(220),
+            device_model VARCHAR(220),
+            serial_number VARCHAR(220),
+            charge_cycles SMALLINT,
+            photo_url VARCHAR(900),
+            notes TEXT,
+            created_at TIMESTAMP WITH TIME ZONE DEFAULT now(),
+            updated_at TIMESTAMP WITH TIME ZONE
+        )""",
+        "CREATE INDEX IF NOT EXISTS ix_access_entries_employee_name ON access_entries (employee_name)",
+        "CREATE INDEX IF NOT EXISTS ix_access_entries_category ON access_entries (category)",
+        "ALTER TABLE access_entries ADD COLUMN IF NOT EXISTS service_type VARCHAR(120)",
+        "ALTER TABLE access_entries ADD COLUMN IF NOT EXISTS shared_with_administration BOOLEAN NOT NULL DEFAULT FALSE",
     ]
     for sql in migrations:
         # Защита от случайного удаления данных

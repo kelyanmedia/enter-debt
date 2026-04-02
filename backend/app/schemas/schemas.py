@@ -54,6 +54,8 @@ class UserBase(BaseModel):
     telegram_username: Optional[str] = None
     is_active: bool = True
     web_access: bool = True
+    can_view_subscriptions: bool = False
+    can_view_accesses: bool = False
     see_all_partners: bool = False
     payment_details: Optional[str] = None  # реквизиты выплат для сотрудников (freelance)
     multi_company_access: bool = False  # только employee: переключение компаний в кабинете
@@ -73,6 +75,8 @@ class UserUpdate(BaseModel):
     telegram_username: Optional[str] = None
     is_active: Optional[bool] = None
     web_access: Optional[bool] = None
+    can_view_subscriptions: Optional[bool] = None
+    can_view_accesses: Optional[bool] = None
     see_all_partners: Optional[bool] = None
     password: Optional[str] = None
     visible_manager_ids: Optional[List[int]] = None
@@ -175,6 +179,67 @@ class StaffMonthTotalsOut(BaseModel):
     total_usd: Decimal
     total_uzs: Decimal
     total_hours: Decimal
+
+
+class StaffPendingPaymentMonthOut(BaseModel):
+    year: int
+    month: int
+    label: str
+    total_usd: Decimal
+    total_uzs: Decimal
+    total_hours: Decimal
+    task_count: int
+
+
+AccessEntryCategory = Literal["email", "telegram", "device", "service"]
+
+
+class AccessEntryBase(BaseModel):
+    employee_name: str = Field(..., max_length=160)
+    category: AccessEntryCategory
+    title: str = Field(..., max_length=220)
+    service_type: Optional[str] = Field(None, max_length=120)
+    shared_with_administration: bool = False
+    login: Optional[str] = Field(None, max_length=320)
+    password: Optional[str] = None
+    phone_number: Optional[str] = Field(None, max_length=40)
+    twofa_code: Optional[str] = Field(None, max_length=120)
+    reserve_email: Optional[str] = Field(None, max_length=220)
+    device_model: Optional[str] = Field(None, max_length=220)
+    serial_number: Optional[str] = Field(None, max_length=220)
+    charge_cycles: Optional[int] = Field(None, ge=0, le=2000)
+    photo_url: Optional[str] = Field(None, max_length=900)
+    notes: Optional[str] = None
+
+
+class AccessEntryCreate(AccessEntryBase):
+    pass
+
+
+class AccessEntryUpdate(BaseModel):
+    employee_name: Optional[str] = Field(None, max_length=160)
+    category: Optional[AccessEntryCategory] = None
+    title: Optional[str] = Field(None, max_length=220)
+    service_type: Optional[str] = Field(None, max_length=120)
+    shared_with_administration: Optional[bool] = None
+    login: Optional[str] = Field(None, max_length=320)
+    password: Optional[str] = None
+    phone_number: Optional[str] = Field(None, max_length=40)
+    twofa_code: Optional[str] = Field(None, max_length=120)
+    reserve_email: Optional[str] = Field(None, max_length=220)
+    device_model: Optional[str] = Field(None, max_length=220)
+    serial_number: Optional[str] = Field(None, max_length=220)
+    charge_cycles: Optional[int] = Field(None, ge=0, le=2000)
+    photo_url: Optional[str] = Field(None, max_length=900)
+    notes: Optional[str] = None
+
+
+class AccessEntryOut(AccessEntryBase):
+    id: int
+    created_at: datetime
+
+    class Config:
+        from_attributes = True
 
 
 # ── SUBSCRIPTION ITEMS (реестр: бытовые / телефоны / сервисы) ─────────────────

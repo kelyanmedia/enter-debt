@@ -83,6 +83,8 @@ def create_user(data: UserCreate, db: Session = Depends(get_db), _=Depends(requi
         telegram_username=data.telegram_username,
         is_active=data.is_active,
         web_access=data.web_access,
+        can_view_subscriptions=bool(getattr(data, "can_view_subscriptions", False)) if data.role == "administration" else False,
+        can_view_accesses=bool(getattr(data, "can_view_accesses", False)) if data.role == "administration" else False,
         see_all_partners=data.see_all_partners if data.role == "manager" else False,
         visible_manager_ids=vm_json,
         payment_details=pd,
@@ -128,12 +130,17 @@ def _sync_visible_managers_after_user_update(db: Session, user: User, data: User
 
     if data.role is not None and data.role != "administration":
         user.visible_manager_ids = None
+        user.can_view_subscriptions = False
+        user.can_view_accesses = False
     if data.visible_manager_ids is not None:
         if user.role != "administration":
             raise HTTPException(status_code=400, detail="Список менеджеров задаётся только для роли «Администрация»")
         user.visible_manager_ids = json.dumps(_validate_visible_manager_ids(db, data.visible_manager_ids))
     if user.role == "administration" and not parse_visible_manager_ids(user):
         raise HTTPException(status_code=400, detail="Укажите хотя бы одного менеджера для роли «Администрация»")
+    if user.role != "administration":
+        user.can_view_subscriptions = False
+        user.can_view_accesses = False
     if data.role is not None and data.role != "employee":
         user.payment_details = None
         user.multi_company_access = False

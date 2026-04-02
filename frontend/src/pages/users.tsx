@@ -9,6 +9,8 @@ interface User {
   id: number; name: string; email: string; role: string
   telegram_chat_id?: number; telegram_username?: string; is_active: boolean
   web_access?: boolean
+  can_view_subscriptions?: boolean
+  can_view_accesses?: boolean
   see_all_partners?: boolean
   visible_manager_ids?: number[]
   payment_details?: string | null
@@ -29,6 +31,7 @@ interface TelegramJoinRequest {
 const EMPTY = {
   name: '', email: '', password: '', role: 'manager', telegram_chat_id: '', telegram_username: '', is_active: 'true',
   see_all_partners: 'false', new_password: '', payment_details: '', multi_company_access: 'false',
+  can_view_subscriptions: 'false', can_view_accesses: 'false',
 }
 
 export default function UsersPage() {
@@ -80,6 +83,8 @@ export default function UsersPage() {
       telegram_username: u.telegram_username || '',
       is_active: String(u.is_active),
       see_all_partners: u.see_all_partners ? 'true' : 'false',
+      can_view_subscriptions: u.can_view_subscriptions ? 'true' : 'false',
+      can_view_accesses: u.can_view_accesses ? 'true' : 'false',
       new_password: '',
       payment_details: u.payment_details || '',
       multi_company_access: u.multi_company_access ? 'true' : 'false',
@@ -130,6 +135,10 @@ export default function UsersPage() {
         if (form.telegram_chat_id) payload.telegram_chat_id = Number(form.telegram_chat_id)
         if (form.role === 'manager') payload.see_all_partners = form.see_all_partners === 'true'
         if (form.role === 'administration') payload.visible_manager_ids = visibleManagerIds
+        if (form.role === 'administration') {
+          payload.can_view_subscriptions = form.can_view_subscriptions === 'true'
+          payload.can_view_accesses = form.can_view_accesses === 'true'
+        }
         if (form.role === 'employee') {
           payload.payment_details = form.payment_details.trim() || null
           payload.multi_company_access = form.multi_company_access === 'true'
@@ -152,6 +161,8 @@ export default function UsersPage() {
           telegram_username: form.telegram_username || null,
           see_all_partners: form.role === 'manager' ? form.see_all_partners === 'true' : false,
           visible_manager_ids: form.role === 'administration' ? visibleManagerIds : undefined,
+          can_view_subscriptions: form.role === 'administration' ? form.can_view_subscriptions === 'true' : undefined,
+          can_view_accesses: form.role === 'administration' ? form.can_view_accesses === 'true' : undefined,
           payment_details: form.role === 'employee' ? (form.payment_details.trim() || null) : undefined,
           multi_company_access: form.role === 'employee' ? form.multi_company_access === 'true' : false,
         })
@@ -315,7 +326,7 @@ export default function UsersPage() {
                     {u.role === 'manager'
                       ? (u.see_all_partners ? 'Все партнёры' : 'Только назначенные')
                       : u.role === 'administration'
-                        ? `${(u.visible_manager_ids || []).length} менеджер(ов)`
+                        ? `${(u.visible_manager_ids || []).length} менеджер(ов) · Подписки: ${u.can_view_subscriptions ? 'да' : 'нет'} · Доступы: ${u.can_view_accesses ? 'да' : 'нет'}`
                         : u.role === 'employee'
                           ? 'Только «Мои задачи»'
                           : '—'}
@@ -419,6 +430,26 @@ export default function UsersPage() {
             </div>
             <div style={{ fontSize: 11, color: '#8a8fa8', marginTop: 6, lineHeight: 1.45 }}>
               При создании компании и проекта пользователь выбирает одного из отмеченных менеджеров как ответственного.
+            </div>
+            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12, marginTop: 10 }}>
+              <Field label="Видит подписки">
+                <Select
+                  value={form.can_view_subscriptions}
+                  onChange={(e) => setForm((f) => ({ ...f, can_view_subscriptions: e.target.value }))}
+                >
+                  <option value="false">Нет</option>
+                  <option value="true">Да</option>
+                </Select>
+              </Field>
+              <Field label="Видит доступы">
+                <Select
+                  value={form.can_view_accesses}
+                  onChange={(e) => setForm((f) => ({ ...f, can_view_accesses: e.target.value }))}
+                >
+                  <option value="false">Нет</option>
+                  <option value="true">Да</option>
+                </Select>
+              </Field>
             </div>
           </div>
         )}

@@ -51,7 +51,13 @@ const NAV_SECTIONS: NavSection[] = [
         href: '/subscriptions/household',
         label: 'Подписки',
         icon: '📑',
-        activePathPrefix: '/subscriptions',
+        activePathPrefix: '/subscriptions/household',
+      },
+      {
+        href: '/subscriptions/accesses',
+        label: 'Доступы',
+        icon: '🔐',
+        activePathPrefix: '/subscriptions/accesses',
       },
     ],
   },
@@ -300,6 +306,13 @@ export default function Layout({ children }: { children: ReactNode }) {
               if (n.accountantHidden && user.role === 'accountant') return false
               if (n.administrationHidden && user.role === 'administration') return false
               if (n.managerHidden && (user.role === 'manager' || user.role === 'administration')) return false
+              if (user.role === 'administration') {
+                if (n.href.startsWith('/subscriptions/accesses')) {
+                  if (!user.can_view_accesses) return false
+                } else if (n.href.startsWith('/subscriptions')) {
+                  if (!user.can_view_subscriptions) return false
+                }
+              }
               return true
             })
             if (visible.length === 0) return null

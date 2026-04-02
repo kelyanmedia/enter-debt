@@ -16,6 +16,7 @@ from app.schemas.schemas import (
     EmployeeTaskOut,
     StaffEmployeeOut,
     StaffMonthTotalsOut,
+    StaffPendingPaymentMonthOut,
 )
 from app.core.security import get_current_user, require_admin
 
@@ -153,6 +154,56 @@ def staff_month_totals(
         total_uzs=total_uzs,
         total_hours=total_hours,
     )
+
+
+@router.get("/staff/pending-payments-summary", response_model=List[StaffPendingPaymentMonthOut])
+def staff_pending_payments_summary(
+    user_id: int = Query(..., description="ID сотрудника"),
+    db: Session = Depends(get_db),
+    _: User = Depends(require_admin),
+):
+    u = db.query(User).filter(User.id == user_id, User.role == "employee").first()
+    if not u:
+        raise HTTPException(status_code=404, detail="Сотрудник не найден")
+
+    rows = (
+        db.query(EmployeeTask)
+        .filter(EmployeeTask.user_id == user_id, EmployeeTask.paid == False)
+        .order_by(EmployeeTask.work_date.desc(), EmployeeTask.id.desc())
+        .all()
+    )
+    agg: dict[tuple[int, int], dict] = {}
+    for t in rows:
+        yy = int(t.work_date.year)
+        mm = int(t.work_date.month)
+        key = (yy, mm)
+        slot = agg.get(key)
+        if slot is None:
+            slot = {
+                "year": yy,
+                "month": mm,
+                "label": f"{_MONTHS_RU[mm - 1]} {yy}",
+                "total_usd": Decimal(0),
+                "total_uzs": Decimal(0),
+                "total_hours": Decimal(0),
+                "task_count": 0,
+            }
+            agg[key] = slot
+        slot["task_count"] += 1
+        if t.hours is not None:
+            slot["total_hours"] += Decimal(str(t.hours))
+        if t.amount is not None:
+            a = Decimal(str(t.amount))
+            if (t.currency or "USD").upper() == "UZS":
+                slot["total_uzs"] += a
+            else:
+                slot["total_usd"] += a
+
+    out = [
+        StaffPendingPaymentMonthOut(**slot)
+        for _, slot in sorted(agg.items(), key=lambda kv: (kv[0][0], kv[0][1]), reverse=True)
+    ]
+    return out
 
 
 @router.get("", response_model=List[EmployeeTaskOut])
