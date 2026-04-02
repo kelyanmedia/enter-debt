@@ -276,6 +276,21 @@ export default function StaffPage() {
     [tasks],
   )
 
+  const pendingMonthsTotals = useMemo(
+    () =>
+      pendingMonths.reduce(
+        (acc, row) => {
+          acc.tasks += row.task_count || 0
+          acc.uzs += Number(row.total_uzs) || 0
+          acc.usd += Number(row.total_usd) || 0
+          acc.h += Number(row.total_hours) || 0
+          return acc
+        },
+        { tasks: 0, uzs: 0, usd: 0, h: 0 },
+      ),
+    [pendingMonths],
+  )
+
   const parseNum = (s: string) => {
     const t = String(s).replace(/\s/g, '').replace(',', '.')
     if (!t) return null
@@ -1132,6 +1147,36 @@ export default function StaffPage() {
                           </tr>
                         ))}
                       </tbody>
+                      <tfoot>
+                        <tr>
+                          <Td style={{ fontWeight: 700, fontSize: 13, color: '#475569', borderBottom: 'none', borderTop: '2px solid #e2e8f0' }}>
+                            Итого
+                          </Td>
+                          <Td style={{ fontWeight: 700, fontSize: 13, borderBottom: 'none', borderTop: '2px solid #e2e8f0' }}>
+                            {pendingMonthsTotals.tasks}
+                          </Td>
+                          <Td style={{ fontWeight: 700, fontSize: 13, borderBottom: 'none', borderTop: '2px solid #e2e8f0' }}>
+                            {pendingMonthsTotals.uzs > 0 || pendingMonthsTotals.usd > 0 ? (
+                              <div style={{ display: 'flex', flexDirection: 'column', gap: 4, lineHeight: 1.35 }}>
+                                {pendingMonthsTotals.uzs > 0 && (
+                                  <span>{formatMoneyNumber(pendingMonthsTotals.uzs)} сум</span>
+                                )}
+                                {pendingMonthsTotals.usd > 0 && (
+                                  <span>${formatMoneyNumber(pendingMonthsTotals.usd)}</span>
+                                )}
+                              </div>
+                            ) : (
+                              '—'
+                            )}
+                          </Td>
+                          <Td style={{ fontWeight: 700, fontSize: 13, borderBottom: 'none', borderTop: '2px solid #e2e8f0' }}>
+                            {pendingMonthsTotals.h > 0
+                              ? pendingMonthsTotals.h.toLocaleString('ru-RU', { maximumFractionDigits: 1 })
+                              : '—'}
+                          </Td>
+                          <Td style={{ borderBottom: 'none', borderTop: '2px solid #e2e8f0' }} />
+                        </tr>
+                      </tfoot>
                     </table>
                   )}
                 </Card>
