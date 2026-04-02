@@ -22,6 +22,8 @@ class User(Base):
     telegram_username = Column(String(100), nullable=True)
     is_active = Column(Boolean, default=True)
     web_access = Column(Boolean, nullable=False, default=True)  # False = только Telegram (бухгалтерия)
+    # Сотрудник (freelance): True = в кабинете можно переключать компанию (отдельные БД и выплаты)
+    multi_company_access = Column(Boolean, nullable=False, default=False)
     see_all_partners = Column(Boolean, nullable=False, default=False)  # менеджер: True = видит всех партнёров
     created_at = Column(DateTime(timezone=True), server_default=func.now())
     feed_cleared_at = Column(DateTime(timezone=True), nullable=True)

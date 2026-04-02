@@ -179,6 +179,28 @@ def list_tasks(
     return [EmployeeTaskOut.model_validate(t) for t in q.all()]
 
 
+@router.get("/months-with-tasks", response_model=List[int])
+def list_months_with_tasks_in_year(
+    year: int = Query(..., ge=2000, le=2100),
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """Для «Мои задачи»: номера месяцев (1–12), где у сотрудника есть хотя бы одна задача за год."""
+    if current_user.role != "employee":
+        raise HTTPException(status_code=403, detail="Только для сотрудников")
+    rows = (
+        db.query(extract("month", EmployeeTask.work_date))
+        .filter(
+            EmployeeTask.user_id == current_user.id,
+            extract("year", EmployeeTask.work_date) == year,
+        )
+        .distinct()
+        .all()
+    )
+    months = sorted({int(r[0]) for r in rows if r[0] is not None})
+    return months
+
+
 @router.post("", response_model=EmployeeTaskOut)
 def create_task(
     data: EmployeeTaskCreate,

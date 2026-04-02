@@ -12,3 +12,4 @@ postgres_data/
 venv/
 db_backups/
 *.log
+backend/uploads/

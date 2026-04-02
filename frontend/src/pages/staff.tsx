@@ -19,6 +19,7 @@ import {
   taskStatusRu,
   type StaffExportOptions,
 } from '@/lib/staffTasksExport'
+import { EmployeePaymentHistory } from '@/components/EmployeePaymentHistory'
 
 interface StaffEmployee {
   id: number
@@ -190,10 +191,15 @@ export default function StaffPage() {
     currency: 'USD',
     status: 'in_progress',
   })
+  const [staffSection, setStaffSection] = useState<'tasks' | 'payments'>('tasks')
 
   useEffect(() => {
     if (!loading && user && user.role !== 'admin') router.replace('/')
   }, [loading, user, router])
+
+  useEffect(() => {
+    setStaffSection('tasks')
+  }, [selectedId])
 
   const loadEmployees = useCallback(() => {
     api.get<StaffEmployee[]>('employee-tasks/staff/employees')
@@ -506,7 +512,7 @@ export default function StaffPage() {
 
   return (
     <Layout>
-      <PageHeader title="Команда" subtitle="Сотрудники, задачи по месяцам и суммы к выплате" />
+      <PageHeader title="Команда" subtitle="Сотрудники: задачи по месяцам и отдельно — история выплат" />
       <div style={{ padding: '22px 24px', overflow: 'auto', flex: 1, display: 'flex', flexDirection: 'column', gap: 0, minHeight: 0 }}>
         <div
           style={{
@@ -571,36 +577,161 @@ export default function StaffPage() {
             <Card style={{ padding: 40 }}><Empty text={employees.length ? 'Выберите сотрудника выше' : 'Добавьте пользователей с ролью «Сотрудник»'} /></Card>
           ) : (
             <>
-              <div style={{ display: 'flex', flexWrap: 'wrap', gap: 12, marginBottom: 16, alignItems: 'center' }}>
-                <Select value={String(year)} onChange={e => setYear(Number(e.target.value))} style={{ maxWidth: 100 }}>
-                  {Array.from({ length: 5 }, (_, i) => now.getFullYear() - i).map(y => (
-                    <option key={y} value={y}>{y}</option>
-                  ))}
-                </Select>
-                <Select value={String(month)} onChange={e => setMonth(Number(e.target.value))} style={{ maxWidth: 160 }}>
-                  {MONTH_OPTIONS.map(m => (
-                    <option key={m.v} value={m.v}>{m.l}</option>
-                  ))}
-                </Select>
-                <BtnPrimary onClick={openNewTask} style={{ fontSize: 12, padding: '6px 14px' }}>
-                  + Задача
-                </BtnPrimary>
-                <span style={{ fontSize: 12, color: '#8a8fa8', marginLeft: 4 }}>Итог в</span>
-                <Select
-                  value={summaryCurrency}
-                  onChange={(e) => {
-                    const c = e.target.value as TaskSummaryCurrency
-                    setSummaryCurrency(c)
-                    writeTaskSummaryCurrency(c)
+              <div
+                style={{
+                  display: 'flex',
+                  alignItems: 'stretch',
+                  flexWrap: 'wrap',
+                  gap: 12,
+                  marginBottom: 16,
+                  borderBottom: '1px solid #e8e9ef',
+                  paddingBottom: 12,
+                }}
+              >
+                <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', alignItems: 'center', flexShrink: 0 }}>
+                  <button
+                    type="button"
+                    onClick={() => setStaffSection('tasks')}
+                    style={{
+                      padding: '8px 16px',
+                      borderRadius: 9,
+                      border: staffSection === 'tasks' ? '2px solid #1a6b3c' : '1px solid #e8e9ef',
+                      background: staffSection === 'tasks' ? '#f0faf4' : '#fff',
+                      fontSize: 13,
+                      fontWeight: 600,
+                      color: staffSection === 'tasks' ? '#1a6b3c' : '#64748b',
+                      cursor: 'pointer',
+                      fontFamily: 'inherit',
+                    }}
+                  >
+                    Задачи
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setStaffSection('payments')}
+                    style={{
+                      padding: '8px 16px',
+                      borderRadius: 9,
+                      border: staffSection === 'payments' ? '2px solid #1a6b3c' : '1px solid #e8e9ef',
+                      background: staffSection === 'payments' ? '#f0faf4' : '#fff',
+                      fontSize: 13,
+                      fontWeight: 600,
+                      color: staffSection === 'payments' ? '#1a6b3c' : '#64748b',
+                      cursor: 'pointer',
+                      fontFamily: 'inherit',
+                    }}
+                  >
+                    История выплат
+                  </button>
+                </div>
+
+                <div
+                  style={{
+                    flex: '1 1 220px',
+                    minWidth: 0,
+                    padding: '8px 12px',
+                    borderRadius: 10,
+                    display: 'flex',
+                    flexDirection: 'column',
+                    gap: 4,
+                    justifyContent: 'center',
+                    maxHeight: 88,
+                    boxSizing: 'border-box',
+                    ...(requisitesHighlight
+                      ? {
+                          border: '2px solid #eab308',
+                          background: 'linear-gradient(135deg, #fefce8 0%, #fffbeb 100%)',
+                          boxShadow: '0 1px 8px rgba(234,179,8,.12)',
+                        }
+                      : { border: '1px dashed #c5c8d4', background: '#fafbfc' }),
                   }}
-                  style={{ maxWidth: 100, fontSize: 12 }}
+                  title={
+                    selected.payment_details?.trim()
+                      ? selected.payment_details.trim()
+                      : 'Не заполнено в карточке пользователя'
+                  }
                 >
-                  <option value="UZS">UZS</option>
-                  <option value="USD">USD</option>
-                </Select>
-                {loadingData && <span style={{ fontSize: 12, color: '#8a8fa8' }}>Загрузка…</span>}
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
+                    <span style={{ fontSize: 10, fontWeight: 700, color: '#8a8fa8', textTransform: 'uppercase', letterSpacing: '.04em' }}>
+                      Реквизиты для выплаты
+                    </span>
+                    {requisitesHighlight && (
+                      <span
+                        title="Реквизиты недавно менялись"
+                        style={{
+                          fontSize: 10,
+                          fontWeight: 700,
+                          color: '#854d0e',
+                          background: '#fde047',
+                          padding: '2px 6px',
+                          borderRadius: 5,
+                        }}
+                      >
+                        Обновлены
+                      </span>
+                    )}
+                  </div>
+                  <pre
+                    style={{
+                      margin: 0,
+                      fontSize: 11,
+                      fontFamily: 'ui-monospace, monospace',
+                      whiteSpace: 'pre-wrap',
+                      wordBreak: 'break-word',
+                      color: '#334155',
+                      lineHeight: 1.35,
+                      overflow: 'auto',
+                      flex: 1,
+                      minHeight: 0,
+                    }}
+                  >
+                    {selected.payment_details?.trim() || '— не заполнено в карточке пользователя'}
+                  </pre>
+                </div>
+
+                {staffSection === 'tasks' && (
+                  <div
+                    style={{
+                      display: 'flex',
+                      flexWrap: 'wrap',
+                      gap: 12,
+                      alignItems: 'center',
+                      flexShrink: 0,
+                    }}
+                  >
+                    <Select value={String(year)} onChange={e => setYear(Number(e.target.value))} style={{ maxWidth: 100 }}>
+                      {Array.from({ length: 5 }, (_, i) => now.getFullYear() - i).map(y => (
+                        <option key={y} value={y}>{y}</option>
+                      ))}
+                    </Select>
+                    <Select value={String(month)} onChange={e => setMonth(Number(e.target.value))} style={{ maxWidth: 160 }}>
+                      {MONTH_OPTIONS.map(m => (
+                        <option key={m.v} value={m.v}>{m.l}</option>
+                      ))}
+                    </Select>
+                    <BtnPrimary onClick={openNewTask} style={{ fontSize: 12, padding: '6px 14px' }}>
+                      + Задача
+                    </BtnPrimary>
+                    <span style={{ fontSize: 12, color: '#8a8fa8' }}>Итог в</span>
+                    <Select
+                      value={summaryCurrency}
+                      onChange={(e) => {
+                        const c = e.target.value as TaskSummaryCurrency
+                        setSummaryCurrency(c)
+                        writeTaskSummaryCurrency(c)
+                      }}
+                      style={{ maxWidth: 100, fontSize: 12 }}
+                    >
+                      <option value="UZS">UZS</option>
+                      <option value="USD">USD</option>
+                    </Select>
+                    {loadingData && <span style={{ fontSize: 12, color: '#8a8fa8' }}>Загрузка…</span>}
+                  </div>
+                )}
               </div>
 
+              {staffSection === 'tasks' && (
+                <>
               <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(240px, 1fr))', gap: 14, marginBottom: 18 }}>
                 <Card
                   style={{
@@ -645,47 +776,6 @@ export default function StaffPage() {
                   </div>
                 </Card>
               </div>
-
-              <Card
-                style={{
-                  padding: '16px 18px',
-                  marginBottom: 18,
-                  ...(requisitesHighlight
-                    ? {
-                        border: '2px solid #eab308',
-                        background: 'linear-gradient(135deg, #fefce8 0%, #fffbeb 100%)',
-                        boxShadow: '0 2px 12px rgba(234,179,8,.15)',
-                      }
-                    : { border: '1px dashed #c5c8d4' }),
-                }}
-              >
-                <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 8, flexWrap: 'wrap' }}>
-                  <div style={{ fontSize: 11, fontWeight: 700, color: '#8a8fa8', textTransform: 'uppercase' }}>
-                    Реквизиты для выплаты
-                  </div>
-                  {requisitesHighlight && (
-                    <span
-                      style={{
-                        fontSize: 11,
-                        fontWeight: 700,
-                        color: '#854d0e',
-                        background: '#fde047',
-                        padding: '3px 8px',
-                        borderRadius: 6,
-                      }}
-                    >
-                      Реквизиты недавно менялись
-                    </span>
-                  )}
-                </div>
-                <pre style={{
-                  margin: 0, fontSize: 13, fontFamily: 'ui-monospace, monospace', whiteSpace: 'pre-wrap',
-                  color: '#334155', lineHeight: 1.5,
-                }}
-                >
-                  {selected.payment_details?.trim() || '— не заполнено в карточке пользователя'}
-                </pre>
-              </Card>
 
               <Card style={{ padding: 0, overflow: 'visible' }}>
                 <div
@@ -948,6 +1038,14 @@ export default function StaffPage() {
                   <div style={{ padding: 32, textAlign: 'center', color: '#8a8fa8', fontSize: 14 }}>Нет строк за этот месяц</div>
                 )}
               </Card>
+                </>
+              )}
+
+              {staffSection === 'payments' && selected && (
+                <Card style={{ padding: '18px 20px' }}>
+                  <EmployeePaymentHistory mode="admin" userId={selected.id} key={selected.id} />
+                </Card>
+              )}
             </>
           )}
         </div>

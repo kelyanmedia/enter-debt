@@ -1,4 +1,4 @@
-from pydantic import BaseModel, EmailStr, Field, BeforeValidator
+from pydantic import BaseModel, EmailStr, Field, BeforeValidator, field_validator
 from typing import Optional, List, Literal, Dict, Any, Annotated
 from datetime import datetime, date
 from decimal import Decimal
@@ -56,6 +56,7 @@ class UserBase(BaseModel):
     web_access: bool = True
     see_all_partners: bool = False
     payment_details: Optional[str] = None  # реквизиты выплат для сотрудников (freelance)
+    multi_company_access: bool = False  # только employee: переключение компаний в кабинете
 
 
 class UserCreate(UserBase):
@@ -76,6 +77,7 @@ class UserUpdate(BaseModel):
     password: Optional[str] = None
     visible_manager_ids: Optional[List[int]] = None
     payment_details: Optional[str] = None
+    multi_company_access: Optional[bool] = None
 
 
 class AssignedPartnersBody(BaseModel):
@@ -141,6 +143,22 @@ class EmployeeTaskOut(EmployeeTaskBase):
         from_attributes = True
 
 
+class EmployeePaymentRecordOut(BaseModel):
+    """История выплат сотруднику: дата перевода, период, сумма, чек."""
+
+    id: int
+    user_id: int
+    paid_on: date
+    period_year: Optional[int] = None
+    period_month: Optional[int] = None
+    amount: Decimal
+    currency: str
+    note: Optional[str] = None
+    has_receipt: bool
+    entered_by: str  # self | admin
+    created_at: datetime
+
+
 class StaffEmployeeOut(BaseModel):
     id: int
     name: str
@@ -160,15 +178,48 @@ class StaffMonthTotalsOut(BaseModel):
 
 
 # ── SUBSCRIPTION ITEMS (реестр: бытовые / телефоны / сервисы) ─────────────────
+SubscriptionRecurrence = Literal["once", "monthly", "yearly"]
+SubscriptionStatus = Literal["active", "inactive"]
+SubscriptionPayerCode = Literal["KM", "WW"]
+
+
 class SubscriptionItemBase(BaseModel):
     name: str = Field(..., max_length=300)
+    status: SubscriptionStatus = "active"
+    tag: Optional[str] = Field(None, max_length=320)
+    payer_code: Optional[SubscriptionPayerCode] = None
+    payment_method: Optional[str] = Field(None, max_length=200)
+    phone_number: Optional[str] = Field(None, max_length=32)
     vendor: Optional[str] = Field(None, max_length=300)
     amount: Optional[Decimal] = None
     currency: str = Field(default="USD", max_length=3)
     billing_note: Optional[str] = Field(None, max_length=200)
     next_due_date: Optional[date] = None
+    next_deadline_at: Optional[datetime] = None
+    recurrence: SubscriptionRecurrence = "once"
+    reminder_days_before: int = Field(default=0, ge=0, le=2)
     notes: Optional[str] = None
     link_url: Optional[str] = Field(None, max_length=800)
+
+    @field_validator("phone_number", mode="before")
+    @classmethod
+    def strip_phone(cls, v: Any) -> Any:
+        if v is None or v == "":
+            return None
+        if isinstance(v, str):
+            s = v.strip()
+            return s or None
+        return v
+
+    @field_validator("tag", "payment_method", mode="before")
+    @classmethod
+    def strip_opt_text(cls, v: Any) -> Any:
+        if v is None or v == "":
+            return None
+        if isinstance(v, str):
+            s = v.strip()
+            return s or None
+        return v
 
 
 class SubscriptionItemCreate(SubscriptionItemBase):
@@ -177,13 +228,52 @@ class SubscriptionItemCreate(SubscriptionItemBase):
 
 class SubscriptionItemUpdate(BaseModel):
     name: Optional[str] = Field(None, max_length=300)
+    status: Optional[SubscriptionStatus] = None
+    tag: Optional[str] = Field(None, max_length=320)
+    payer_code: Optional[SubscriptionPayerCode] = None
+    payment_method: Optional[str] = Field(None, max_length=200)
+    phone_number: Optional[str] = Field(None, max_length=32)
     vendor: Optional[str] = Field(None, max_length=300)
     amount: Optional[Decimal] = None
     currency: Optional[str] = Field(None, max_length=3)
     billing_note: Optional[str] = Field(None, max_length=200)
     next_due_date: Optional[date] = None
+    next_deadline_at: Optional[datetime] = None
+    recurrence: Optional[SubscriptionRecurrence] = None
+    reminder_days_before: Optional[int] = Field(None, ge=0, le=2)
     notes: Optional[str] = None
     link_url: Optional[str] = Field(None, max_length=800)
+
+    @field_validator("phone_number", mode="before")
+    @classmethod
+    def strip_phone_u(cls, v: Any) -> Any:
+        if v is None:
+            return None
+        if v == "":
+            return None
+        if isinstance(v, str):
+            s = v.strip()
+            return s or None
+        return v
+
+    @field_validator("tag", "payment_method", mode="before")
+    @classmethod
+    def strip_opt_text_u(cls, v: Any) -> Any:
+        if v is None:
+            return None
+        if v == "":
+            return None
+        if isinstance(v, str):
+            s = v.strip()
+            return s or None
+        return v
+
+    @field_validator("payer_code", mode="before")
+    @classmethod
+    def payer_empty_u(cls, v: Any) -> Any:
+        if v == "":
+            return None
+        return v
 
 
 class SubscriptionItemOut(SubscriptionItemBase):

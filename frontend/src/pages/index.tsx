@@ -130,9 +130,30 @@ export default function Dashboard() {
     ? `${dateFrom ? new Date(dateFrom).toLocaleDateString('ru-RU', { day: 'numeric', month: 'short' }) : '...'} — ${dateTo ? new Date(dateTo).toLocaleDateString('ru-RU', { day: 'numeric', month: 'short' }) : '...'}`
     : 'Весь период'
 
+  const redirectingToDebitor =
+    !loading && user && (user.role === 'manager' || user.role === 'administration')
+
   return (
     <Layout>
-      {/* Layout обрабатывает редирект на /login и spinner; контент только для admin/accountant */}
+      {/* Пока useEffect шлёт на /debitor — не оставляем пустую область (иначе «белый экран»). */}
+      {redirectingToDebitor && (
+        <div
+          style={{
+            flex: 1,
+            display: 'flex',
+            flexDirection: 'column',
+            alignItems: 'center',
+            justifyContent: 'center',
+            minHeight: 240,
+            color: '#8a8fa8',
+            fontSize: 14,
+            gap: 8,
+          }}
+        >
+          Переход в дебиторку…
+        </div>
+      )}
+      {/* Layout обрабатывает редирект на /login и spinner; дашборд — только admin / accountant */}
       {!loading && user && user.role !== 'manager' && user.role !== 'administration' && <>
       {/* Header with global date filter */}
       <div style={{ background: '#fff', borderBottom: '1px solid #e8e9ef', padding: '0 24px', minHeight: 60, display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexShrink: 0, flexWrap: 'wrap', gap: 12 }}>

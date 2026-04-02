@@ -2,6 +2,7 @@ import type { AppProps } from 'next/app'
 import { useEffect } from 'react'
 import axios from 'axios'
 import { AuthProvider } from '@/context/AuthContext'
+import { AppErrorBoundary } from '@/components/AppErrorBoundary'
 import '@/styles/globals.css'
 
 export default function App({ Component, pageProps }: AppProps) {
@@ -17,8 +18,10 @@ export default function App({ Component, pageProps }: AppProps) {
   }, [])
 
   return (
-    <AuthProvider>
-      <Component {...pageProps} />
-    </AuthProvider>
+    <AppErrorBoundary>
+      <AuthProvider>
+        <Component {...pageProps} />
+      </AuthProvider>
+    </AppErrorBoundary>
   )
 }

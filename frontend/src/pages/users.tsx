@@ -12,6 +12,7 @@ interface User {
   see_all_partners?: boolean
   visible_manager_ids?: number[]
   payment_details?: string | null
+  multi_company_access?: boolean
   last_login_at?: string | null
 }
 interface PartnerRow { id: number; name: string }
@@ -27,7 +28,7 @@ interface TelegramJoinRequest {
 
 const EMPTY = {
   name: '', email: '', password: '', role: 'manager', telegram_chat_id: '', telegram_username: '', is_active: 'true',
-  see_all_partners: 'false', new_password: '', payment_details: '',
+  see_all_partners: 'false', new_password: '', payment_details: '', multi_company_access: 'false',
 }
 
 export default function UsersPage() {
@@ -81,6 +82,7 @@ export default function UsersPage() {
       see_all_partners: u.see_all_partners ? 'true' : 'false',
       new_password: '',
       payment_details: u.payment_details || '',
+      multi_company_access: u.multi_company_access ? 'true' : 'false',
     })
     setError('')
     setAssignedPartnerIds([])
@@ -128,7 +130,10 @@ export default function UsersPage() {
         if (form.telegram_chat_id) payload.telegram_chat_id = Number(form.telegram_chat_id)
         if (form.role === 'manager') payload.see_all_partners = form.see_all_partners === 'true'
         if (form.role === 'administration') payload.visible_manager_ids = visibleManagerIds
-        if (form.role === 'employee') payload.payment_details = form.payment_details.trim() || null
+        if (form.role === 'employee') {
+          payload.payment_details = form.payment_details.trim() || null
+          payload.multi_company_access = form.multi_company_access === 'true'
+        }
         if (form.new_password.trim()) payload.password = form.new_password.trim()
         await api.patch(`users/${editing.id}`, payload)
         if (form.role === 'manager' && form.see_all_partners === 'false') {
@@ -148,6 +153,7 @@ export default function UsersPage() {
           see_all_partners: form.role === 'manager' ? form.see_all_partners === 'true' : false,
           visible_manager_ids: form.role === 'administration' ? visibleManagerIds : undefined,
           payment_details: form.role === 'employee' ? (form.payment_details.trim() || null) : undefined,
+          multi_company_access: form.role === 'employee' ? form.multi_company_access === 'true' : false,
         })
       }
       setModal(false)
@@ -238,7 +244,7 @@ export default function UsersPage() {
           <div style={{ maxWidth: 560 }}>
             <div style={{ fontWeight: 700, fontSize: 15, color: '#1a1d23' }}>Сотрудники (freelance)</div>
             <div style={{ fontSize: 13, color: '#6b7280', marginTop: 6, lineHeight: 1.5 }}>
-              Выдайте роль <b>Сотрудник</b> — человек увидит только раздел «Мои задачи». Реквизиты (Visa, Uzcard…) и сводка по месяцам для выплат — в разделе{' '}
+              Выдайте роль <b>Сотрудник</b> — в кабинете отдельно «Мои задачи» и «История выплат». Реквизиты — в профиле; сводка по задачам и выплатам — в разделе{' '}
               <b>Команда</b>.
             </div>
           </div>
@@ -417,23 +423,34 @@ export default function UsersPage() {
           </div>
         )}
         {form.role === 'employee' && (
-          <Field label="Реквизиты для выплат (Visa, Uzcard, карта, IBAN…)">
-            <textarea
-              value={form.payment_details}
-              onChange={e => setForm(f => ({ ...f, payment_details: e.target.value }))}
-              placeholder="Всё в одном поле — как вам удобно копировать раз в месяц"
-              rows={4}
-              style={{
-                width: '100%',
-                border: '1px solid #e8e9ef',
-                borderRadius: 9,
-                padding: '10px 12px',
-                fontSize: 13,
-                fontFamily: 'inherit',
-                resize: 'vertical',
-              }}
-            />
-          </Field>
+          <>
+            <Field label="Реквизиты для выплат (Visa, Uzcard, карта, IBAN…)">
+              <textarea
+                value={form.payment_details}
+                onChange={e => setForm(f => ({ ...f, payment_details: e.target.value }))}
+                placeholder="Всё в одном поле — как вам удобно копировать раз в месяц"
+                rows={4}
+                style={{
+                  width: '100%',
+                  border: '1px solid #e8e9ef',
+                  borderRadius: 9,
+                  padding: '10px 12px',
+                  fontSize: 13,
+                  fontFamily: 'inherit',
+                  resize: 'vertical',
+                }}
+              />
+            </Field>
+            <Field label="Несколько компаний в кабинете">
+              <Select
+                value={form.multi_company_access}
+                onChange={(e) => setForm((f) => ({ ...f, multi_company_access: e.target.value }))}
+              >
+                <option value="false">Нет — только компания, выбранная при входе (отдельные выплаты в каждой БД)</option>
+                <option value="true">Да — переключатель компаний в боковой панели (у каждой компании свои задачи и выплаты)</option>
+              </Select>
+            </Field>
+          </>
         )}
         {form.role === 'manager' && (
           <Field label="Менеджер видит проекты всех партнёров">

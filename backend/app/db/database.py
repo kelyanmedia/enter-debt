@@ -56,6 +56,40 @@ def _build_company_urls() -> Dict[str, str]:
     return urls
 
 
+def _mask_database_url(url: str) -> str:
+    try:
+        u = urlparse(url)
+        if u.password and u.hostname:
+            user = u.username or ""
+            port = f":{u.port}" if u.port else ""
+            netloc = f"{user}:****@{u.hostname}{port}"
+            return urlunparse((u.scheme, netloc, u.path or "", u.params, u.query, u.fragment))
+    except Exception:
+        pass
+    return url
+
+
+def log_company_database_binding() -> None:
+    """Вызов при старте API: видно в логах, сливаются ли БД компаний в одну."""
+    masked = {slug: _mask_database_url(u) for slug, u in _COMPANY_URLS.items()}
+    log.info("БД по компаниям (пароль скрыт): %s", masked)
+    uniq = set(_COMPANY_URLS.values())
+    if len(uniq) != 1:
+        return
+    base = (settings.DATABASE_URL or "").strip().lower()
+    is_pg = "postgresql" in base or base.startswith("postgres:")
+    if not is_pg:
+        return
+    log.error(
+        "ENTERDEBT: kelyanmedia, whiteway и enter_group_media используют ОДНУ PostgreSQL-базу — "
+        "переключатель компании в панели не изолирует данные. "
+        "Исправление: в .env на сервере задайте DATABASE_SEPARATE_DBS=true "
+        "(и создайте БД enterdebt_whiteway и enterdebt_enter_group_media тем же пользователем, что и основная БД) "
+        "или укажите отдельные DATABASE_URL_WHITEWAY и DATABASE_URL_ENTER_GROUP_MEDIA. "
+        "После перезапуска таблицы создадутся в каждой базе автоматически."
+    )
+
+
 _COMPANY_URLS = _build_company_urls()
 _engines: Dict[str, object] = {}
 _sessionmakers: Dict[str, sessionmaker] = {}

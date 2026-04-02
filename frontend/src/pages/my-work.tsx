@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useRouter } from 'next/router'
 import { useAuth } from '@/context/AuthContext'
 import Layout from '@/components/Layout'
@@ -13,7 +13,6 @@ import {
   writeTaskSummaryCurrency,
   type TaskSummaryCurrency,
 } from '@/lib/taskSummaryCurrency'
-
 interface TaskRow {
   id: number
   work_date: string
@@ -70,19 +69,53 @@ export default function MyWorkPage() {
   const [statusSavingId, setStatusSavingId] = useState<number | null>(null)
   const [revertAttempts, setRevertAttempts] = useState<Record<number, number>>({})
   const [lockExplainOpen, setLockExplainOpen] = useState(false)
+  const [monthsWithTasks, setMonthsWithTasks] = useState<Set<number>>(() => new Set())
+  const [monthMenuOpen, setMonthMenuOpen] = useState(false)
+  const monthMenuRef = useRef<HTMLDivElement>(null)
+
+  const fetchMonthsWithTasks = useCallback(() => {
+    return api
+      .get<number[]>('employee-tasks/months-with-tasks', { params: { year } })
+      .then((r) => setMonthsWithTasks(new Set(r.data)))
+      .catch(() => setMonthsWithTasks(new Set()))
+  }, [year])
 
   const load = useCallback(() => {
     setLoadingData(true)
     api
       .get<TaskRow[]>('employee-tasks', { params: { year, month } })
-      .then(r => setTasks(r.data))
+      .then((r) => setTasks(r.data))
       .catch(() => setTasks([]))
-      .finally(() => setLoadingData(false))
-  }, [year, month])
+      .finally(() => {
+        setLoadingData(false)
+        void fetchMonthsWithTasks()
+      })
+  }, [year, month, fetchMonthsWithTasks])
 
   useEffect(() => {
     if (!loading && user && user.role !== 'employee') router.replace('/')
   }, [loading, user, router])
+
+  useEffect(() => {
+    setMonthMenuOpen(false)
+  }, [year])
+
+  useEffect(() => {
+    if (!monthMenuOpen) return
+    const onDoc = (e: MouseEvent) => {
+      const el = monthMenuRef.current
+      if (el && !el.contains(e.target as Node)) setMonthMenuOpen(false)
+    }
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') setMonthMenuOpen(false)
+    }
+    document.addEventListener('mousedown', onDoc)
+    document.addEventListener('keydown', onKey)
+    return () => {
+      document.removeEventListener('mousedown', onDoc)
+      document.removeEventListener('keydown', onKey)
+    }
+  }, [monthMenuOpen])
 
   useEffect(() => {
     if (user?.role === 'employee') load()
@@ -213,7 +246,7 @@ export default function MyWorkPage() {
       <PageHeader
         title="Мои задачи"
         subtitle="Учёт работ по проектам — видите только этот раздел"
-        action={<BtnPrimary onClick={openAdd}>+ Добавить строку</BtnPrimary>}
+        action={<BtnPrimary onClick={openAdd}>+ Добавить задачу</BtnPrimary>}
       />
       <div style={{ padding: '22px 24px', overflow: 'auto', flex: 1 }}>
         <div style={{ display: 'flex', flexWrap: 'wrap', gap: 12, marginBottom: 18, alignItems: 'center' }}>
@@ -222,11 +255,98 @@ export default function MyWorkPage() {
               <option key={y} value={y}>{y}</option>
             ))}
           </Select>
-          <Select value={String(month)} onChange={e => setMonth(Number(e.target.value))} style={{ maxWidth: 160 }}>
-            {MONTH_OPTIONS.map(m => (
-              <option key={m.v} value={m.v}>{m.l}</option>
-            ))}
-          </Select>
+          <div ref={monthMenuRef} style={{ position: 'relative', width: 188, flexShrink: 0 }}>
+            <button
+              type="button"
+              onClick={() => setMonthMenuOpen((o) => !o)}
+              aria-expanded={monthMenuOpen}
+              aria-haspopup="listbox"
+              style={{
+                width: '100%',
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'space-between',
+                gap: 8,
+                border: '1px solid #e8e9ef',
+                borderRadius: 9,
+                padding: '10px 13px',
+                fontSize: 14,
+                background: '#fff',
+                cursor: 'pointer',
+                fontFamily: 'inherit',
+                color: '#1a1d23',
+                boxSizing: 'border-box',
+              }}
+            >
+              <span>{MONTH_OPTIONS.find((x) => x.v === month)?.l ?? month}</span>
+              <span style={{ fontSize: 10, color: '#8a8fa8' }} aria-hidden>▾</span>
+            </button>
+            {monthMenuOpen && (
+              <div
+                role="listbox"
+                style={{
+                  position: 'absolute',
+                  left: 0,
+                  top: 'calc(100% + 4px)',
+                  minWidth: '100%',
+                  background: '#fff',
+                  borderRadius: 10,
+                  border: '1px solid #e8e9ef',
+                  boxShadow: '0 10px 40px rgba(15,23,42,.12)',
+                  zIndex: 50,
+                  maxHeight: 320,
+                  overflowY: 'auto',
+                  padding: '6px 0',
+                }}
+              >
+                {MONTH_OPTIONS.map((opt) => {
+                  const hasTasks = monthsWithTasks.has(opt.v)
+                  const selected = month === opt.v
+                  const baseBg = selected ? '#d1fae5' : hasTasks ? '#ecfdf5' : '#fff'
+                  return (
+                    <button
+                      key={opt.v}
+                      type="button"
+                      role="option"
+                      aria-selected={selected}
+                      onClick={() => {
+                        setMonth(opt.v)
+                        setMonthMenuOpen(false)
+                      }}
+                      style={{
+                        width: '100%',
+                        textAlign: 'left',
+                        padding: '10px 14px',
+                        border: 'none',
+                        background: baseBg,
+                        cursor: 'pointer',
+                        fontSize: 14,
+                        fontFamily: 'inherit',
+                        color: '#1a1d23',
+                        display: 'flex',
+                        alignItems: 'center',
+                        gap: 8,
+                        fontWeight: selected ? 600 : hasTasks ? 500 : 400,
+                      }}
+                      onMouseEnter={(e) => {
+                        if (selected) return
+                        e.currentTarget.style.background = hasTasks ? '#d1fae5' : '#f1f5f9'
+                      }}
+                      onMouseLeave={(e) => {
+                        e.currentTarget.style.background = selected ? '#d1fae5' : hasTasks ? '#ecfdf5' : '#fff'
+                      }}
+                    >
+                      <span style={{ width: 18, flexShrink: 0, textAlign: 'center' }}>{selected ? '✓' : ''}</span>
+                      {opt.l}
+                    </button>
+                  )
+                })}
+              </div>
+            )}
+          </div>
+          <span style={{ fontSize: 12, color: '#8a8fa8', flex: '1 1 200px', minWidth: 0 }}>
+            Светло-зелёный месяц — есть хотя бы одна задача за {year} г.
+          </span>
           <span style={{ fontSize: 12, color: '#8a8fa8' }}>Итог в</span>
           <Select
             value={summaryCurrency}

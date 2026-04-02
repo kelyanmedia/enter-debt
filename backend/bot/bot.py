@@ -1,9 +1,12 @@
 import asyncio
+import calendar
 import html
 import logging
 import os
 import re
+from datetime import datetime
 from typing import Optional
+from zoneinfo import ZoneInfo
 
 import httpx
 from aiogram import Bot, Dispatcher, types, F
@@ -28,6 +31,8 @@ BOT_TOKEN = os.environ.get("BOT_TOKEN", "")
 API_URL = os.environ.get("API_URL", "http://127.0.0.1:8000").rstrip("/")
 # Какая БД/компания у бота (kelyanmedia | whiteway | enter_group_media). Совпадает с X-Company-Slug в API.
 BOT_COMPANY_SLUG = (os.environ.get("BOT_COMPANY_SLUG") or "kelyanmedia").strip().lower().replace("-", "_")
+
+TASK_REMINDER_TZ = ZoneInfo("Asia/Tashkent")
 
 
 def _api_headers(extra: dict | None = None) -> dict:
@@ -147,6 +152,51 @@ async def cmd_help(message: types.Message):
         "ответ уходит только автору.",
         parse_mode="HTML",
     )
+
+
+@dp.callback_query(F.data.startswith("edtk:"))
+async def employee_tasks_reminder_callback(query: types.CallbackQuery):
+    """Ответы на напоминание «внесли все задачи?» (рассылка с бэкенда по cron)."""
+    parts = (query.data or "").split(":")
+    if len(parts) != 3 or parts[0] != "edtk" or parts[1] not in ("y", "n"):
+        return
+
+    chat_id = query.from_user.id
+    try:
+        async with httpx.AsyncClient(timeout=8) as client:
+            r = await client.get(f"{API_URL}/api/users/internal/by-chat/{chat_id}", headers=_api_headers())
+            if r.status_code != 200:
+                await query.answer("Сначала привяжите аккаунт через /start.", show_alert=True)
+                return
+            sender = r.json()
+    except Exception:
+        await query.answer("Не удалось проверить профиль. Попробуйте позже.", show_alert=True)
+        return
+
+    if sender.get("role") != "employee":
+        await query.answer("Это напоминание только для сотрудников.", show_alert=True)
+        return
+
+    today = datetime.now(TASK_REMINDER_TZ).date()
+    is_yes = parts[1] == "y"
+
+    if is_yes:
+        await query.answer("Спасибо за ответ.")
+    else:
+        await query.answer("Постарайтесь внести задачи в кабинет до конца месяца.")
+
+    try:
+        await query.message.edit_reply_markup(reply_markup=None)
+    except Exception:
+        pass
+
+    if is_yes:
+        last = calendar.monthrange(today.year, today.month)[1]
+        if today.day == last:
+            await query.message.answer(
+                "✅ Если вы ввели все задачи — отлично. Скоро вам проведут оплату в платёжный день.",
+                parse_mode="HTML",
+            )
 
 
 _REPLY_TO_MGR_RE = re.compile(r"ed_reply_to_manager:(\d+)")

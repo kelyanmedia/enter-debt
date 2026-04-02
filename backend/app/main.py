@@ -14,6 +14,7 @@ from app.db.database import (
     iter_company_engines,
     iter_company_sessionmakers,
     is_registered_company_slug,
+    log_company_database_binding,
     reset_company_context,
     set_company_context,
 )
@@ -21,11 +22,12 @@ from app.models import user, partner, payment
 import app.models.telegram_join  # noqa: F401 — таблица telegram_join_requests
 import app.models.feed_notification  # noqa: F401 — лента событий
 import app.models.ceo_metric_override  # noqa: F401 — ручные значения CEO dashboard
-from app.api.routes import auth, users, partners, payments, dashboard, notifications, archive, payment_months, telegram_join, feed_notifications, contract_requests, employee_tasks
+from app.api.routes import auth, users, partners, payments, dashboard, notifications, archive, payment_months, telegram_join, feed_notifications, contract_requests, employee_tasks, employee_payment_records
 from app.api.routes import commissions, subscription_items
 import app.models.commission  # noqa: F401
 import app.models.employee_task  # noqa: F401
 import app.models.subscription_item  # noqa: F401
+import app.models.employee_payment_record  # noqa: F401
 from app.core.config import settings
 from app.core.security import get_password_hash
 
@@ -66,6 +68,42 @@ code{background:#f1f5f9;padding:2px 6px;border-radius:4px;font-size:.9em}
 
 _scheduler: Optional[BackgroundScheduler] = None
 log = logging.getLogger(__name__)
+
+
+def _subscription_reminders_job():
+    from datetime import datetime, timezone
+
+    from app.services.subscription_reminders import run_subscription_reminders
+
+    for slug, Session in iter_company_sessionmakers():
+        db = Session()
+        tok = set_company_context(slug)
+        try:
+            r = run_subscription_reminders(db, datetime.now(timezone.utc))
+            log.info("Subscription reminders [%s]: %s", slug, r)
+        except Exception:
+            log.exception("Subscription reminders failed [%s]", slug)
+        finally:
+            db.close()
+            reset_company_context(tok)
+
+
+def _employee_task_reminders_job():
+    from datetime import datetime, timezone
+
+    from app.services.employee_tasks_telegram_reminders import run_employee_task_check_reminders
+
+    for slug, Session in iter_company_sessionmakers():
+        db = Session()
+        tok = set_company_context(slug)
+        try:
+            r = run_employee_task_check_reminders(db, datetime.now(timezone.utc))
+            log.info("Employee task TG reminders [%s]: %s", slug, r)
+        except Exception:
+            log.exception("Employee task TG reminders failed [%s]", slug)
+        finally:
+            db.close()
+            reset_company_context(tok)
 
 
 def _weekly_tg_report_job():
@@ -127,6 +165,7 @@ app.include_router(payment_months.router)
 app.include_router(telegram_join.router)
 app.include_router(contract_requests.router)
 app.include_router(employee_tasks.router)
+app.include_router(employee_payment_records.router)
 app.include_router(commissions.router)
 app.include_router(subscription_items.router)
 
@@ -134,6 +173,7 @@ app.include_router(subscription_items.router)
 @app.on_event("startup")
 def startup():
     global _scheduler
+    log_company_database_binding()
     for _, eng in iter_company_engines():
         Base.metadata.create_all(bind=eng)
     _migrate()
@@ -149,8 +189,28 @@ def startup():
             id="weekly_cash_telegram",
             replace_existing=True,
         )
+        _scheduler.add_job(
+            _subscription_reminders_job,
+            "cron",
+            hour=9,
+            minute=0,
+            id="subscription_reminders_telegram",
+            replace_existing=True,
+        )
+        _scheduler.add_job(
+            _employee_task_reminders_job,
+            "cron",
+            day="26,28,30",
+            hour=9,
+            minute=0,
+            id="employee_task_reminders_telegram",
+            replace_existing=True,
+        )
         _scheduler.start()
-        log.info("APScheduler: weekly cash report — пт 18:00 Asia/Tashkent")
+        log.info(
+            "APScheduler: weekly cash report — пт 18:00; subscription reminders — ежедневно 09:00; "
+            "employee task reminders — 26,28,30 в 09:00 Asia/Tashkent"
+        )
     except Exception as e:
         log.warning("APScheduler not started: %s", e)
 
@@ -205,6 +265,7 @@ def _migrate():
         "ALTER TABLE employee_tasks ADD COLUMN IF NOT EXISTS paid_at TIMESTAMP WITH TIME ZONE",
         "ALTER TABLE employee_tasks ADD COLUMN IF NOT EXISTS done_at TIMESTAMP WITH TIME ZONE",
         "ALTER TABLE users ADD COLUMN IF NOT EXISTS payment_details_updated_at TIMESTAMP WITH TIME ZONE",
+        "ALTER TABLE users ADD COLUMN IF NOT EXISTS multi_company_access BOOLEAN NOT NULL DEFAULT FALSE",
         # Commissions table
         """CREATE TABLE IF NOT EXISTS commissions (
             id SERIAL PRIMARY KEY,
@@ -243,6 +304,29 @@ def _migrate():
             updated_at TIMESTAMP WITH TIME ZONE
         )""",
         "CREATE INDEX IF NOT EXISTS ix_subscription_items_category ON subscription_items (category)",
+        "ALTER TABLE subscription_items ADD COLUMN IF NOT EXISTS phone_number VARCHAR(32)",
+        "ALTER TABLE subscription_items ADD COLUMN IF NOT EXISTS next_deadline_at TIMESTAMP WITH TIME ZONE",
+        "ALTER TABLE subscription_items ADD COLUMN IF NOT EXISTS recurrence VARCHAR(10) NOT NULL DEFAULT 'once'",
+        "ALTER TABLE subscription_items ADD COLUMN IF NOT EXISTS reminder_days_before SMALLINT NOT NULL DEFAULT 0",
+        "ALTER TABLE subscription_items ADD COLUMN IF NOT EXISTS reminder_sent_for_deadline_at TIMESTAMP WITH TIME ZONE",
+        "ALTER TABLE subscription_items ADD COLUMN IF NOT EXISTS status VARCHAR(20) NOT NULL DEFAULT 'active'",
+        "ALTER TABLE subscription_items ADD COLUMN IF NOT EXISTS tag VARCHAR(320)",
+        "ALTER TABLE subscription_items ADD COLUMN IF NOT EXISTS payer_code VARCHAR(8)",
+        "ALTER TABLE subscription_items ADD COLUMN IF NOT EXISTS payment_method VARCHAR(200)",
+        """CREATE TABLE IF NOT EXISTS employee_payment_records (
+            id SERIAL PRIMARY KEY,
+            user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+            paid_on DATE NOT NULL,
+            period_year INTEGER,
+            period_month INTEGER,
+            amount NUMERIC(15,2) NOT NULL,
+            currency VARCHAR(3) NOT NULL DEFAULT 'USD',
+            note TEXT,
+            receipt_path VARCHAR(500),
+            created_by_user_id INTEGER REFERENCES users(id) ON DELETE SET NULL,
+            created_at TIMESTAMP WITH TIME ZONE DEFAULT now()
+        )""",
+        "CREATE INDEX IF NOT EXISTS ix_employee_payment_records_user_id ON employee_payment_records (user_id)",
     ]
     for sql in migrations:
         # Защита от случайного удаления данных

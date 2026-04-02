@@ -97,7 +97,9 @@ export default function ProfilePage() {
         subtitle={
           user.role === 'admin'
             ? 'Логин и пароль своей учётной записи. Остальных пользователей — в разделе «Пользователи».'
-            : 'Логин (email) и пароль для входа в панель'
+            : user.role === 'employee'
+              ? 'Смена пароля, email и реквизиты для выплат (нужен текущий пароль для сохранения).'
+              : 'Логин (email) и пароль для входа в панель'
         }
       />
       <div style={{ padding: '22px 24px', overflowY: 'auto', flex: 1, maxWidth: 520 }}>

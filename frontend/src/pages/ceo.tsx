@@ -279,8 +279,27 @@ export default function CeoDashboardPage() {
         ? turnoverYear ?? new Date().getFullYear()
         : ltvYear ?? new Date().getFullYear()
 
+  const redirectingToDebitor =
+    !loading && user && (user.role === 'manager' || user.role === 'administration')
+
   return (
     <Layout>
+      {redirectingToDebitor && (
+        <div
+          style={{
+            flex: 1,
+            display: 'flex',
+            flexDirection: 'column',
+            alignItems: 'center',
+            justifyContent: 'center',
+            minHeight: 240,
+            color: '#8a8fa8',
+            fontSize: 14,
+          }}
+        >
+          Переход в дебиторку…
+        </div>
+      )}
       {!loading && user && user.role !== 'manager' && user.role !== 'administration' && <>
       <PageHeader
         title="CEO Dashboard"

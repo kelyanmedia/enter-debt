@@ -111,13 +111,13 @@ export function SubscriptionGuidePage({
         <PageHeader title={title} subtitle={subtitle} />
         <div
           style={{
-            padding: '22px 24px',
+            padding: '22px 24px 28px',
             overflowY: 'auto',
             flex: 1,
             width: '100%',
-            maxWidth: 1100,
+            minWidth: 0,
             boxSizing: 'border-box',
-            alignSelf: 'center',
+            alignSelf: 'stretch',
           }}
         >
         <SubscriptionItemsSection category={category} listTitle={listTitle} />

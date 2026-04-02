@@ -11,6 +11,11 @@ body {
   color: #1a1d23;
 }
 
+/* Пустой main без контента не даёт «белое полотно» на всю высоту */
+#__next {
+  min-height: 100vh;
+}
+
 :root {
   --green: #1a6b3c;
   --green-l: #e8f5ee;

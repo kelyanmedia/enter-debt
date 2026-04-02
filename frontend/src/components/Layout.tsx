@@ -4,6 +4,7 @@ import { useRouter } from 'next/router'
 import Link from 'next/link'
 import { useAuth } from '@/context/AuthContext'
 import { NotificationBell } from '@/components/NotificationDrawer'
+import { companyDisplayName } from '@/lib/company'
 
 type NavItem = {
   href: string
@@ -76,7 +77,7 @@ const sectionHeadingStyle: CSSProperties = {
   padding: '10px 10px 8px',
 }
 
-function CompanyWorkspaceSelect() {
+function CompanyWorkspaceSelect({ readOnly }: { readOnly?: boolean }) {
   const { companies, companySlug, switchCompany } = useAuth()
   const onChange = useCallback(
     (e: ChangeEvent<HTMLSelectElement>) => {
@@ -84,6 +85,30 @@ function CompanyWorkspaceSelect() {
     },
     [switchCompany]
   )
+  const label = companies.find((c) => c.slug === companySlug)?.name ?? companyDisplayName(companySlug)
+  if (readOnly) {
+    return (
+      <div
+        title="Компания закреплена за этим входом. Переключение включает администратор, если вы работаете с несколькими компаниями (у каждой свои задачи и выплаты)."
+        style={{
+          marginTop: 4,
+          width: '100%',
+          maxWidth: '100%',
+          fontSize: 11.5,
+          fontWeight: 600,
+          color: '#5c6378',
+          border: '1px solid #e8e9ef',
+          borderRadius: 8,
+          padding: '6px 8px',
+          background: '#f8fafc',
+          fontFamily: 'inherit',
+          lineHeight: 1.35,
+        }}
+      >
+        {label}
+      </div>
+    )
+  }
   return (
     <select
       value={companySlug}
@@ -122,7 +147,13 @@ export default function Layout({ children }: { children: ReactNode }) {
   }, [user, loading, router])
 
   useEffect(() => {
-    if (!loading && user?.role === 'employee' && router.pathname !== '/my-work') {
+    if (
+      !loading &&
+      user?.role === 'employee' &&
+      router.pathname !== '/my-work' &&
+      router.pathname !== '/my-payments' &&
+      router.pathname !== '/profile'
+    ) {
       router.replace('/my-work')
     }
   }, [loading, user, router.pathname, router])
@@ -133,7 +164,16 @@ export default function Layout({ children }: { children: ReactNode }) {
     </div>
   )
 
-  const initials = user.name.split(' ').map(w => w[0]).join('').slice(0, 2).toUpperCase()
+  const initials = (() => {
+    const raw = (user.name || '').trim()
+    if (!raw) return '?'
+    return raw
+      .split(/\s+/)
+      .map((w) => w[0])
+      .join('')
+      .slice(0, 2)
+      .toUpperCase()
+  })()
   const roleLabel = {
     admin: 'Администратор',
     manager: 'Менеджер',
@@ -143,7 +183,9 @@ export default function Layout({ children }: { children: ReactNode }) {
   }[user.role]
 
   if (user.role === 'employee') {
-    const active = router.pathname === '/my-work'
+    const activeWork = router.pathname === '/my-work'
+    const activePayments = router.pathname === '/my-payments'
+    const activeProfile = router.pathname === '/profile'
     return (
       <div style={{ display: 'flex', height: '100vh', overflow: 'hidden', background: '#f5f6fa' }}>
         <aside style={{ width: 220, background: '#fff', borderRight: '1px solid #e8e9ef', display: 'flex', flexDirection: 'column', flexShrink: 0 }}>
@@ -153,7 +195,7 @@ export default function Layout({ children }: { children: ReactNode }) {
               <div style={{ fontSize: 12, fontWeight: 700, color: '#1a1d23' }}>Задачи</div>
             </div>
             <div style={{ marginTop: 10 }}>
-              <CompanyWorkspaceSelect />
+              <CompanyWorkspaceSelect readOnly={user.multi_company_access !== true} />
             </div>
           </div>
           <nav style={{ padding: 14, flex: 1 }}>
@@ -164,16 +206,47 @@ export default function Layout({ children }: { children: ReactNode }) {
                   borderRadius: 9,
                   fontSize: 14,
                   fontWeight: 600,
-                  background: active ? '#e8f5ee' : 'transparent',
-                  color: active ? '#1a6b3c' : '#8a8fa8',
-                  borderLeft: active ? '2px solid #1a6b3c' : '2px solid transparent',
+                  background: activeWork ? '#e8f5ee' : 'transparent',
+                  color: activeWork ? '#1a6b3c' : '#8a8fa8',
+                  borderLeft: activeWork ? '2px solid #1a6b3c' : '2px solid transparent',
                 }}
               >
                 📋 Мои задачи
               </div>
             </Link>
+            <Link href="/my-payments" style={{ textDecoration: 'none', display: 'block', marginTop: 6 }}>
+              <div
+                style={{
+                  padding: '10px 12px',
+                  borderRadius: 9,
+                  fontSize: 14,
+                  fontWeight: 600,
+                  background: activePayments ? '#e8f5ee' : 'transparent',
+                  color: activePayments ? '#1a6b3c' : '#8a8fa8',
+                  borderLeft: activePayments ? '2px solid #1a6b3c' : '2px solid transparent',
+                }}
+              >
+                💳 История выплат
+              </div>
+            </Link>
+            <Link href="/profile" style={{ textDecoration: 'none', display: 'block', marginTop: 6 }}>
+              <div
+                style={{
+                  padding: '10px 12px',
+                  borderRadius: 9,
+                  fontSize: 14,
+                  fontWeight: 600,
+                  background: activeProfile ? '#e8f5ee' : 'transparent',
+                  color: activeProfile ? '#1a6b3c' : '#8a8fa8',
+                  borderLeft: activeProfile ? '2px solid #1a6b3c' : '2px solid transparent',
+                }}
+              >
+                👤 Профиль
+              </div>
+            </Link>
             <div style={{ fontSize: 11, color: '#8a8fa8', marginTop: 16, lineHeight: 1.45, padding: '0 4px' }}>
-              Здесь только ваши задачи и выплаты. Остальной модуль недоступен.
+              Задачи и история выплат — разные разделы. В профиле — пароль и реквизиты. Компания сверху совпадает с
+              выбранной при входе. Остальной модуль недоступен.
             </div>
           </nav>
           <div style={{ padding: '14px 10px', borderTop: '1px solid #e8e9ef' }}>

@@ -21,6 +21,8 @@ interface User {
   is_active: boolean
   payment_details?: string | null
   payment_details_updated_at?: string | null
+  /** Только сотрудник: переключение компаний в кабинете (иначе закреплена компания входа). */
+  multi_company_access?: boolean
 }
 
 export interface CompanyOption {
@@ -113,6 +115,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const switchCompany = useCallback(
     async (slug: string) => {
       if (!slug || slug === getCompanySlug()) return
+      if (user?.role === 'employee' && user.multi_company_access !== true) return
       persistCompanySlug(slug)
       setCompanySlugState(slug)
       const tok = getTokenForSlug(slug)
@@ -127,7 +130,11 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         setUser(r.data)
         if (router.pathname === '/login') {
           await router.push(r.data.role === 'employee' ? '/my-work' : '/')
-        } else if (r.data.role === 'employee' && router.pathname !== '/my-work') {
+        } else if (
+          r.data.role === 'employee' &&
+          router.pathname !== '/my-work' &&
+          router.pathname !== '/profile'
+        ) {
           await router.replace('/my-work')
         }
       } catch {
@@ -137,7 +144,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         setLoading(false)
       }
     },
-    [router]
+    [router, user?.role, user?.multi_company_access]
   )
 
   return (

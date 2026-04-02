@@ -73,6 +73,7 @@ def create_user(data: UserCreate, db: Session = Depends(get_db), _=Depends(requi
     pd = None
     if data.role == "employee" and getattr(data, "payment_details", None):
         pd = str(data.payment_details).strip() or None
+    mca = bool(getattr(data, "multi_company_access", False)) if data.role == "employee" else False
     user = User(
         name=data.name,
         email=email_norm,
@@ -85,6 +86,7 @@ def create_user(data: UserCreate, db: Session = Depends(get_db), _=Depends(requi
         see_all_partners=data.see_all_partners if data.role == "manager" else False,
         visible_manager_ids=vm_json,
         payment_details=pd,
+        multi_company_access=mca,
         hashed_password=get_password_hash(plain),
     )
     db.add(user)
@@ -114,6 +116,9 @@ def _apply_update(user: User, data: UserUpdate):
             user.payment_details = nv
             if user.role == "employee" and nv != ov:
                 user.payment_details_updated_at = datetime.now(timezone.utc)
+        elif field == "multi_company_access":
+            if user.role == "employee":
+                user.multi_company_access = bool(value)
         else:
             setattr(user, field, value)
 
@@ -131,6 +136,7 @@ def _sync_visible_managers_after_user_update(db: Session, user: User, data: User
         raise HTTPException(status_code=400, detail="Укажите хотя бы одного менеджера для роли «Администрация»")
     if data.role is not None and data.role != "employee":
         user.payment_details = None
+        user.multi_company_access = False
 
 
 @router.put("/{user_id}", response_model=UserOut)
