@@ -433,6 +433,7 @@ def _migrate():
         )""",
         "ALTER TABLE available_funds_manual ADD COLUMN IF NOT EXISTS adjust_account_uzs NUMERIC(15,2) NOT NULL DEFAULT 0",
         "ALTER TABLE available_funds_manual ADD COLUMN IF NOT EXISTS adjust_cards_uzs NUMERIC(15,2) NOT NULL DEFAULT 0",
+        "ALTER TABLE available_funds_manual ADD COLUMN IF NOT EXISTS usd_to_uzs_rate NUMERIC(15,4) NOT NULL DEFAULT 0",
     ]
     for sql in migrations:
         # Защита от случайного удаления данных

@@ -1,6 +1,6 @@
 from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy.orm import Session, joinedload
-from sqlalchemy import extract
+from sqlalchemy import extract, false
 from typing import List, Optional
 from decimal import Decimal
 from datetime import date
@@ -12,13 +12,9 @@ from app.schemas.schemas import (
     CommissionCreate, CommissionUpdate, CommissionOut, CommissionStatsOut
 )
 from app.core.security import get_current_user
+from app.core.access import parse_visible_manager_ids
 
 router = APIRouter(prefix="/api/commissions", tags=["commissions"])
-
-
-def _reject_administration(current_user: User) -> None:
-    if current_user.role == "administration":
-        raise HTTPException(status_code=403, detail="Нет доступа к разделу комиссий")
 
 
 def _enrich(c: Commission) -> CommissionOut:
@@ -44,6 +40,17 @@ def _base_query(db: Session, current_user: User,
     q = db.query(Commission).options(joinedload(Commission.manager))
     if current_user.role == "manager":
         q = q.filter(Commission.manager_id == current_user.id)
+    elif current_user.role == "administration":
+        mids = parse_visible_manager_ids(current_user)
+        if not mids:
+            q = q.filter(false())
+        else:
+            q = q.filter(Commission.manager_id.in_(mids))
+            if manager_id:
+                if manager_id not in mids:
+                    q = q.filter(false())
+                else:
+                    q = q.filter(Commission.manager_id == manager_id)
     elif manager_id:
         q = q.filter(Commission.manager_id == manager_id)
     if year:
@@ -61,7 +68,6 @@ def get_stats(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
-    _reject_administration(current_user)
     rows = _base_query(db, current_user, year, month, manager_id).all()
     total_cost = total_profit = total_mgr = total_recv = Decimal(0)
     for c in rows:
@@ -92,7 +98,6 @@ def list_commissions(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
-    _reject_administration(current_user)
     rows = _base_query(db, current_user, year, month, manager_id)\
         .order_by(Commission.project_date.desc(), Commission.id.desc()).all()
     return [_enrich(c) for c in rows]
@@ -104,9 +109,23 @@ def create_commission(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
-    _reject_administration(current_user)
     mgr_id = current_user.id
     if current_user.role in ("admin", "accountant") and data.manager_id:
+        mgr_id = data.manager_id
+    elif current_user.role == "administration":
+        mids = parse_visible_manager_ids(current_user)
+        if not mids:
+            raise HTTPException(
+                status_code=403,
+                detail="Для вашей учётной записи не задан список менеджеров.",
+            )
+        if not data.manager_id:
+            raise HTTPException(status_code=400, detail="Укажите менеджера")
+        if data.manager_id not in mids:
+            raise HTTPException(
+                status_code=403,
+                detail="Можно выбрать только менеджера из доступного вам списка.",
+            )
         mgr_id = data.manager_id
 
     c = Commission(
@@ -137,12 +156,21 @@ def update_commission(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
-    _reject_administration(current_user)
     c = db.query(Commission).filter(Commission.id == cid).first()
     if not c:
         raise HTTPException(404, "Не найдено")
     if current_user.role == "manager" and c.manager_id != current_user.id:
         raise HTTPException(403, "Нет доступа")
+    if current_user.role == "administration":
+        mids = parse_visible_manager_ids(current_user)
+        if not mids or c.manager_id not in mids:
+            raise HTTPException(403, detail="Нет доступа")
+        patch = data.model_dump(exclude_none=True)
+        if "manager_id" in patch and patch["manager_id"] not in mids:
+            raise HTTPException(
+                status_code=403,
+                detail="Можно назначить только менеджера из доступного вам списка.",
+            )
     for field, val in data.model_dump(exclude_none=True).items():
         setattr(c, field, val)
     db.commit()
@@ -156,12 +184,15 @@ def delete_commission(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
-    _reject_administration(current_user)
     c = db.query(Commission).filter(Commission.id == cid).first()
     if not c:
         raise HTTPException(404, "Не найдено")
     if current_user.role == "manager" and c.manager_id != current_user.id:
         raise HTTPException(403, "Нет доступа")
+    if current_user.role == "administration":
+        mids = parse_visible_manager_ids(current_user)
+        if not mids or c.manager_id not in mids:
+            raise HTTPException(403, detail="Нет доступа")
     db.delete(c)
     db.commit()
     return {"ok": True}

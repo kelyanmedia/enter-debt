@@ -12,3 +12,5 @@ class AvailableFundsManual(Base):
     deposits_uzs = Column(Numeric(15, 2), nullable=False, default=0)
     adjust_account_uzs = Column(Numeric(15, 2), nullable=False, default=0)
     adjust_cards_uzs = Column(Numeric(15, 2), nullable=False, default=0)
+    # Курс для P&L: суммы в USD (ДДС, выплаты команде в $) переводятся в UZS как amount_usd * rate
+    usd_to_uzs_rate = Column(Numeric(15, 4), nullable=False, default=0)

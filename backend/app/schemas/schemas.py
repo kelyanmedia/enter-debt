@@ -802,6 +802,7 @@ class AvailableFundsOut(BaseModel):
     from_payments_cards_uzs: Decimal
     adjust_account_uzs: Decimal
     adjust_cards_uzs: Decimal
+    usd_to_uzs_rate: Decimal = Decimal("0")
 
 
 class AvailableFundsManualPut(BaseModel):
@@ -809,6 +810,7 @@ class AvailableFundsManualPut(BaseModel):
     deposits_uzs: Decimal = Field(default=Decimal("0"), ge=Decimal("0"))
     adjust_account_uzs: Decimal = Field(default=Decimal("0"), ge=Decimal("0"))
     adjust_cards_uzs: Decimal = Field(default=Decimal("0"), ge=Decimal("0"))
+    usd_to_uzs_rate: Decimal = Field(default=Decimal("0"), ge=Decimal("0"))
 
 
 class CeoStats(BaseModel):

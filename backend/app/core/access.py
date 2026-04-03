@@ -117,6 +117,47 @@ def assert_payment_access(db: Session, user: User, payment: Payment) -> None:
     assert_partner_access(db, user, payment.partner_id)
 
 
+def assert_partner_access_for_payment_delete(db: Session, user: User, partner_id: int) -> None:
+    """
+    Удаление проекта (в корзину): компания может быть уже в корзине или снята с учёта —
+    не требуем Partner.trashed_at IS NULL, иначе пользователь не может убрать «осиротевший» проект.
+    """
+    ids = accessible_partner_ids(db, user)
+    if ids is None:
+        return
+    if len(ids) == 0:
+        raise HTTPException(
+            status_code=403,
+            detail="Вам не назначены компании. Обратитесь к администратору, чтобы привязать партнёров к вашему профилю.",
+        )
+
+    row = db.query(Partner).filter(Partner.id == partner_id).first()
+    if row is None:
+        # Нет записи компании (битая ссылка) — не блокируем удаление проекта
+        return
+
+    if user.role == "manager":
+        if getattr(user, "see_all_partners", False):
+            return
+        if row.manager_id != user.id:
+            raise HTTPException(
+                status_code=403,
+                detail="Нет доступа к этой компании. Выберите партнёра из списка или обратитесь к администратору.",
+            )
+        return
+
+    if user.role == "administration":
+        mids = parse_visible_manager_ids(user)
+        if not mids or row.manager_id not in mids:
+            raise HTTPException(
+                status_code=403,
+                detail="Нет доступа к этой компании. Выберите партнёра из списка или обратитесь к администратору.",
+            )
+        return
+
+    raise HTTPException(status_code=403, detail="Недостаточно прав для изменения проектов")
+
+
 def filter_payments_query(q, db: Session, user: User):
     q = q.filter(Payment.trashed_at.is_(None))
     ids = accessible_partner_ids(db, user)

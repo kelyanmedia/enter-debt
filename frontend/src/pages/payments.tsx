@@ -193,6 +193,7 @@ export default function PaymentsPage() {
   const [payConfirmBackdateYmd, setPayConfirmBackdateYmd] = useState('')
   const [deletePaymentId, setDeletePaymentId] = useState<number | null>(null)
   const [deleteMonthId, setDeleteMonthId] = useState<number | null>(null)
+  const [archiveDrawerConfirm, setArchiveDrawerConfirm] = useState(false)
 
   const syncDrawerPayment = useCallback(async (paymentId: number) => {
     try {
@@ -344,11 +345,24 @@ export default function PaymentsPage() {
     }
   }
 
+  const runArchiveFromDrawer = async () => {
+    if (!drawer) return
+    try {
+      await api.post(`archive/payments/${drawer.id}`)
+      setDrawer(null)
+      await load()
+    } catch (e: unknown) {
+      alert(formatApiError(e))
+      throw e
+    }
+  }
+
   // Drawer actions
   const openDrawer = async (p: Payment) => {
     setMonthPayMethods({})
     setPayConfirmModalMonthId(null)
     setPayConfirmBackdateYmd('')
+    setArchiveDrawerConfirm(false)
     setDrawer(p)
     setDrawerLoading(true)
     setAddMonthOpen(false)
@@ -822,10 +836,33 @@ export default function PaymentsPage() {
                   </a>
                 )}
               </div>
-              <button onClick={() => setDrawer(null)} style={{
-                background: 'none', border: 'none', fontSize: 20, cursor: 'pointer',
-                color: '#8a8fa8', lineHeight: 1, padding: 4, marginTop: -2,
-              }}>✕</button>
+              <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-end', gap: 8, flexShrink: 0 }}>
+                {user?.role === 'admin' && (
+                  <BtnOutline
+                    type="button"
+                    onClick={() => setArchiveDrawerConfirm(true)}
+                    style={{ fontSize: 11, padding: '5px 10px', fontWeight: 600, color: '#64748b' }}
+                  >
+                    В архив
+                  </BtnOutline>
+                )}
+                <button
+                  type="button"
+                  onClick={() => setDrawer(null)}
+                  style={{
+                    background: 'none',
+                    border: 'none',
+                    fontSize: 20,
+                    cursor: 'pointer',
+                    color: '#8a8fa8',
+                    lineHeight: 1,
+                    padding: 4,
+                    marginTop: -2,
+                  }}
+                >
+                  ✕
+                </button>
+              </div>
             </div>
 
             {/* progress bar */}
@@ -1369,6 +1406,16 @@ export default function PaymentsPage() {
         message="Проект уйдёт в корзину на 30 суток (только админ может восстановить или удалить навсегда). Раздел «Архив» для архивной базы не меняется."
         confirmLabel="Удалить"
         onConfirm={runDeletePayment}
+      />
+      <ConfirmModal
+        open={archiveDrawerConfirm && drawer !== null}
+        onClose={() => setArchiveDrawerConfirm(false)}
+        title="Отправить проект в архив?"
+        message="Проект исчезнет из списка «Проекты» и будет доступен в разделе «Архив»."
+        confirmLabel="В архив"
+        danger={false}
+        onConfirm={runArchiveFromDrawer}
+        zIndex={12200}
       />
       <ConfirmModal
         open={deleteMonthId !== null}

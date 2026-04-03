@@ -80,6 +80,7 @@ def available_funds_for_period(db: Session, period_month: str) -> AvailableFunds
     dep = Decimal(str(row.deposits_uzs)) if row else Decimal("0")
     adj_a = Decimal(str(row.adjust_account_uzs)) if row else Decimal("0")
     adj_c = Decimal(str(row.adjust_cards_uzs)) if row else Decimal("0")
+    fx = Decimal(str(row.usd_to_uzs_rate or 0)) if row else Decimal("0")
     return AvailableFundsOut(
         period_month=period_month,
         on_account_uzs=(base_a + adj_a).quantize(Decimal("0.01")),
@@ -89,4 +90,5 @@ def available_funds_for_period(db: Session, period_month: str) -> AvailableFunds
         from_payments_cards_uzs=base_c.quantize(Decimal("0.01")),
         adjust_account_uzs=adj_a.quantize(Decimal("0.01")),
         adjust_cards_uzs=adj_c.quantize(Decimal("0.01")),
+        usd_to_uzs_rate=fx.quantize(Decimal("0.0001")),
     )

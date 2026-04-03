@@ -1,9 +1,11 @@
 """Финансы: сводка по проектам (Projects Cost) из договоров и графика payment_months."""
 from __future__ import annotations
 
+import re
+from calendar import monthrange
 from datetime import date, datetime
 from decimal import Decimal
-from typing import Dict, List, Optional
+from typing import Dict, List, Optional, Tuple
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy.orm import Session, joinedload
@@ -11,6 +13,7 @@ from sqlalchemy.orm import Session, joinedload
 from app.core.access import filter_payments_query
 from app.core.security import get_current_user, require_admin_or_financier
 from app.db.database import get_db
+from app.models.available_funds_manual import AvailableFundsManual
 from app.models.cash_flow import CashFlowEntry
 from app.models.employee_payment_record import EmployeePaymentRecord
 from app.models.partner import Partner
@@ -36,6 +39,109 @@ _CATEGORY_SORT = {
     "tech_support": 4,
     "hosting_domain": 5,
 }
+
+_YM_RE = re.compile(r"^\d{4}-\d{2}$")
+
+
+def _payment_created_date(p: Payment) -> date:
+    ca = p.created_at
+    if isinstance(ca, datetime):
+        return ca.date()
+    return ca  # type: ignore[return-value]
+
+
+def _norm_month_bounds(
+    month_from: Optional[str], month_to: Optional[str]
+) -> Optional[Tuple[str, str]]:
+    """Один или оба YYYY-MM; инклюзивный диапазон; при одном параметре — один месяц."""
+    mf = (month_from or "").strip()
+    mt = (month_to or "").strip()
+    if not mf and not mt:
+        return None
+    a = mf or mt
+    b = mt or mf
+    if not _YM_RE.match(a) or not _YM_RE.match(b):
+        raise HTTPException(
+            status_code=400,
+            detail="Параметры month_from и month_to должны быть в формате YYYY-MM",
+        )
+    if a > b:
+        a, b = b, a
+    return (a, b)
+
+
+def _first_calendar_day_of_ym(ym: str) -> date:
+    y, m = map(int, ym.split("-"))
+    return date(y, m, 1)
+
+
+def _last_calendar_day_of_ym(ym: str) -> date:
+    y, m = map(int, ym.split("-"))
+    return date(y, m, monthrange(y, m)[1])
+
+
+def _payment_work_span(p: Payment) -> Tuple[date, Optional[date]]:
+    """
+    Интервал активной работы [start, end] включительно.
+    Начало — дата создания проекта и не раньше 1-го числа первого месяца графика (как в колонке «Начало»).
+    Конец — deadline_date проекта; иначе макс. due_date по строкам графика; иначе последний день последнего месяца графика.
+    Если графика нет, end остаётся None (используется запасная логика по месяцу создания/оплаты).
+    """
+    months_sorted = sorted(p.months or [], key=lambda x: x.month)
+    work_lo = _payment_created_date(p)
+    if months_sorted:
+        try:
+            ys, ms = months_sorted[0].month.split("-")
+            d0 = date(int(ys), int(ms), 1)
+            if d0 < work_lo:
+                work_lo = d0
+        except (ValueError, IndexError):
+            pass
+
+    work_hi: Optional[date] = None
+    if getattr(p, "deadline_date", None) is not None:
+        work_hi = p.deadline_date
+    elif months_sorted:
+        due_dates = [pm.due_date for pm in months_sorted if pm.due_date is not None]
+        if due_dates:
+            work_hi = max(due_dates)
+        else:
+            try:
+                work_hi = _last_calendar_day_of_ym(months_sorted[-1].month)
+            except (ValueError, IndexError):
+                work_hi = None
+    return work_lo, work_hi
+
+
+def _payment_overlaps_month_window(p: Payment, mf: str, mt: str) -> bool:
+    """
+    Проект в выбранном периоде календарных месяцев [mf..mt], если интервал работы пересекает
+    объединение этих месяцев (напр. работа 20 янв — 20 апр видна в апреле, но не в мае).
+    Без известного конца работы — по графику: любой месяц строки в [mf, mt]; без графика — месяц создания/оплаты.
+    """
+    window_lo = _first_calendar_day_of_ym(mf)
+    window_hi = _last_calendar_day_of_ym(mt)
+    months_sorted = sorted(p.months or [], key=lambda x: x.month)
+    work_lo, work_hi = _payment_work_span(p)
+
+    if work_hi is not None:
+        return work_lo <= window_hi and window_lo <= work_hi
+
+    if months_sorted:
+        for pm in months_sorted:
+            if mf <= pm.month <= mt:
+                return True
+        return False
+    ym0 = f"{work_lo.year}-{work_lo.month:02d}"
+    if mf <= ym0 <= mt:
+        return True
+    if p.paid_at:
+        pad = p.paid_at
+        d = pad.date() if isinstance(pad, datetime) else pad
+        ym1 = f"{d.year}-{d.month:02d}"
+        if mf <= ym1 <= mt:
+            return True
+    return False
 
 
 def _is_recurring_billing(p: Payment) -> bool:
@@ -139,11 +245,21 @@ def _payment_to_project_cost_row(p: Payment) -> ProjectCostRowOut:
 def projects_cost_report(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
+    month_from: Optional[str] = Query(
+        None,
+        description="Начало периода YYYY-MM (включительно). С month_to — фильтр проектов по пересечению с графиком/датами.",
+    ),
+    month_to: Optional[str] = Query(
+        None,
+        description="Конец периода YYYY-MM (включительно).",
+    ),
 ):
     """
     Активные (не архивные) проекты с графиком месяцев.
     Рекуррент / сервис: в колонке «ставка» — сумма за период из договора (обычно месяц); % оплаты не считаем (как N/a в таблице).
     Разовый: контракт = payment.amount; факт = сумма оплаченных строк графика; % от контракта.
+    При month_from/month_to остаются проекты, у которых интервал работы (от «Начала» до дедлайна или конца графика)
+    пересекает выбранные календарные месяцы. Без дедлайна и без дат в графике — по месяцам строк графика или дате создания/оплаты.
     """
     q = (
         db.query(Payment)
@@ -161,6 +277,10 @@ def projects_cost_report(
         return (_CATEGORY_SORT.get(cat, 99), (pay.description or "").lower(), pay.id)
 
     payments_sorted = sorted(payments, key=sort_key)
+    bounds = _norm_month_bounds(month_from, month_to)
+    if bounds:
+        mf, mt = bounds
+        payments_sorted = [p for p in payments_sorted if _payment_overlaps_month_window(p, mf, mt)]
     return [_payment_to_project_cost_row(p) for p in payments_sorted]
 
 
@@ -255,6 +375,8 @@ def pl_report(
     """
     P&L по месяцам: выручка — оплаты по графику проектов (категории) + приходы из ДДС;
     расходы — команда + ДДС по статьям (в т.ч. отдельная строка «Агаси Д» для дивидендов).
+    Суммы в USD (строки ДДС, выплаты команде в долларах) при заданном в ДДС курсе за месяц (usd_to_uzs_rate)
+    переводятся в колонку UZS; при курсе 0 поведение как раньше (USD отдельной колонкой).
     Итог: операционный результат без вывода Агаси Д; строка «Чистая прибыль» — только суммы категории Агаси Д/дивиденды из ДДС.
     """
     y = year if year is not None else date.today().year
@@ -379,6 +501,49 @@ def pl_report(
             salary_usd[m_idx - 1] += amt
         else:
             salary_uzs[m_idx - 1] += amt
+
+    rates = {
+        r.period_month: Decimal(str(r.usd_to_uzs_rate or 0))
+        for r in db.query(AvailableFundsManual)
+        .filter(
+            AvailableFundsManual.period_month >= f"{y}-01",
+            AvailableFundsManual.period_month <= f"{y}-12",
+        )
+        .all()
+    }
+    _uzs_fx = [
+        cf_in_uzs,
+        cf_sal_uzs,
+        cf_off_uzs,
+        cf_acc_uzs,
+        cf_pub_uzs,
+        cf_tax_uzs,
+        cf_pb_uzs,
+        cf_mkt_uzs,
+        cf_oth_uzs,
+        cf_agasi_uzs,
+        salary_uzs,
+    ]
+    _usd_fx = [
+        cf_in_usd,
+        cf_sal_usd,
+        cf_off_usd,
+        cf_acc_usd,
+        cf_pub_usd,
+        cf_tax_usd,
+        cf_pb_usd,
+        cf_mkt_usd,
+        cf_oth_usd,
+        cf_agasi_usd,
+        salary_usd,
+    ]
+    for i, ym_col in enumerate(columns):
+        rfx = rates.get(ym_col) or Decimal(0)
+        if rfx <= 0:
+            continue
+        for zu, us in zip(_uzs_fx, _usd_fx):
+            zu[i] = zu[i] + us[i] * rfx
+            us[i] = Decimal(0)
 
     rows: List[PLDataRowOut] = []
 

@@ -36,6 +36,8 @@ interface AvailableFundsResponse {
   from_payments_cards_uzs: string
   adjust_account_uzs: string
   adjust_cards_uzs: string
+  /** UZS за 1 USD для P&L за этот месяц; 0 — не конвертировать USD в отчёте */
+  usd_to_uzs_rate?: string | number
 }
 
 interface CFEntry {
@@ -242,7 +244,9 @@ export default function FinanceCashflowPage() {
   const [availableFunds, setAvailableFunds] = useState<AvailableFundsResponse | null>(null)
   const [afEditOpen, setAfEditOpen] = useState(false)
   const [afEditSaving, setAfEditSaving] = useState(false)
-  const [afEditForm, setAfEditForm] = useState({ deposits: '', adjust_account: '', adjust_cards: '' })
+  const [afEditForm, setAfEditForm] = useState({ deposits: '', adjust_account: '', adjust_cards: '', fx_rate: '' })
+  const [fxRateDraft, setFxRateDraft] = useState('')
+  const [fxSaving, setFxSaving] = useState(false)
   /** Показ сумм только пока указатель в колонке (чистый CSS :hover с filter часто «залипает» после ухода курсора). */
   const [afReveal, setAfReveal] = useState({ account: false, cards: false, deposits: false })
 
@@ -253,6 +257,15 @@ export default function FinanceCashflowPage() {
   useEffect(() => {
     setAfReveal({ account: false, cards: false, deposits: false })
   }, [ym])
+
+  useEffect(() => {
+    if (!availableFunds || availableFunds.period_month !== ym) return
+    const rx =
+      availableFunds.usd_to_uzs_rate != null && availableFunds.usd_to_uzs_rate !== ''
+        ? String(availableFunds.usd_to_uzs_rate)
+        : '0'
+    setFxRateDraft(rx)
+  }, [availableFunds, ym])
 
   const loadMeta = useCallback(() => {
     api.get<Meta>('finance/cash-flow/meta').then((r) => setMeta(r.data))
@@ -286,10 +299,12 @@ export default function FinanceCashflowPage() {
 
   const openAfEditModal = useCallback(() => {
     const d = availableFunds
+    const rx = d?.usd_to_uzs_rate != null && d.usd_to_uzs_rate !== '' ? String(d.usd_to_uzs_rate) : '0'
     setAfEditForm({
       deposits: String(Number(d?.deposits_uzs) || 0),
       adjust_account: String(Number(d?.adjust_account_uzs) || 0),
       adjust_cards: String(Number(d?.adjust_cards_uzs) || 0),
+      fx_rate: rx,
     })
     setAfEditOpen(true)
   }, [availableFunds])
@@ -302,13 +317,39 @@ export default function FinanceCashflowPage() {
         deposits_uzs: afEditForm.deposits || '0',
         adjust_account_uzs: afEditForm.adjust_account || '0',
         adjust_cards_uzs: afEditForm.adjust_cards || '0',
+        usd_to_uzs_rate: afEditForm.fx_rate?.trim() || '0',
       })
       setAvailableFunds(r.data)
+      setFxRateDraft(
+        r.data.usd_to_uzs_rate != null && r.data.usd_to_uzs_rate !== '' ? String(r.data.usd_to_uzs_rate) : '0',
+      )
       setAfEditOpen(false)
     } catch {
       /* quiet */
     } finally {
       setAfEditSaving(false)
+    }
+  }
+
+  const saveFxRateOnly = async () => {
+    if (!availableFunds) return
+    setFxSaving(true)
+    try {
+      const r = await api.put<AvailableFundsResponse>('finance/available-funds', {
+        period_month: ym,
+        deposits_uzs: String(availableFunds.deposits_uzs ?? '0'),
+        adjust_account_uzs: String(availableFunds.adjust_account_uzs ?? '0'),
+        adjust_cards_uzs: String(availableFunds.adjust_cards_uzs ?? '0'),
+        usd_to_uzs_rate: fxRateDraft.trim() || '0',
+      })
+      setAvailableFunds(r.data)
+      setFxRateDraft(
+        r.data.usd_to_uzs_rate != null && r.data.usd_to_uzs_rate !== '' ? String(r.data.usd_to_uzs_rate) : '0',
+      )
+    } catch {
+      /* quiet */
+    } finally {
+      setFxSaving(false)
     }
   }
 
@@ -639,33 +680,74 @@ export default function FinanceCashflowPage() {
             width: '100%',
           }}
         >
-          <div style={{ display: 'flex', flexWrap: 'wrap', alignItems: 'center', gap: 10 }}>
-            <BtnOutline type="button" onClick={() => setYm((x) => shiftYM(x, -1))} disabled={busy}>
-              ←
-            </BtnOutline>
-            <span style={{ fontWeight: 800, fontSize: 16, minWidth: 160, textAlign: 'center' }}>{ymTitle(ym)}</span>
-            <BtnOutline type="button" onClick={() => setYm((x) => shiftYM(x, 1))} disabled={busy}>
-              →
-            </BtnOutline>
-            <input
-              type="month"
-              value={ym}
-              onChange={(e) => setYm(e.target.value)}
-              style={{ marginLeft: 8, padding: 6, borderRadius: 8, border: '1px solid #e2e8f0', fontFamily: 'inherit' }}
-            />
-            <BtnOutline
-              type="button"
-              onClick={() => {
-                loadEntries()
-                loadAvailableFunds()
+          <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-start', gap: 12 }}>
+            <div style={{ display: 'flex', flexWrap: 'wrap', alignItems: 'center', gap: 10 }}>
+              <BtnOutline type="button" onClick={() => setYm((x) => shiftYM(x, -1))} disabled={busy}>
+                ←
+              </BtnOutline>
+              <span style={{ fontWeight: 800, fontSize: 16, minWidth: 160, textAlign: 'center' }}>{ymTitle(ym)}</span>
+              <BtnOutline type="button" onClick={() => setYm((x) => shiftYM(x, 1))} disabled={busy}>
+                →
+              </BtnOutline>
+              <input
+                type="month"
+                value={ym}
+                onChange={(e) => setYm(e.target.value)}
+                style={{ marginLeft: 8, padding: 6, borderRadius: 8, border: '1px solid #e2e8f0', fontFamily: 'inherit' }}
+              />
+              <BtnOutline
+                type="button"
+                onClick={() => {
+                  loadEntries()
+                  loadAvailableFunds()
+                }}
+                style={{ marginLeft: 8 }}
+              >
+                Обновить
+              </BtnOutline>
+              <Link href="/finance/pl" style={{ marginLeft: 12, fontSize: 13, fontWeight: 600, color: '#1a6b3c' }}>
+                Открыть P&L →
+              </Link>
+            </div>
+            <div
+              style={{
+                width: '100%',
+                maxWidth: 360,
+                background: '#f8fafc',
+                border: '1px solid #e2e8f0',
+                borderRadius: 12,
+                padding: '12px 14px',
+                boxShadow: '0 1px 2px rgba(0,0,0,.04)',
               }}
-              style={{ marginLeft: 8 }}
             >
-              Обновить
-            </BtnOutline>
-            <Link href="/finance/pl" style={{ marginLeft: 12, fontSize: 13, fontWeight: 600, color: '#1a6b3c' }}>
-              Открыть P&L →
-            </Link>
+              <div style={{ fontWeight: 800, fontSize: 12, color: '#1e293b', marginBottom: 6 }}>Курс для P&L</div>
+              <div style={{ fontSize: 10, color: '#94a3b8', lineHeight: 1.45, marginBottom: 10 }}>
+                Сколько UZS за 1 USD за этот месяц. Суммы в долларах в ДДС и выплатах команде (USD) в отчёте P&L переводятся в
+                сумы по этому курсу. 0 — без конвертации (USD остаётся отдельной колонкой).
+              </div>
+              <div style={{ display: 'flex', flexWrap: 'wrap', alignItems: 'flex-end', gap: 10 }}>
+                <label style={{ display: 'flex', flexDirection: 'column', gap: 4, fontSize: 11, fontWeight: 600, color: '#475569' }}>
+                  1 USD =
+                  <Input
+                    type="text"
+                    inputMode="decimal"
+                    value={fxRateDraft}
+                    onChange={(e) => setFxRateDraft(e.target.value)}
+                    placeholder="напр. 12550"
+                    style={{ width: 140, padding: '8px 10px', borderRadius: 8, border: '1px solid #e2e8f0', fontFamily: 'inherit' }}
+                  />
+                </label>
+                <span style={{ fontSize: 12, color: '#64748b', paddingBottom: 8 }}>UZS</span>
+                <BtnPrimary
+                  type="button"
+                  disabled={fxSaving || !availableFunds}
+                  onClick={() => void saveFxRateOnly()}
+                  style={{ fontSize: 12, padding: '8px 14px' }}
+                >
+                  {fxSaving ? 'Сохранение…' : 'Сохранить курс'}
+                </BtnPrimary>
+              </div>
+            </div>
           </div>
 
           <div
@@ -1197,6 +1279,15 @@ export default function FinanceCashflowPage() {
           </Field>
           <Field label="Вклады (UZS)">
             <MoneyInput value={afEditForm.deposits} onChange={(v) => setAfEditForm((f) => ({ ...f, deposits: v }))} />
+          </Field>
+          <Field label="Курс P&L: 1 USD = … UZS (0 = не конвертировать)">
+            <Input
+              type="text"
+              inputMode="decimal"
+              value={afEditForm.fx_rate}
+              onChange={(e) => setAfEditForm((f) => ({ ...f, fx_rate: e.target.value }))}
+              placeholder="0"
+            />
           </Field>
         </div>
       </Modal>

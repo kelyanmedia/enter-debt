@@ -2,7 +2,7 @@ import { Fragment, useCallback, useEffect, useMemo, useRef, useState, type CSSPr
 import Link from 'next/link'
 import { useRouter } from 'next/router'
 import Layout from '@/components/Layout'
-import { PageHeader, Card, Th, Td, Empty, formatMoneyNumber, BtnOutline, MoneyInput } from '@/components/ui'
+import { PageHeader, Card, Th, Td, Empty, formatMoneyNumber, BtnOutline, MoneyInput, Input, Field } from '@/components/ui'
 import { useAuth } from '@/context/AuthContext'
 import api from '@/lib/api'
 import { isFinanceTeamRole } from '@/lib/roles'
@@ -55,6 +55,19 @@ function ymLabel(ym: string) {
   if (mi < 0 || mi > 11) return ym
   return `${MONTHS_RU[mi]} ${y}`
 }
+
+function currentYM() {
+  const d = new Date()
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`
+}
+
+function shiftYM(ym: string, delta: number) {
+  const [y, m] = ym.split('-').map(Number)
+  const dt = new Date(y, m - 1 + delta, 1)
+  return `${dt.getFullYear()}-${String(dt.getMonth() + 1).padStart(2, '0')}`
+}
+
+type PeriodPreset = 'this' | 'last' | 'all' | 'custom'
 
 function formatStart(iso: string) {
   const d = new Date(iso.includes('T') ? iso : `${iso}T12:00:00`)
@@ -124,6 +137,9 @@ export default function FinanceProjectsCostPage() {
   const router = useRouter()
   const [rows, setRows] = useState<ProjectCostRow[]>([])
   const [fetching, setFetching] = useState(false)
+  const [periodPreset, setPeriodPreset] = useState<PeriodPreset>('this')
+  const [customFrom, setCustomFrom] = useState(currentYM)
+  const [customTo, setCustomTo] = useState(currentYM)
   const [expanded, setExpanded] = useState<Set<number>>(() => new Set())
   const [costEdit, setCostEdit] = useState<{ paymentId: number; field: CostFieldApi } | null>(null)
   const [costDraft, setCostDraft] = useState('')
@@ -134,15 +150,45 @@ export default function FinanceProjectsCostPage() {
     if (!loading && user && !isFinanceTeamRole(user.role)) router.replace('/')
   }, [loading, user, router])
 
-  const load = useCallback(() => {
+  const monthRange = useMemo(() => {
+    if (periodPreset === 'all') return null
+    const cur = currentYM()
+    if (periodPreset === 'this') return { from: cur, to: cur }
+    if (periodPreset === 'last') {
+      const p = shiftYM(cur, -1)
+      return { from: p, to: p }
+    }
+    const f = (customFrom || '').trim() || cur
+    const t = (customTo || '').trim() || f
+    return f <= t ? { from: f, to: t } : { from: t, to: f }
+  }, [periodPreset, customFrom, customTo])
+
+  const periodHint = useMemo(() => {
+    if (periodPreset === 'all') return 'Весь период — все активные проекты.'
+    if (periodPreset === 'this') return `Период: ${ymLabel(currentYM())} (текущий месяц).`
+    if (periodPreset === 'last') return `Период: ${ymLabel(shiftYM(currentYM(), -1))} (прошлый месяц).`
+    return `Период: ${ymLabel(monthRange!.from)} — ${ymLabel(monthRange!.to)}.`
+  }, [periodPreset, monthRange])
+
+  const load = useCallback(async () => {
     if (!user || !isFinanceTeamRole(user.role)) return
     setFetching(true)
-    api
-      .get<ProjectCostRow[]>('finance/projects-cost')
-      .then((r) => setRows(r.data || []))
-      .catch(() => setRows([]))
-      .finally(() => setFetching(false))
-  }, [user])
+    try {
+      const params = new URLSearchParams()
+      if (monthRange) {
+        params.set('month_from', monthRange.from)
+        params.set('month_to', monthRange.to)
+      }
+      const qs = params.toString()
+      const url = qs ? `finance/projects-cost?${qs}` : 'finance/projects-cost'
+      const r = await api.get<ProjectCostRow[]>(url)
+      setRows(r.data || [])
+    } catch {
+      setRows([])
+    } finally {
+      setFetching(false)
+    }
+  }, [user, monthRange])
 
   useEffect(() => {
     load()
@@ -270,23 +316,86 @@ export default function FinanceProjectsCostPage() {
     <Layout>
       <PageHeader
         title="Projects Cost"
-        subtitle="Проекты из «Проекты» и график оплат. Клик по «Дизайн», «Разраб.», «Прочее», «SEO» — ввод сумм; «Себест.» = их сумма, прибыль = оплата факт − себестоимость. Прокрутка — внутри таблицы."
+        subtitle="Проекты из «Проекты» и график оплат. В списке за месяц — проекты, у которых интервал работы пересекает этот календарный месяц: от даты начала (создание и первый месяц графика) до дедлайна проекта или, если его нет, до последней даты в графике (срок строки или конец последнего месяца услуги). Без графика — по месяцу создания или оплаты. Клик по «Дизайн», «Разраб.», «Прочее», «SEO» — ввод сумм; «Себест.» = их сумма, прибыль = оплата факт − себестоимость."
       />
       <div style={{ padding: '22px 24px', display: 'flex', flexDirection: 'column', gap: 14, minHeight: 0 }}>
-        <div style={{ display: 'flex', flexWrap: 'wrap', alignItems: 'center', gap: 12 }}>
+        <div style={{ display: 'flex', flexWrap: 'wrap', alignItems: 'center', gap: 10 }}>
           <Link href="/payments" style={{ fontSize: 13, fontWeight: 600, color: '#1a6b3c' }}>
             Открыть проекты →
           </Link>
-          <BtnOutline type="button" onClick={() => load()} style={{ fontSize: 12, padding: '6px 12px' }}>
+          <BtnOutline type="button" onClick={() => void load()} style={{ fontSize: 12, padding: '6px 12px' }}>
             Обновить
           </BtnOutline>
           {fetching && <span style={{ fontSize: 12, color: '#94a3b8' }}>Загрузка…</span>}
         </div>
+        <div
+          style={{
+            display: 'flex',
+            flexWrap: 'wrap',
+            alignItems: 'center',
+            gap: 8,
+            padding: '10px 12px',
+            background: '#f8fafc',
+            borderRadius: 10,
+            border: '1px solid #e8e9ef',
+          }}
+        >
+          <span style={{ fontSize: 11, fontWeight: 700, color: '#64748b', marginRight: 4 }}>ПЕРИОД</span>
+          {(['this', 'last', 'all', 'custom'] as const).map((key) => {
+            const labels: Record<typeof key, string> = {
+              this: 'Этот месяц',
+              last: 'Прошлый месяц',
+              all: 'Весь период',
+              custom: 'Настройка дат',
+            }
+            const active = periodPreset === key
+            return (
+              <BtnOutline
+                key={key}
+                type="button"
+                onClick={() => {
+                  setPeriodPreset(key)
+                  if (key === 'custom') {
+                    const c = currentYM()
+                    setCustomFrom((f) => f || c)
+                    setCustomTo((t) => t || c)
+                  }
+                }}
+                style={{
+                  fontSize: 12,
+                  padding: '6px 12px',
+                  ...(active
+                    ? { background: '#1a6b3c', color: '#fff', borderColor: '#1a6b3c' }
+                    : {}),
+                }}
+              >
+                {labels[key]}
+              </BtnOutline>
+            )
+          })}
+          {periodPreset === 'custom' && (
+            <div style={{ display: 'flex', flexWrap: 'wrap', alignItems: 'flex-end', gap: 12, width: '100%', marginTop: 4 }}>
+              <Field label="С месяца">
+                <Input type="month" value={customFrom} onChange={(e) => setCustomFrom(e.target.value)} style={{ maxWidth: 160 }} />
+              </Field>
+              <Field label="По месяц">
+                <Input type="month" value={customTo} onChange={(e) => setCustomTo(e.target.value)} style={{ maxWidth: 160 }} />
+              </Field>
+            </div>
+          )}
+        </div>
+        <div style={{ fontSize: 12, color: '#64748b', lineHeight: 1.45 }}>{periodHint}</div>
 
         <Card style={{ padding: 0, overflow: 'hidden', display: 'flex', flexDirection: 'column', minHeight: 0 }}>
           {rows.length === 0 && !fetching ? (
             <div style={{ padding: 40 }}>
-              <Empty text="Нет активных проектов. Добавьте их в разделе «Проекты»." />
+              <Empty
+                text={
+                  periodPreset === 'all'
+                    ? 'Нет активных проектов. Добавьте их в разделе «Проекты».'
+                    : 'В выбранном периоде нет проектов, у которых работа пересекает эти месяцы (см. дедлайн и график). Выберите другой период или «Весь период».'
+                }
+              />
             </div>
           ) : (
             <div

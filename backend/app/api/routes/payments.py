@@ -9,7 +9,7 @@ from app.models.payment import Payment, PaymentMonth
 from app.models.partner import Partner
 from app.schemas.schemas import PaymentOut, PaymentCreate, PaymentUpdate, PaymentConfirm
 from app.core.security import get_current_user, require_payment_write
-from app.core.access import assert_partner_access, filter_payments_query
+from app.core.access import assert_partner_access, assert_partner_access_for_payment_delete, filter_payments_query
 from app.models.user import User
 
 router = APIRouter(prefix="/api/payments", tags=["payments"])
@@ -353,7 +353,7 @@ def delete_payment(
         raise HTTPException(status_code=404, detail="Payment not found")
     if p.trashed_at is not None:
         raise HTTPException(status_code=404, detail="Проект уже в корзине")
-    assert_partner_access(db, current_user, p.partner_id)
+    assert_partner_access_for_payment_delete(db, current_user, p.partner_id)
     p.trashed_at = datetime.now(timezone.utc)
     db.commit()
     return {"ok": True}

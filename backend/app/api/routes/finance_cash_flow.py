@@ -412,12 +412,14 @@ def put_available_funds_deposits(
             deposits_uzs=body.deposits_uzs,
             adjust_account_uzs=body.adjust_account_uzs,
             adjust_cards_uzs=body.adjust_cards_uzs,
+            usd_to_uzs_rate=body.usd_to_uzs_rate,
         )
         db.add(row)
     else:
         row.deposits_uzs = body.deposits_uzs
         row.adjust_account_uzs = body.adjust_account_uzs
         row.adjust_cards_uzs = body.adjust_cards_uzs
+        row.usd_to_uzs_rate = body.usd_to_uzs_rate
     db.commit()
     db.refresh(row)
     return available_funds_for_period(db, body.period_month)

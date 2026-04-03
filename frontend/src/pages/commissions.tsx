@@ -1,5 +1,4 @@
 import { useEffect, useState, useCallback } from 'react'
-import { useRouter } from 'next/router'
 import { useAuth } from '@/context/AuthContext'
 import Layout from '@/components/Layout'
 import {
@@ -160,9 +159,10 @@ function CalcPreview({ form }: { form: typeof EMPTY_FORM }) {
 
 // ── Page ──────────────────────────────────────────────────────────────────────
 export default function CommissionsPage() {
-  const router = useRouter()
   const { user } = useAuth()
   const isAdmin = user?.role === 'admin' || user?.role === 'accountant'
+  /** Колонка «Менеджер», фильтр и выбор в форме — для админа, бухгалтерии и администрации (по списку менеджеров). */
+  const showManagerScope = isAdmin || user?.role === 'administration'
 
   const curYear  = new Date().getFullYear()
   const curMonth = new Date().getMonth() + 1
@@ -204,28 +204,39 @@ export default function CommissionsPage() {
   }, [year, month, filterMgr])
 
   useEffect(() => {
-    if (user?.role === 'administration') {
-      setLoading(false)
-      router.replace('/payments')
-      return
-    }
+    if (!user) return
     load()
-  }, [load, user?.role, router])
+  }, [load, user])
 
   useEffect(() => {
-    if (isAdmin) {
-      api.get('users').then(r => setManagers(r.data.filter(
-        (u: Manager & { role: string }) => u.role === 'manager'
-      )))
+    if (!user) return
+    if (user.role === 'admin' || user.role === 'accountant') {
+      api
+        .get('users')
+        .then((r) =>
+          setManagers(r.data.filter((u: Manager & { role: string }) => u.role === 'manager')),
+        )
+        .catch(() => setManagers([]))
+    } else if (user.role === 'administration') {
+      api
+        .get<Manager[]>('users/managers-for-select')
+        .then((r) => setManagers(r.data || []))
+        .catch(() => setManagers([]))
+    } else {
+      setManagers([])
     }
-  }, [isAdmin])
+  }, [user])
 
   // ── Modal helpers ──────────────────────────────────────────────────────────
   function openAdd() {
     setEditItem(null)
-    setForm({ ...EMPTY_FORM,
-      manager_id: user?.role === 'manager' ? String(user.id) : '',
-    })
+    const defaultMgr =
+      user?.role === 'manager'
+        ? String(user.id)
+        : user?.role === 'administration' && managers.length === 1
+          ? String(managers[0].id)
+          : ''
+    setForm({ ...EMPTY_FORM, manager_id: defaultMgr })
     setFormError('')
     setModalOpen(true)
   }
@@ -261,6 +272,10 @@ export default function CommissionsPage() {
     if (!form.manager_percent)     { setFormError('Укажите % менеджера'); return }
     const pct = parseFloat(form.manager_percent)
     if (pct < 1 || pct > 20)      { setFormError('Процент должен быть от 1 до 20'); return }
+    if (user?.role === 'administration' && !editItem && !form.manager_id.trim()) {
+      setFormError('Выберите менеджера')
+      return
+    }
 
     setSaving(true); setFormError('')
     try {
@@ -277,7 +292,7 @@ export default function CommissionsPage() {
         project_date: form.project_date,
         note: form.note || null,
       }
-      if (isAdmin && form.manager_id) body.manager_id = parseInt(form.manager_id)
+      if (showManagerScope && form.manager_id) body.manager_id = parseInt(form.manager_id, 10)
 
       if (editItem) {
         await api.put(`commissions/${editItem.id}`, body)
@@ -335,7 +350,7 @@ export default function CommissionsPage() {
           ))}
         </select>
 
-        {isAdmin && managers.length > 0 && (
+        {showManagerScope && managers.length > 0 && (
           <select
             value={filterMgr}
             onChange={e => setFilterMgr(Number(e.target.value))}
@@ -355,7 +370,7 @@ export default function CommissionsPage() {
             <thead>
               <tr style={{ borderBottom: '2px solid #f1f5f9' }}>
                 <Th>Проект</Th>
-                {isAdmin && <Th>Менеджер</Th>}
+                {showManagerScope && <Th>Менеджер</Th>}
                 <Th style={{ textAlign: 'right' }}>Стоимость</Th>
                 <Th style={{ textAlign: 'right' }}>Прибыль</Th>
                 <Th style={{ textAlign: 'center' }}>%</Th>
@@ -369,11 +384,11 @@ export default function CommissionsPage() {
             </thead>
             <tbody>
               {loading && (
-                <tr><td colSpan={isAdmin ? 11 : 10}
+                <tr><td colSpan={showManagerScope ? 11 : 10}
                   style={{ textAlign: 'center', padding: 40, color: '#94a3b8' }}>Загрузка…</td></tr>
               )}
               {!loading && commissions.length === 0 && (
-                <tr><td colSpan={isAdmin ? 11 : 10} style={{ padding: 0 }}>
+                <tr><td colSpan={showManagerScope ? 11 : 10} style={{ padding: 0 }}>
                   <Empty text="Проектов нет. Добавьте первый проект." />
                 </td></tr>
               )}
@@ -395,7 +410,7 @@ export default function CommissionsPage() {
                       <div style={{ fontSize: 11, color: '#94a3b8', marginTop: 2 }}>{c.note}</div>
                     )}
                   </Td>
-                  {isAdmin && (
+                  {showManagerScope && (
                     <Td><span style={{ fontSize: 13 }}>{c.manager?.name || '—'}</span></Td>
                   )}
                   <Td style={{ textAlign: 'right', fontWeight: 600 }}>
@@ -498,12 +513,16 @@ export default function CommissionsPage() {
             </div>
           )}
 
-          {/* Admin: manager picker */}
-          {isAdmin && (
-            <Field label="Менеджер">
+          {/* Админ / бухгалтерия / администрация: выбор менеджера */}
+          {showManagerScope && (
+            <Field label={user?.role === 'administration' ? 'Менеджер *' : 'Менеджер'}>
               <Select value={form.manager_id} onChange={e => f('manager_id', e.target.value)}>
                 <option value="">— не выбран —</option>
-                {managers.map(m => <option key={m.id} value={m.id}>{m.name}</option>)}
+                {managers.map(m => (
+                  <option key={m.id} value={m.id}>
+                    {m.name}
+                  </option>
+                ))}
               </Select>
             </Field>
           )}
