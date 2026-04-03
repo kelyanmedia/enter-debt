@@ -22,9 +22,8 @@ class CompanyOut(BaseModel):
     name: str
 
 
-@router.get("/companies", response_model=List[CompanyOut])
-def list_companies_public():
-    """Список компаний для переключателя в UI (без авторизации)."""
+def compute_companies_list() -> List[CompanyOut]:
+    """Список компаний для UI (без авторизации). Вынесено для дубля маршрута /auth/companies при proxy без префикса /api."""
     from app.core.companies import COMPANY_LABELS, COMPANY_SLUG_ORDER
     from app.db.database import is_registered_company_slug
 
@@ -33,6 +32,12 @@ def list_companies_public():
         for s in COMPANY_SLUG_ORDER
         if is_registered_company_slug(s)
     ]
+
+
+@router.get("/companies", response_model=List[CompanyOut])
+def list_companies_public():
+    """Список компаний для переключателя в UI (без авторизации)."""
+    return compute_companies_list()
 
 
 class LoginRequest(BaseModel):
@@ -84,16 +89,21 @@ def login_form(form_data: OAuth2PasswordRequestForm = Depends(), db: Session = D
     )
 
 
-@router.post("/login", response_model=Token)
-def login_json(data: LoginRequest, db: Session = Depends(get_db)):
+def perform_json_login(data: LoginRequest, db: Session) -> Token:
+    """Общая логика POST /api/auth/login и POST /auth/login (если nginx отрезает /api)."""
     user = authenticate_user(data.email, data.password, db)
     _record_web_login(user, db)
     access_token = create_access_token(data={"sub": str(user.id)})
     return Token(
         access_token=access_token,
         token_type="bearer",
-        user=UserOut.model_validate(user)
+        user=UserOut.model_validate(user),
     )
+
+
+@router.post("/login", response_model=Token)
+def login_json(data: LoginRequest, db: Session = Depends(get_db)):
+    return perform_json_login(data, db)
 
 
 @router.get("/me", response_model=UserOut)

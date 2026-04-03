@@ -54,6 +54,7 @@ export function statusBadge(status: string) {
     regular:   { label: 'Рекуррентный', variant: 'blue' },
     recurring: { label: 'Рекуррентный', variant: 'blue' },
     one_time: { label: 'Разовый',   variant: 'gray'  },
+    service_expiry: { label: 'Продление', variant: 'amber' },
     service:  { label: 'Сервисный', variant: 'amber' },
     A: { label: 'A', variant: 'blue' },
     B: { label: 'B', variant: 'amber' },
@@ -1041,9 +1042,28 @@ export function formatDate(d?: string | null) {
   return new Date(d).toLocaleDateString('ru-RU', { day: '2-digit', month: 'short', year: 'numeric' })
 }
 
+/** YYYY-MM-DD из API — в локальную полночь, без сдвига из‑за UTC (иначе «осталось дней» пляшет). */
+function parseCalendarDateInput(deadline?: string | null): Date | null {
+  if (!deadline || typeof deadline !== 'string') return null
+  const head = deadline.trim().split('T')[0]
+  const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(head)
+  if (m) {
+    const y = Number(m[1])
+    const mo = Number(m[2]) - 1
+    const d = Number(m[3])
+    if (!Number.isFinite(y) || !Number.isFinite(mo) || !Number.isFinite(d)) return null
+    return new Date(y, mo, d)
+  }
+  const t = Date.parse(deadline)
+  return Number.isNaN(t) ? null : new Date(t)
+}
+
 /** Дата «окончания» для проекта: deadline или ближайший платёж по числу месяца. */
 function _paymentDeadlineDate(deadline?: string | null, dayOfMonth?: number | null): Date | null {
-  if (deadline) return new Date(deadline)
+  if (deadline) {
+    const cal = parseCalendarDateInput(deadline)
+    if (cal) return cal
+  }
   if (dayOfMonth) {
     const now = new Date()
     let date = new Date(now.getFullYear(), now.getMonth(), dayOfMonth)

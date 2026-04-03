@@ -1,4 +1,4 @@
-import { useEffect, useState, useCallback, useMemo } from 'react'
+import { useEffect, useState, useCallback, useMemo, type CSSProperties } from 'react'
 import { useRouter } from 'next/router'
 import { useAuth } from '@/context/AuthContext'
 import Layout from '@/components/Layout'
@@ -20,6 +20,12 @@ interface Payment {
   contract_months?: number; remind_days_before: number; created_at: string; postponed_until?: string
   notify_accounting: boolean; contract_url?: string; service_period?: string
   project_category?: string | null
+  billing_variant?: string | null
+  billing_notes?: string | null
+  hosting_contact_name?: string | null
+  hosting_payment_kind?: string | null
+  hosting_renewal_anchor?: string | null
+  hosting_prepaid_years?: number | null
   /** Ближайший срок для дебиторки: по графику (мин. due среди неоплаченных) или по договору */
   next_payment_due_date?: string | null
   next_payment_month?: string | null
@@ -36,9 +42,33 @@ function listDueDayOfMonth(p: Payment): number | null | undefined {
   return p.next_payment_due_date ? undefined : p.day_of_month
 }
 
+/** Дни до срока: приоритет у поля с бэкенда (совпадает с дебиторкой), иначе расчёт по дате. */
+function paymentRemainingDisplay(p: Payment): { label: string; color: string } {
+  if (p.days_until_due != null && Number.isFinite(p.days_until_due)) {
+    const diff = p.days_until_due
+    if (diff < 0) return { label: `−${Math.abs(diff)} дн.`, color: '#e84040' }
+    if (diff <= 3) return { label: `${diff} дн.`, color: '#f0900a' }
+    return { label: `${diff} дн.`, color: '#2d9b5a' }
+  }
+  return daysLeft(listDueDateStr(p), listDueDayOfMonth(p))
+}
+
+function paymentSortKeyDueDays(p: Payment): number | null {
+  if (p.days_until_due != null && Number.isFinite(p.days_until_due)) return p.days_until_due
+  return daysLeftSortKey(listDueDateStr(p), listDueDayOfMonth(p))
+}
+
 function dueSourceHint(p: Payment): string {
   if (p.next_payment_month) {
     return `По графику: ближайший срок среди неоплаченных строк (${monthLabel(p.next_payment_month)})`
+  }
+  if (p.project_category === 'hosting_domain') {
+    const n = p.hosting_prepaid_years && p.hosting_prepaid_years > 0 ? p.hosting_prepaid_years : 0
+    const rem = p.remind_days_before ?? 14
+    if (n > 0) {
+      return `Хостинг/домен: ежегодная оплата. Учтена предоплата на ${n} г. — в списке срок сдвинут, напоминания (за ${rem} дн.) ближе к этой дате.`
+    }
+    return `Хостинг/домен: ежегодное продление (не «окончание договора»). Напоминания по умолчанию за ${rem} дн. до даты продления.`
   }
   if (p.deadline_date) {
     return 'По договору: фиксированная дата (меняется в «Редактировать проект»)'
@@ -53,6 +83,27 @@ const EMPTY_FORM = {
   partner_id: '', payment_type: 'recurring', description: '', amount: '',
   day_of_month: '', deadline_date: '', remind_days_before: '3', contract_months: '',
   notify_accounting: true, contract_url: '', service_period: 'yearly', project_category: '' as string,
+  billing_variant: '' as string,
+  billing_notes: '',
+  hosting_contact_name: '',
+  hosting_payment_kind: '',
+  hosting_renewal_anchor: '',
+  hosting_prepaid_years: '0',
+}
+
+const textareaStyle: CSSProperties = {
+  width: '100%',
+  minHeight: 72,
+  border: '1px solid #e8e9ef',
+  borderRadius: 9,
+  padding: '9px 12px',
+  fontSize: 13.5,
+  outline: 'none',
+  color: '#1a1d23',
+  fontFamily: 'inherit',
+  background: '#fff',
+  resize: 'vertical' as const,
+  boxSizing: 'border-box',
 }
 
 const MONTHS_RU = ['Январь','Февраль','Март','Апрель','Май','Июнь',
@@ -61,6 +112,11 @@ const MONTHS_RU = ['Январь','Февраль','Март','Апрель','М
 function monthLabel(ym: string) {
   const [y, m] = ym.split('-')
   return `${MONTHS_RU[parseInt(m) - 1]} ${y}`
+}
+
+/** Несколько строк графика на один YYYY-MM — порядок по id */
+function sortDrawerMonths<T extends { month: string; id: number }>(rows: T[]): T[] {
+  return [...rows].sort((a, b) => a.month.localeCompare(b.month) || a.id - b.id)
 }
 
 function currentYM() {
@@ -126,6 +182,19 @@ function nextMonthYm(ym: string): string {
     yr += 1
   }
   return `${yr}-${String(mo).padStart(2, '0')}`
+}
+
+/** Следующий год, тот же месяц (подписи/tooltip для хостинга) */
+function nextYearYm(ym: string): string {
+  const [y, m] = ym.split('-').map(Number)
+  return `${y + 1}-${String(m).padStart(2, '0')}`
+}
+
+function hostingYearPeriodTitle(ym: string): string {
+  const [y, m] = ym.split('-')
+  const mi = parseInt(m, 10)
+  const mon = MONTHS_RU[mi - 1] ?? m
+  return `${y} год — ${mon}`
 }
 
 function lineBadge(cat?: string | null) {
@@ -249,8 +318,8 @@ export default function PaymentsPage() {
     }
 
     return [...payments].sort((a, b) => {
-      const ka = daysLeftSortKey(listDueDateStr(a), listDueDayOfMonth(a))
-      const kb = daysLeftSortKey(listDueDateStr(b), listDueDayOfMonth(b))
+      const ka = paymentSortKeyDueDays(a)
+      const kb = paymentSortKeyDueDays(b)
       const ta = tier(ka)
       const tb = tier(kb)
       if (ta !== tb) return ta - tb
@@ -293,29 +362,121 @@ export default function PaymentsPage() {
       contract_url: p.contract_url || '',
       service_period: p.service_period || 'yearly',
       project_category: p.project_category || '',
+      billing_variant:
+        p.billing_variant ||
+        (p.project_category === 'hosting_domain'
+          ? 'hosting_subscription'
+          : p.project_category === 'tech_support'
+            ? p.payment_type === 'one_time'
+              ? 'tech_piecework'
+              : 'tech_monthly_plus_extra'
+            : ''),
+      billing_notes: p.billing_notes || '',
+      hosting_contact_name: p.hosting_contact_name || '',
+      hosting_payment_kind: p.hosting_payment_kind || '',
+      hosting_renewal_anchor: (p.hosting_renewal_anchor || p.deadline_date || '') as string,
+      hosting_prepaid_years: String(Math.min(3, Math.max(0, Number(p.hosting_prepaid_years ?? 0)))),
     })
     setEditingId(p.id)
     setError('')
     setModal(true)
   }
 
+  const applyCategoryChange = (category: string) => {
+    setForm((f) => {
+      const next = { ...f, project_category: category }
+      if (category === 'tech_support') {
+        next.payment_type = 'recurring'
+        next.service_period = 'yearly'
+        if (!next.billing_variant || !['tech_monthly_plus_extra', 'tech_piecework'].includes(next.billing_variant)) {
+          next.billing_variant = 'tech_monthly_plus_extra'
+        }
+      } else if (category === 'hosting_domain') {
+        next.payment_type = 'service_expiry'
+        next.billing_variant = 'hosting_subscription'
+        next.service_period = 'yearly'
+        next.contract_months = ''
+        next.day_of_month = ''
+        next.remind_days_before = '14'
+        next.hosting_prepaid_years = '0'
+        next.hosting_contact_name = ''
+        next.hosting_payment_kind = ''
+        next.hosting_renewal_anchor = ''
+      } else {
+        next.billing_variant = ''
+        next.billing_notes = ''
+        if (f.project_category === 'hosting_domain' || f.project_category === 'tech_support') {
+          next.payment_type = 'recurring'
+        }
+      }
+      return next
+    })
+  }
+
   const save = async () => {
     if (!form.partner_id || !form.description || !form.amount) { setError('Заполните все обязательные поля'); return }
+    const isTech = form.project_category === 'tech_support'
+    const isHosting = form.project_category === 'hosting_domain'
+    if (isTech && form.billing_variant === 'tech_monthly_plus_extra' && !form.contract_months) {
+      setError('Укажите период контракта (месяцев) для ежемесячного абонемента')
+      return
+    }
+    if (isHosting && !form.hosting_renewal_anchor) {
+      setError('Укажите дату следующего ежегодного продления (хостинг/домен)')
+      return
+    }
     setSaving(true)
     try {
+      let paymentType = form.payment_type
+      let contractMonths: number | null = form.contract_months ? Number(form.contract_months) : null
+      let dayOfMonth: number | null = form.day_of_month ? Number(form.day_of_month) : null
+      let deadlineDate: string | null = form.deadline_date || null
+      let servicePeriod: string | null = form.payment_type === 'service_expiry' ? form.service_period : null
+      let billingVariant: string | null = null
+      let billingNotes: string | null = form.billing_notes.trim() || null
+
+      if (isTech) {
+        paymentType = form.billing_variant === 'tech_piecework' ? 'one_time' : 'recurring'
+        billingVariant = form.billing_variant || null
+        if (form.billing_variant === 'tech_piecework') {
+          contractMonths = null
+          dayOfMonth = null
+          deadlineDate = null
+          servicePeriod = null
+        }
+      } else if (isHosting) {
+        paymentType = 'service_expiry'
+        billingVariant = 'hosting_subscription'
+        servicePeriod = 'yearly'
+        contractMonths = null
+        dayOfMonth = null
+        deadlineDate = null
+      } else {
+        billingVariant = null
+        billingNotes = null
+      }
+
       const payload = {
         partner_id: Number(form.partner_id),
-        payment_type: form.payment_type,
+        payment_type: paymentType,
         description: form.description,
         amount: Number(form.amount),
-        contract_months: form.contract_months ? Number(form.contract_months) : null,
-        day_of_month: form.day_of_month ? Number(form.day_of_month) : null,
-        deadline_date: form.deadline_date || null,
+        contract_months: contractMonths,
+        day_of_month: dayOfMonth,
+        deadline_date: deadlineDate,
         remind_days_before: Number(form.remind_days_before),
         notify_accounting: form.notify_accounting,
         contract_url: form.contract_url || null,
-        service_period: form.payment_type === 'service_expiry' ? form.service_period : null,
+        service_period: servicePeriod,
         project_category: form.project_category || null,
+        billing_variant: billingVariant,
+        billing_notes: billingNotes,
+        hosting_contact_name: isHosting ? (form.hosting_contact_name.trim() || null) : null,
+        hosting_payment_kind: isHosting ? (form.hosting_payment_kind.trim() || null) : null,
+        hosting_renewal_anchor: isHosting ? (form.hosting_renewal_anchor || null) : null,
+        hosting_prepaid_years: isHosting
+          ? Math.min(3, Math.max(0, Number(form.hosting_prepaid_years) || 0))
+          : 0,
       }
       if (editingId) {
         await api.put(`payments/${editingId}`, payload)
@@ -381,7 +542,7 @@ export default function PaymentsPage() {
         api.get<PaymentMonth[]>(`payments/${p.id}/months`),
         api.get<Payment>(`payments/${p.id}`),
       ])
-      setDrawerMonths(monthsRes.data)
+      setDrawerMonths(sortDrawerMonths(monthsRes.data))
       const pmInit: Record<number, string> = {}
       for (const row of monthsRes.data) {
         if (row.status !== 'paid') {
@@ -409,7 +570,7 @@ export default function PaymentsPage() {
         description: addMonthForm.description || null,
         note: addMonthForm.note || null,
       })
-      setDrawerMonths(prev => [...prev, r.data].sort((a, b) => a.month.localeCompare(b.month)))
+      setDrawerMonths(prev => sortDrawerMonths([...prev, r.data]))
       setAddMonthOpen(false)
       await syncDrawerPayment(drawer.id)
       const nextMonth = addMonthForm.month
@@ -490,7 +651,7 @@ export default function PaymentsPage() {
     setDuplicatingMonth(monthId)
     try {
       const r = await api.post<PaymentMonth>(`payments/${drawer.id}/months/${monthId}/duplicate-next`, {})
-      setDrawerMonths(prev => [...prev, r.data].sort((a, b) => a.month.localeCompare(b.month)))
+      setDrawerMonths(prev => sortDrawerMonths([...prev, r.data]))
       await syncDrawerPayment(drawer.id)
     } catch (e: unknown) {
       alert(formatApiError(e))
@@ -530,7 +691,7 @@ export default function PaymentsPage() {
         setDrawerMonths(prev => {
           const exists = prev.find(x => x.month === m)
           if (exists) return prev
-          return [...prev, r.data].sort((a, b) => a.month.localeCompare(b.month))
+          return sortDrawerMonths([...prev, r.data])
         })
       } catch { /* skip duplicate month or validation */ }
     }
@@ -545,6 +706,8 @@ export default function PaymentsPage() {
     payConfirmModalMonthId != null
       ? drawerMonths.find((x) => x.id === payConfirmModalMonthId) ?? null
       : null
+
+  const drawerIsHosting = drawer?.project_category === 'hosting_domain'
 
   return (
     <Layout>
@@ -646,7 +809,7 @@ export default function PaymentsPage() {
             </thead>
             <tbody>
               {displayedPayments.map(p => {
-                const dl = daysLeft(listDueDateStr(p), listDueDayOfMonth(p))
+                const dl = paymentRemainingDisplay(p)
                 const isActive = drawer?.id === p.id
                 return (
                   <tr
@@ -674,8 +837,12 @@ export default function PaymentsPage() {
                       {p.description}
                     </Td>
                     <Td>{lineBadge(p.project_category)}</Td>
-                    <Td>{statusBadge(p.payment_type)}</Td>
-                    <Td><span style={{ fontWeight: 700 }}>{formatMoneyNumber(p.amount)}</span></Td>
+                    <Td style={{ minWidth: 0, overflow: 'hidden', verticalAlign: 'middle' }}>
+                      <div style={{ overflow: 'hidden', textOverflow: 'ellipsis' }}>{statusBadge(p.payment_type)}</div>
+                    </Td>
+                    <Td style={{ minWidth: 0, verticalAlign: 'middle' }}>
+                      <span style={{ fontWeight: 700 }}>{formatMoneyNumber(p.amount)}</span>
+                    </Td>
                     <Td>
                       {p.next_payment_due_date ? (
                         <div>
@@ -754,6 +921,24 @@ export default function PaymentsPage() {
                   </div>
                 </div>
                 <div style={{ fontSize: 13, color: '#444', marginTop: 8 }}>{drawer.description}</div>
+                {drawer.project_category === 'hosting_domain' && (
+                  <div style={{ marginTop: 10, fontSize: 12, color: '#475569', lineHeight: 1.55 }}>
+                    {drawer.hosting_payment_kind ? (
+                      <div><span style={{ color: '#8a8fa8' }}>Вид оплаты:</span> {drawer.hosting_payment_kind}</div>
+                    ) : null}
+                    {drawer.hosting_contact_name ? (
+                      <div><span style={{ color: '#8a8fa8' }}>Контакт:</span> {drawer.hosting_contact_name}</div>
+                    ) : null}
+                    {drawer.billing_notes ? (
+                      <div><span style={{ color: '#8a8fa8' }}>Комментарий:</span> {drawer.billing_notes}</div>
+                    ) : null}
+                    {drawer.hosting_prepaid_years != null && drawer.hosting_prepaid_years > 0 ? (
+                      <div style={{ marginTop: 4, fontWeight: 600, color: '#1a6b3c' }}>
+                        Оплачено на {drawer.hosting_prepaid_years} г. вперёд — срок в списке с учётом предоплаты
+                      </div>
+                    ) : null}
+                  </div>
+                )}
                 <div style={{ display: 'flex', gap: 8, marginTop: 8, flexWrap: 'wrap', alignItems: 'center' }}>
                   {lineBadge(drawer.project_category)}
                   {statusBadge(drawer.payment_type)}
@@ -806,7 +991,7 @@ export default function PaymentsPage() {
                         {formatDate(listDueDateStr(drawer)!)}
                       </div>
                       {(() => {
-                        const dl = daysLeft(listDueDateStr(drawer), listDueDayOfMonth(drawer))
+                        const dl = paymentRemainingDisplay(drawer)
                         if (dl.label === '—') return null
                         return (
                           <div style={{ fontSize: 13, fontWeight: 600, color: dl.color, marginTop: 2 }}>
@@ -822,7 +1007,9 @@ export default function PaymentsPage() {
                     {dueSourceHint(drawer)}
                   </div>
                   <div style={{ fontSize: 11, color: '#94a3b8', lineHeight: 1.4, marginTop: 6 }}>
-                    Дату договора меняйте в «Редактировать проект» (✎). Срок по строке графика — в самой строке месяца (поле «Срок оплаты»).
+                    {drawer.project_category === 'hosting_domain'
+                      ? 'Хостинг/домен: дату продления и предоплату — в «Редактировать проект» (✎). Срок в дебиторке — по полю «Срок оплаты» в карточке годового периода ниже.'
+                      : 'Дату договора меняйте в «Редактировать проект» (✎). Срок по строке графика — в самой строке месяца (поле «Срок оплаты»).'}
                   </div>
                 </div>
                 {drawer.contract_url && (
@@ -901,6 +1088,44 @@ export default function PaymentsPage() {
 
             {/* months list */}
             <div style={{ padding: '14px 16px 20px', flex: 1, minWidth: 0 }}>
+              {drawerIsHosting && !drawerLoading && (() => {
+                const due = listDueDateStr(drawer)
+                const pr = paymentRemainingDisplay(drawer)
+                if (!due && pr.label === '—') return null
+                return (
+                  <div
+                    style={{
+                      marginBottom: 14,
+                      padding: '12px 14px',
+                      background: '#f0fdf4',
+                      borderRadius: 10,
+                      border: '1px solid #bbf7d0',
+                    }}
+                  >
+                    <div
+                      style={{
+                        fontSize: 10,
+                        fontWeight: 700,
+                        color: '#166534',
+                        letterSpacing: '.06em',
+                        textTransform: 'uppercase',
+                      }}
+                    >
+                      Следующее продление (контрагент)
+                    </div>
+                    {due ? (
+                      <div style={{ fontSize: 15, fontWeight: 700, color: '#14532d', marginTop: 4 }}>{formatDate(due)}</div>
+                    ) : null}
+                    {pr.label !== '—' ? (
+                      <div style={{ fontSize: 14, fontWeight: 600, color: pr.color, marginTop: 6 }}>
+                        {pr.label.startsWith('−')
+                          ? `Просрочка: ${pr.label}`
+                          : `Осталось до следующего платежа: ${pr.label}`}
+                      </div>
+                    ) : null}
+                  </div>
+                )
+              })()}
               <div style={{
                 display: 'flex',
                 flexWrap: 'wrap',
@@ -910,15 +1135,17 @@ export default function PaymentsPage() {
                 marginBottom: 14,
               }}
               >
-                <span style={{ fontWeight: 700, fontSize: 14, lineHeight: 1.3 }}>Разбивка по месяцам</span>
+                <span style={{ fontWeight: 700, fontSize: 14, lineHeight: 1.3 }}>
+                  {drawerIsHosting ? 'Разбивка по годам' : 'Разбивка по месяцам'}
+                </span>
                 <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6, justifyContent: 'flex-end' }}>
-                  {drawer.contract_months && drawerMonths.length === 0 && (
+                  {drawer.contract_months && drawerMonths.length === 0 && !drawerIsHosting && (
                     <BtnOutline onClick={bulkAddMonths} style={{ fontSize: 12, padding: '5px 10px' }}>
                       ⚡ Авто ({drawer.contract_months} мес.)
                     </BtnOutline>
                   )}
                   <BtnPrimary onClick={() => setAddMonthOpen(v => !v)} style={{ fontSize: 12, padding: '5px 12px' }}>
-                    + Месяц
+                    {drawerIsHosting ? '+ Год' : '+ Месяц'}
                   </BtnPrimary>
                 </div>
               </div>
@@ -951,7 +1178,7 @@ export default function PaymentsPage() {
                       onChange={e => setAddMonthForm(f => ({ ...f, description: e.target.value }))} />
                   </Field>
                   <div style={{ display: 'grid', gridTemplateColumns: 'minmax(0, 1fr)', gap: 10, marginTop: 10 }}>
-                    <Field label="Месяц услуги (период акта)">
+                    <Field label={drawerIsHosting ? 'Период (год — месяц отсчёта)' : 'Месяц услуги (период акта)'}>
                       <Input type="month" value={addMonthForm.month}
                         onChange={e => {
                           const v = e.target.value
@@ -964,6 +1191,11 @@ export default function PaymentsPage() {
                             due_date: defaultDueDateForMonth(v, drawer.day_of_month ?? null),
                           }))
                         }} />
+                      <div style={{ fontSize: 10, color: '#8a8fa8', marginTop: 4 }}>
+                        {drawerIsHosting
+                          ? 'Для хостинга строка = годовой период (в БД — YYYY-MM месяца продления). Можно несколько строк на разные сроки.'
+                          : 'Для одного периода (один и тот же месяц) можно добавить несколько строк с разными сроками и суммами.'}
+                      </div>
                     </Field>
                     <Field label="Срок оплаты (день)">
                       <Input type="date" value={addMonthForm.due_date}
@@ -995,7 +1227,15 @@ export default function PaymentsPage() {
               {!drawerLoading && drawerMonths.length === 0 && (
                 <div style={{ textAlign: 'center', padding: '30px 0', color: '#b0b4c8', fontSize: 13 }}>
                   <div style={{ fontSize: 28, marginBottom: 8 }}>📅</div>
-                  Месяцы ещё не добавлены.<br />Нажмите «+ Месяц» или «Авто», чтобы создать график.
+                  {drawerIsHosting ? (
+                    <>
+                      Годовые периоды ещё не добавлены.<br />Нажмите «+ Год», чтобы добавить строку.
+                    </>
+                  ) : (
+                    <>
+                      Месяцы ещё не добавлены.<br />Нажмите «+ Месяц» или «Авто», чтобы создать график.
+                    </>
+                  )}
                 </div>
               )}
 
@@ -1004,8 +1244,7 @@ export default function PaymentsPage() {
                 const actOk = !!m.act_issued
                 const bothDone = actOk && isPaid
                 const effAmount = m.amount ?? drawer.amount
-                const nextYm = nextMonthYm(m.month)
-                const nextMonthTaken = drawerMonths.some(x => x.month === nextYm)
+                const nextYm = drawerIsHosting ? nextYearYm(m.month) : nextMonthYm(m.month)
                 const btnStyle = (primary: boolean, disabled: boolean) => ({
                   background: primary ? '#1a6b3c' : '#fff',
                   color: primary ? '#fff' : '#4361ee',
@@ -1060,7 +1299,9 @@ export default function PaymentsPage() {
                           {bothDone ? '✅' : '⏳'}
                         </div>
                         <div style={{ minWidth: 0, flex: 1 }}>
-                          <div style={{ fontWeight: 700, fontSize: 14, lineHeight: 1.3 }}>{monthLabel(m.month)}</div>
+                          <div style={{ fontWeight: 700, fontSize: 14, lineHeight: 1.3 }}>
+                            {drawerIsHosting ? hostingYearPeriodTitle(m.month) : monthLabel(m.month)}
+                          </div>
                           {m.due_date && (
                             <div style={{ fontSize: 11, color: '#64748b', marginTop: 2 }}>
                               Срок оплаты: {formatDate(m.due_date)}
@@ -1097,7 +1338,7 @@ export default function PaymentsPage() {
                         <button
                           type="button"
                           onClick={() => setDeleteMonthId(m.id)}
-                          title="Удалить строку месяца"
+                          title={drawerIsHosting ? 'Удалить строку периода' : 'Удалить строку месяца'}
                           style={{
                             background: '#fff',
                             border: '1px solid #e8e9ef',
@@ -1145,12 +1386,16 @@ export default function PaymentsPage() {
                       {['admin', 'manager', 'administration', 'financier'].includes(user?.role || '') && (
                         <button
                           type="button"
-                          title={nextMonthTaken ? `Месяц ${monthLabel(nextYm)} уже в графике` : `Создать строку на ${monthLabel(nextYm)}`}
+                          title={
+                            drawerIsHosting
+                              ? `Создать строку на ${hostingYearPeriodTitle(nextYm)} (следующий годовой период)`
+                              : `Создать строку на ${monthLabel(nextYm)} (в том числе если таких строк уже несколько)`
+                          }
                           onClick={() => duplicateMonthToNext(m.id)}
-                          disabled={nextMonthTaken || duplicatingMonth === m.id}
-                          style={btnStyle(false, nextMonthTaken || duplicatingMonth === m.id)}
+                          disabled={duplicatingMonth === m.id}
+                          style={btnStyle(false, duplicatingMonth === m.id)}
                         >
-                          {duplicatingMonth === m.id ? '…' : '→ След. месяц'}
+                          {duplicatingMonth === m.id ? '…' : drawerIsHosting ? '→ След. год' : '→ След. месяц'}
                         </button>
                       )}
                       {!actOk && (
@@ -1223,7 +1468,7 @@ export default function PaymentsPage() {
           </Select>
         </Field>
         <Field label="Линия (CEO)">
-          <Select value={form.project_category} onChange={e => setForm(f => ({ ...f, project_category: e.target.value }))}>
+          <Select value={form.project_category} onChange={e => applyCategoryChange(e.target.value)}>
             <option value="">Не указано</option>
             <option value="web">Web — сайты и веб</option>
             <option value="seo">SEO</option>
@@ -1236,79 +1481,256 @@ export default function PaymentsPage() {
         <Field label="Услуга *">
           <Input value={form.description} onChange={e => setForm(f => ({ ...f, description: e.target.value }))} placeholder="Абон. SEO, март 2026" />
         </Field>
-        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
-          <Field label="Тип платежа">
-            <Select value={form.payment_type} onChange={e => setForm(f => ({ ...f, payment_type: e.target.value }))}>
-              <option value="recurring">Рекуррентный</option>
-              <option value="one_time">Разовый</option>
-              <option value="service_expiry">Сервисный</option>
-            </Select>
-          </Field>
-          <Field label="Сумма (Uzs) *">
-            <MoneyInput value={form.amount} onChange={(v) => setForm(f => ({ ...f, amount: v }))} placeholder="0" />
-          </Field>
-        </div>
-        {form.payment_type === 'recurring' && (
-          <Field label="Период контракта (месяцев)">
-            <Input
-              type="number"
-              min="1"
-              max="120"
-              value={form.contract_months}
-              onChange={e => setForm(f => ({ ...f, contract_months: e.target.value }))}
-              placeholder="Например: 6, 12, 24..."
-            />
-          </Field>
+
+        {form.project_category === 'tech_support' && (
+          <>
+            <Field label="Сумма (Uzs) *">
+              <MoneyInput value={form.amount} onChange={(v) => setForm(f => ({ ...f, amount: v }))} placeholder="0" />
+            </Field>
+            <Field label="Формат оплаты">
+              <div style={{ display: 'flex', gap: 10 }}>
+                {[
+                  { value: 'tech_monthly_plus_extra', label: 'Абонемент + доп. работы', hint: 'Ежемесячно, сверх — отдельно' },
+                  { value: 'tech_piecework', label: 'Сдельно', hint: 'Разовые задачи, без срока по графику' },
+                ].map(opt => (
+                  <div
+                    key={opt.value}
+                    onClick={() =>
+                      setForm((f) => ({
+                        ...f,
+                        billing_variant: opt.value,
+                        ...(opt.value === 'tech_piecework'
+                          ? { payment_type: 'one_time' as const, contract_months: '', deadline_date: '', day_of_month: '' }
+                          : { payment_type: 'recurring' as const }),
+                      }))
+                    }
+                    style={{
+                      flex: 1, padding: '10px 14px', borderRadius: 10, cursor: 'pointer',
+                      border: `2px solid ${form.billing_variant === opt.value ? '#1a6b3c' : '#e8e9ef'}`,
+                      background: form.billing_variant === opt.value ? '#f0faf4' : '#fafbfc',
+                      transition: 'all .15s',
+                    }}
+                  >
+                    <div style={{ fontWeight: 600, fontSize: 13 }}>{opt.label}</div>
+                    <div style={{ fontSize: 11, color: '#8a8fa8', marginTop: 2 }}>{opt.hint}</div>
+                  </div>
+                ))}
+              </div>
+            </Field>
+            {form.billing_variant === 'tech_monthly_plus_extra' && (
+              <>
+                <Field label="Период контракта (месяцев) *">
+                  <Input
+                    type="number"
+                    min="1"
+                    max="120"
+                    value={form.contract_months}
+                    onChange={e => setForm(f => ({ ...f, contract_months: e.target.value }))}
+                    placeholder="Например: 6, 12, 24..."
+                  />
+                </Field>
+                <Field label="Дата окончания договора">
+                  <Input type="date" value={form.deadline_date} onChange={e => setForm(f => ({ ...f, deadline_date: e.target.value }))} />
+                </Field>
+                <Field label="Напомнить за (дней)">
+                  <Select value={form.remind_days_before} onChange={e => setForm(f => ({ ...f, remind_days_before: e.target.value }))}>
+                    <option value="1">1 день</option>
+                    <option value="2">2 дня</option>
+                    <option value="3">3 дня</option>
+                    <option value="5">5 дней</option>
+                    <option value="7">7 дней</option>
+                  </Select>
+                </Field>
+                <Field label="Доп. работы (описание)">
+                  <textarea
+                    style={textareaStyle}
+                    value={form.billing_notes}
+                    onChange={e => setForm(f => ({ ...f, billing_notes: e.target.value }))}
+                    placeholder="Внеплановые работы, что считать отдельно от абонемента…"
+                  />
+                </Field>
+              </>
+            )}
+            {form.billing_variant === 'tech_piecework' && (
+              <>
+                <Field label="Напомнить за (дней)">
+                  <Select value={form.remind_days_before} onChange={e => setForm(f => ({ ...f, remind_days_before: e.target.value }))}>
+                    <option value="1">1 день</option>
+                    <option value="2">2 дня</option>
+                    <option value="3">3 дня</option>
+                    <option value="5">5 дней</option>
+                    <option value="7">7 дней</option>
+                  </Select>
+                </Field>
+                <Field label="Задачи / что выставить в счёте">
+                  <textarea
+                    style={textareaStyle}
+                    value={form.billing_notes}
+                    onChange={e => setForm(f => ({ ...f, billing_notes: e.target.value }))}
+                    placeholder="Кратко: что сделано, на какую сумму выставить счёт…"
+                  />
+                </Field>
+              </>
+            )}
+            <Field label="Ссылка на контракт">
+              <Input
+                value={form.contract_url}
+                onChange={e => setForm(f => ({ ...f, contract_url: e.target.value }))}
+                placeholder="https://docs.google.com/..."
+              />
+            </Field>
+          </>
         )}
-        {form.payment_type === 'service_expiry' && (
-          <Field label="Периодичность напоминания">
-            <div style={{ display: 'flex', gap: 10 }}>
-              {[
-                { value: 'yearly', label: '📅 Ежегодно', hint: 'домен, хостинг' },
-                { value: 'monthly', label: '🗓 Ежемесячно', hint: 'подписка, сервис' },
-              ].map(opt => (
-                <div
-                  key={opt.value}
-                  onClick={() => setForm(f => ({ ...f, service_period: opt.value }))}
-                  style={{
-                    flex: 1, padding: '10px 14px', borderRadius: 10, cursor: 'pointer',
-                    border: `2px solid ${form.service_period === opt.value ? '#1a6b3c' : '#e8e9ef'}`,
-                    background: form.service_period === opt.value ? '#f0faf4' : '#fafbfc',
-                    transition: 'all .15s',
-                  }}
-                >
-                  <div style={{ fontWeight: 600, fontSize: 13 }}>{opt.label}</div>
-                  <div style={{ fontSize: 11, color: '#8a8fa8', marginTop: 2 }}>{opt.hint}</div>
-                </div>
-              ))}
+
+        {form.project_category === 'hosting_domain' && (
+          <>
+            <Field label="Вид оплаты">
+              <Input
+                value={form.hosting_payment_kind}
+                onChange={e => setForm(f => ({ ...f, hosting_payment_kind: e.target.value }))}
+                placeholder="Например: счёт на ИП, карта, перевод…"
+              />
+            </Field>
+            <Field label="Сумма (Uzs) *">
+              <MoneyInput value={form.amount} onChange={(v) => setForm(f => ({ ...f, amount: v }))} placeholder="0" />
+            </Field>
+            <Field label="Комментарий">
+              <textarea
+                style={textareaStyle}
+                value={form.billing_notes}
+                onChange={e => setForm(f => ({ ...f, billing_notes: e.target.value }))}
+                placeholder="Домены, тариф, особенности списания…"
+              />
+            </Field>
+            <Field label="Контактное лицо">
+              <Input
+                value={form.hosting_contact_name}
+                onChange={e => setForm(f => ({ ...f, hosting_contact_name: e.target.value }))}
+                placeholder="С кем связываться по продлению"
+              />
+            </Field>
+            <Field label="Следующее ежегодное продление *">
+              <Input
+                type="date"
+                value={form.hosting_renewal_anchor}
+                onChange={e => setForm(f => ({ ...f, hosting_renewal_anchor: e.target.value }))}
+              />
+              <div style={{ fontSize: 11, color: '#8a8fa8', marginTop: 6, lineHeight: 1.4 }}>
+                Ежегодная оплата: это дата очередного продления, не «окончание договора». В списке проектов показывается ближайший срок с учётом предоплаты (см. ниже).
+              </div>
+            </Field>
+            <Field label="Оплачено на лет вперёд (без лишних напоминаний)">
+              <Select
+                value={form.hosting_prepaid_years}
+                onChange={e => setForm(f => ({ ...f, hosting_prepaid_years: e.target.value }))}
+              >
+                <option value="0">Только текущий цикл (0)</option>
+                <option value="1">На 1 год вперёд</option>
+                <option value="2">На 2 года вперёд</option>
+                <option value="3">На 3 года вперёд</option>
+              </Select>
+              <div style={{ fontSize: 11, color: '#8a8fa8', marginTop: 6, lineHeight: 1.4 }}>
+                Срок в таблице сдвигается: напоминания и красная зона — ближе к концу периода предоплаты.
+              </div>
+            </Field>
+            <Field label="Напомнить за (дней до продления)">
+              <Select value={form.remind_days_before} onChange={e => setForm(f => ({ ...f, remind_days_before: e.target.value }))}>
+                <option value="7">7 дней</option>
+                <option value="14">14 дней (2 недели)</option>
+                <option value="21">21 день</option>
+                <option value="3">3 дня</option>
+                <option value="5">5 дней</option>
+                <option value="1">1 день</option>
+              </Select>
+            </Field>
+            <Field label="Ссылка на контракт / документы">
+              <Input
+                value={form.contract_url}
+                onChange={e => setForm(f => ({ ...f, contract_url: e.target.value }))}
+                placeholder="https://…"
+              />
+            </Field>
+          </>
+        )}
+
+        {form.project_category !== 'tech_support' && form.project_category !== 'hosting_domain' && (
+          <>
+            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
+              <Field label="Тип платежа">
+                <Select value={form.payment_type} onChange={e => setForm(f => ({ ...f, payment_type: e.target.value }))}>
+                  <option value="recurring">Рекуррентный</option>
+                  <option value="one_time">Разовый</option>
+                  <option value="service_expiry">Сервисный</option>
+                </Select>
+              </Field>
+              <Field label="Сумма (Uzs) *">
+                <MoneyInput value={form.amount} onChange={(v) => setForm(f => ({ ...f, amount: v }))} placeholder="0" />
+              </Field>
             </div>
-          </Field>
+            {form.payment_type === 'recurring' && (
+              <Field label="Период контракта (месяцев)">
+                <Input
+                  type="number"
+                  min="1"
+                  max="120"
+                  value={form.contract_months}
+                  onChange={e => setForm(f => ({ ...f, contract_months: e.target.value }))}
+                  placeholder="Например: 6, 12, 24..."
+                />
+              </Field>
+            )}
+            {form.payment_type === 'service_expiry' && (
+              <Field label="Периодичность напоминания">
+                <div style={{ display: 'flex', gap: 10 }}>
+                  {[
+                    { value: 'yearly', label: '📅 Ежегодно', hint: 'домен, хостинг' },
+                    { value: 'monthly', label: '🗓 Ежемесячно', hint: 'подписка, сервис' },
+                  ].map(opt => (
+                    <div
+                      key={opt.value}
+                      onClick={() => setForm(f => ({ ...f, service_period: opt.value }))}
+                      style={{
+                        flex: 1, padding: '10px 14px', borderRadius: 10, cursor: 'pointer',
+                        border: `2px solid ${form.service_period === opt.value ? '#1a6b3c' : '#e8e9ef'}`,
+                        background: form.service_period === opt.value ? '#f0faf4' : '#fafbfc',
+                        transition: 'all .15s',
+                      }}
+                    >
+                      <div style={{ fontWeight: 600, fontSize: 13 }}>{opt.label}</div>
+                      <div style={{ fontSize: 11, color: '#8a8fa8', marginTop: 2 }}>{opt.hint}</div>
+                    </div>
+                  ))}
+                </div>
+              </Field>
+            )}
+            {form.payment_type === 'recurring' ? (
+              <Field label="День месяца (например 5 или 10)">
+                <Input type="number" min="1" max="31" value={form.day_of_month} onChange={e => setForm(f => ({ ...f, day_of_month: e.target.value }))} placeholder="10" />
+              </Field>
+            ) : (
+              <Field label="Дата окончания договора">
+                <Input type="date" value={form.deadline_date} onChange={e => setForm(f => ({ ...f, deadline_date: e.target.value }))} />
+              </Field>
+            )}
+            <Field label="Напомнить за (дней)">
+              <Select value={form.remind_days_before} onChange={e => setForm(f => ({ ...f, remind_days_before: e.target.value }))}>
+                <option value="1">1 день</option>
+                <option value="2">2 дня</option>
+                <option value="3">3 дня</option>
+                <option value="5">5 дней</option>
+                <option value="7">7 дней</option>
+              </Select>
+            </Field>
+            <Field label="Ссылка на контракт">
+              <Input
+                value={form.contract_url}
+                onChange={e => setForm(f => ({ ...f, contract_url: e.target.value }))}
+                placeholder="https://docs.google.com/..."
+              />
+            </Field>
+          </>
         )}
-        {form.payment_type === 'regular' ? (
-          <Field label="День месяца (например 5 или 10)">
-            <Input type="number" min="1" max="31" value={form.day_of_month} onChange={e => setForm(f => ({ ...f, day_of_month: e.target.value }))} placeholder="10" />
-          </Field>
-        ) : (
-          <Field label="Дата окончания договора">
-            <Input type="date" value={form.deadline_date} onChange={e => setForm(f => ({ ...f, deadline_date: e.target.value }))} />
-          </Field>
-        )}
-        <Field label="Напомнить за (дней)">
-          <Select value={form.remind_days_before} onChange={e => setForm(f => ({ ...f, remind_days_before: e.target.value }))}>
-            <option value="1">1 день</option>
-            <option value="2">2 дня</option>
-            <option value="3">3 дня</option>
-            <option value="5">5 дней</option>
-            <option value="7">7 дней</option>
-          </Select>
-        </Field>
-        <Field label="Ссылка на контракт">
-          <Input
-            value={form.contract_url}
-            onChange={e => setForm(f => ({ ...f, contract_url: e.target.value }))}
-            placeholder="https://docs.google.com/..."
-          />
-        </Field>
+
         <div
           onClick={() => setForm(f => ({ ...f, notify_accounting: !f.notify_accounting }))}
           style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '12px 14px', background: '#f5f6fa', borderRadius: 10, cursor: 'pointer', marginTop: 4 }}
@@ -1316,7 +1738,9 @@ export default function PaymentsPage() {
           <div>
             <div style={{ fontWeight: 600, fontSize: 13 }}>Оповещать бухгалтерию</div>
             <div style={{ fontSize: 12, color: '#8a8fa8', marginTop: 2 }}>
-              {form.notify_accounting ? 'Бухгалтерия получит уведомление о платеже' : 'Бухгалтерия не будет уведомлена'}
+              {form.project_category === 'tech_support' && form.billing_variant === 'tech_piecework'
+                ? (form.notify_accounting ? 'Пуш бухгалтерии: пора выставить счёт' : 'Сигнал на счёт отключён')
+                : (form.notify_accounting ? 'Бухгалтерия получит уведомление о платеже' : 'Бухгалтерия не будет уведомлена')}
             </div>
           </div>
           <div style={{
@@ -1420,8 +1844,8 @@ export default function PaymentsPage() {
       <ConfirmModal
         open={deleteMonthId !== null}
         onClose={() => setDeleteMonthId(null)}
-        title="Удалить месяц?"
-        message="Запись месяца будет удалена из проекта."
+        title={drawerIsHosting ? 'Удалить строку периода?' : 'Удалить месяц?'}
+        message={drawerIsHosting ? 'Запись годового периода будет удалена из проекта.' : 'Запись месяца будет удалена из проекта.'}
         confirmLabel="Удалить"
         onConfirm={runDeleteMonth}
       />

@@ -30,6 +30,14 @@ class Payment(Base):
     contract_url = Column(String(500), nullable=True)
     service_period = Column(String(20), nullable=True)  # monthly / yearly — for service_expiry type
     project_category = Column(String(20), nullable=True)  # web | seo | ppc | mobile_app | tech_support | hosting_domain
+    # Режим оплаты для техподдержки / хостинга (остальные линии — NULL)
+    billing_variant = Column(String(40), nullable=True)
+    billing_notes = Column(Text, nullable=True)  # доп. работы, комментарий к сдельной задаче
+    # Хостинг/домен (project_category = hosting_domain)
+    hosting_contact_name = Column(String(200), nullable=True)
+    hosting_payment_kind = Column(String(120), nullable=True)  # вид оплаты (карта, счёт, …)
+    hosting_renewal_anchor = Column(Date, nullable=True)  # дата очередного ежегодного продления (без сдвига лет предоплаты)
+    hosting_prepaid_years = Column(Integer, nullable=False, default=0)  # 0–3: оплата на N лет вперёд → срок в таблице = якорь + N лет
     received_payment_method = Column(String(20), nullable=True)  # для проекта без графика месяцев
     # Разбивка себестоимости Projects Cost (сумма колонок = «Себест.», прибыль = оплата факт − сумма)
     projects_cost_design_uzs = Column(Numeric(15, 2), nullable=False, default=0)

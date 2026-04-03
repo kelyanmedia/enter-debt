@@ -98,6 +98,20 @@ def _next_calendar_month(ym: str) -> str:
     return f"{y}-{mo:02d}"
 
 
+def _next_hosting_year_month(ym: str) -> str:
+    """Следующий годовой период: тот же месяц, +1 год (хостинг/домен)."""
+    parts = (ym or "").strip().split("-")
+    if len(parts) != 2:
+        raise HTTPException(status_code=400, detail="Неверный формат месяца (нужно YYYY-MM)")
+    try:
+        y, mo = int(parts[0]), int(parts[1])
+    except ValueError:
+        raise HTTPException(status_code=400, detail="Неверный формат месяца (нужно YYYY-MM)")
+    if mo < 1 or mo > 12:
+        raise HTTPException(status_code=400, detail="Неверный месяц в периоде")
+    return f"{y + 1}-{mo:02d}"
+
+
 @router.get("/{payment_id}/months", response_model=List[PaymentMonthOut])
 def list_months(
     payment_id: int,
@@ -106,9 +120,12 @@ def list_months(
 ):
     p = _require_payment_not_trashed(db.query(Payment).filter(Payment.id == payment_id).first())
     assert_payment_access(db, current_user, p)
-    return db.query(PaymentMonth).filter(
-        PaymentMonth.payment_id == payment_id
-    ).order_by(PaymentMonth.month).all()
+    return (
+        db.query(PaymentMonth)
+        .filter(PaymentMonth.payment_id == payment_id)
+        .order_by(PaymentMonth.month, PaymentMonth.id)
+        .all()
+    )
 
 
 @router.post("/{payment_id}/months", response_model=PaymentMonthOut)
@@ -120,12 +137,6 @@ def add_month(
 ):
     p = _require_payment_not_trashed(db.query(Payment).filter(Payment.id == payment_id).first())
     assert_payment_access(db, current_user, p)
-    existing = db.query(PaymentMonth).filter(
-        PaymentMonth.payment_id == payment_id,
-        PaymentMonth.month == data.month
-    ).first()
-    if existing:
-        raise HTTPException(status_code=400, detail=f"Месяц {data.month} уже добавлен для этого проекта")
 
     new_amt = _effective_month_amount(data.amount, p.amount)
     existing_sum = _sum_month_lines_amounts(db, payment_id, p)
@@ -168,8 +179,8 @@ def duplicate_month_to_next_month(
     current_user: User = Depends(require_manager_or_admin),
 ):
     """
-    Копия строки графика на следующий календарный месяц: та же сумма, новое описание «… Май 2026 Акт/СФ»,
-    срок оплаты по правилам договора; акт и оплата — сброшены (как у новой строки).
+    Копия строки графика: обычно — следующий календарный месяц; для хостинга/домена — тот же месяц через год.
+    Та же сумма, новое описание с меткой периода, срок оплаты по правилам договора; акт и оплата сброшены.
     """
     p = _require_payment_not_trashed(db.query(Payment).filter(Payment.id == payment_id).first())
     assert_payment_access(db, current_user, p)
@@ -180,16 +191,7 @@ def duplicate_month_to_next_month(
     if not pm:
         raise HTTPException(status_code=404, detail="Month not found")
 
-    nxt = _next_calendar_month(pm.month)
-    existing = db.query(PaymentMonth).filter(
-        PaymentMonth.payment_id == payment_id,
-        PaymentMonth.month == nxt,
-    ).first()
-    if existing:
-        raise HTTPException(
-            status_code=400,
-            detail=f"Месяц {nxt} уже есть в графике. Удалите или отредактируйте существующую строку.",
-        )
+    nxt = _next_hosting_year_month(pm.month) if p.project_category == "hosting_domain" else _next_calendar_month(pm.month)
 
     new_amt = _effective_month_amount(pm.amount, p.amount)
     existing_sum = _sum_month_lines_amounts(db, payment_id, p)
@@ -368,6 +370,34 @@ async def confirm_month(
         pm.received_payment_method = body.received_payment_method
         db.commit()
         db.refresh(pm)
+        # Хостинг/домен: все строки графика оплачены — переносим «следующее продление» на +1 год (без предоплаты лет)
+        pay_wm = (
+            db.query(Payment)
+            .options(joinedload(Payment.months))
+            .filter(Payment.id == payment_id)
+            .first()
+        )
+        if (
+            pay_wm
+            and pay_wm.project_category == "hosting_domain"
+            and int(pay_wm.hosting_prepaid_years or 0) == 0
+        ):
+            months = pay_wm.months or []
+            if len(months) > 0 and all(m.status == "paid" for m in months):
+                from app.api.routes.payments import add_calendar_years, sync_hosting_fields
+
+                base = pay_wm.hosting_renewal_anchor or pay_wm.deadline_date
+                if base:
+                    pay_wm.hosting_renewal_anchor = add_calendar_years(base, 1)
+                elif pm.due_date:
+                    pay_wm.hosting_renewal_anchor = add_calendar_years(pm.due_date, 1)
+                else:
+                    y, mo = map(int, pm.month.split("-"))
+                    ld = monthrange(y, mo)[1]
+                    pay_wm.hosting_renewal_anchor = add_calendar_years(date(y, mo, ld), 1)
+                sync_hosting_fields(pay_wm)
+                db.add(pay_wm)
+                db.commit()
     else:
         db.refresh(pm)
 
@@ -386,7 +416,7 @@ async def confirm_month(
         contract_line = f"\n📄 Договор: {payment.contract_url}" if payment.contract_url else ""
 
         mgr = payment.partner.manager if payment.partner else None
-        if mgr and mgr.telegram_chat_id:
+        if mgr:
             text = (
                 f"✅ <b>Оплата прошла</b>\n\n"
                 f"🏢 Компания: <b>{partner_name}</b>\n"
@@ -395,32 +425,12 @@ async def confirm_month(
                 f"💰 Сумма: <b>{int(amount_val):,} UZS</b>\n"
                 f"👤 Менеджер: {mgr.name}{contract_line}"
             )
-            await _send_tg(str(mgr.telegram_chat_id), text)
+            if mgr.telegram_chat_id:
+                await _send_tg(str(mgr.telegram_chat_id), text)
+            # Копии админам и «Администрации» по настройкам видимости менеджера (без бухгалтерии)
             await _send_telegram_cc(db, mgr.id, text)
 
-        if payment.notify_accounting:
-            route_uid = _accounting_telegram_route_user_id(current_user, payment.partner)
-            pusher_line = f"\n👤 Пуш от: <b>{current_user.name}</b>"
-            footer = _accounting_reply_footer(route_uid)
-            accountants = db.query(User).filter(
-                User.role == "accountant",
-                User.is_active == True,
-                User.telegram_chat_id.isnot(None)
-            ).all()
-            mgr_name = mgr.name if mgr else "—"
-            acc_text = (
-                f"✅ <b>Оплата прошла</b>\n\n"
-                f"🏢 Компания: <b>{partner_name}</b>\n"
-                f"📋 Описание: <b>{desc}</b>\n"
-                f"📅 Месяц: <b>{month_label}</b>\n"
-                f"💰 Сумма: <b>{int(amount_val):,} UZS</b>\n"
-                f"👤 Менеджер партнёра: <b>{mgr_name}</b>{contract_line}"
-                f"{pusher_line}"
-                f"{footer}"
-            )
-            for acc in accountants:
-                await _send_tg(str(acc.telegram_chat_id), acc_text)
-            await _send_telegram_cc(db, route_uid, acc_text, reply_markup=None)
+        # «Оплата прошла» бухгалтерам в Telegram не отправляем — только менеджер (если есть чат) и CC админ/администрация.
 
     return pm
 

@@ -1,4 +1,9 @@
 /** @type {import('next').NextConfig} */
+// Подхватываем .env.local до rewrites — иначе BACKEND_URL не попадает в process.env и прокси уйдёт на дефолт :8000
+// (часто там другой процесс: /health есть, а /api/* — 404 → «API не найден» на логине).
+const { loadEnvConfig } = require('@next/env')
+loadEnvConfig(__dirname)
+
 const nextConfig = {
   reactStrictMode: false,
   allowedDevOrigins: [
@@ -29,7 +34,11 @@ const nextConfig = {
 
   async rewrites() {
     // Совпадает с README / uvicorn по умолчанию (:8000). Другой порт — задайте BACKEND_URL в .env.local
-    const backendUrl = process.env.BACKEND_URL || 'http://127.0.0.1:8000'
+    // Убираем хвостовой /api — иначе получится .../api/api/auth/... и FastAPI ответит 404 Not Found
+    let backendUrl = (process.env.BACKEND_URL || 'http://127.0.0.1:8000').trim().replace(/\/+$/, '')
+    if (backendUrl.endsWith('/api')) {
+      backendUrl = backendUrl.slice(0, -4).replace(/\/+$/, '')
+    }
     return [
       {
         source: '/api/:path*',

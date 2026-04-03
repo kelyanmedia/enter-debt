@@ -15,6 +15,66 @@ from app.models.user import User
 router = APIRouter(prefix="/api/payments", tags=["payments"])
 
 
+def _sort_payment_month_lines(months: List[PaymentMonth]) -> List[PaymentMonth]:
+    """Порядок графика: период YYYY-MM, затем id (несколько строк на один месяц)."""
+    return sorted(months, key=lambda m: (m.month, m.id))
+
+
+def add_calendar_years(d: date, years: int) -> date:
+    if years <= 0:
+        return d
+    y, m = d.year + years, d.month
+    day = d.day
+    last = monthrange(y, m)[1]
+    return date(y, m, min(day, last))
+
+
+def hosting_computed_next_due(p: Payment) -> Optional[date]:
+    """Следующая дата учёта для хостинга: якорь + предоплата лет; иначе от последней оплаченной строки +1 год."""
+    if getattr(p, "project_category", None) != "hosting_domain":
+        return None
+    years = int(getattr(p, "hosting_prepaid_years", None) or 0)
+    anchor = getattr(p, "hosting_renewal_anchor", None) or p.deadline_date
+    if anchor:
+        return add_calendar_years(anchor, years)
+    paid = [m for m in (p.months or []) if m.status == "paid"]
+    if not paid:
+        return None
+    last = max(paid, key=lambda pm: (pm.month, pm.id))
+    base = last.due_date
+    if base is None:
+        y, mo = map(int, last.month.split("-"))
+        ld = monthrange(y, mo)[1]
+        base = date(y, mo, ld)
+    # следующий годовой цикл после оплаченного периода (якорь в форме надёжнее; предоплату без якоря не накапливаем здесь)
+    return add_calendar_years(base, 1)
+
+
+def sync_hosting_fields(p: Payment) -> None:
+    if p.project_category != "hosting_domain":
+        return
+    p.service_period = "yearly"
+    anchor = p.hosting_renewal_anchor
+    if anchor is None and p.deadline_date is not None:
+        p.hosting_renewal_anchor = p.deadline_date
+        anchor = p.deadline_date
+    years = int(p.hosting_prepaid_years or 0)
+    years = max(0, min(3, years))
+    p.hosting_prepaid_years = years
+    if anchor:
+        p.deadline_date = add_calendar_years(anchor, years)
+
+
+def _require_hosting_has_renewal_anchor(p: Payment) -> None:
+    if p.project_category != "hosting_domain":
+        return
+    if not (p.hosting_renewal_anchor or p.deadline_date):
+        raise HTTPException(
+            status_code=400,
+            detail="Для хостинга/домена укажите дату следующего ежегодного продления",
+        )
+
+
 def _require_payment_not_trashed(p: Optional[Payment]) -> Payment:
     if not p:
         raise HTTPException(status_code=404, detail="Payment not found")
@@ -25,6 +85,14 @@ def _require_payment_not_trashed(p: Optional[Payment]) -> Payment:
 
 def project_calendar_due_date(p: Payment, today: date) -> Optional[date]:
     """Срок «по договору» без графика месяцев: фиксированная дата или ближайший расчётный день месяца."""
+    if p.status == "archived":
+        return None
+    # Хостинг: показываем следующее ежегодное продление даже если проект помечен «оплачен» на уровне записи
+    if getattr(p, "project_category", None) == "hosting_domain":
+        d = hosting_computed_next_due(p)
+        if d:
+            return d
+        return None
     if p.status in ("paid", "archived"):
         return None
     if p.deadline_date:
@@ -69,7 +137,7 @@ def enrich(p: Payment) -> PaymentOut:
     today = date.today()
     unpaid = [m for m in (p.months or []) if m.status != "paid"]
     if unpaid:
-        pm = min(unpaid, key=lambda m: _due_date_for_payment_month(m, p))
+        pm = min(unpaid, key=lambda m: (_due_date_for_payment_month(m, p), m.id))
         due = _due_date_for_payment_month(pm, p)
         out.next_payment_due_date = due
         out.next_payment_month = pm.month
@@ -174,7 +242,7 @@ def _list_debitor_payments(
     for p in payments:
         months_list = p.months or []
         if len(months_list) > 0:
-            for pm in sorted(months_list, key=lambda x: x.month):
+            for pm in _sort_payment_month_lines(months_list):
                 due = _due_date_for_payment_month(pm, p)
                 if not _due_in_range(due, due_from, due_to):
                     continue
@@ -185,8 +253,9 @@ def _list_debitor_payments(
         else:
             if p.status in ("paid", "archived"):
                 continue
-            if p.deadline_date:
-                if not _due_in_range(p.deadline_date, due_from, due_to):
+            list_due = hosting_computed_next_due(p) if p.project_category == "hosting_domain" else p.deadline_date
+            if list_due:
+                if not _due_in_range(list_due, due_from, due_to):
                     continue
             else:
                 ca = p.created_at.date() if isinstance(p.created_at, datetime) else p.created_at
@@ -248,7 +317,7 @@ def list_payments(
     for p in payments:
         unpaid = [m for m in (p.months or []) if m.status != "paid"]
         if unpaid:
-            for pm in sorted(unpaid, key=lambda x: x.month):
+            for pm in _sort_payment_month_lines(unpaid):
                 line = enrich_as_month_line(p, pm, today)
                 if line.status != status:
                     continue
@@ -279,6 +348,8 @@ def create_payment(
 ):
     assert_partner_access(db, current_user, data.partner_id)
     payment = Payment(**data.model_dump())
+    sync_hosting_fields(payment)
+    _require_hosting_has_renewal_anchor(payment)
     db.add(payment)
     try:
         db.commit()
@@ -307,11 +378,13 @@ def update_payment(
     p = db.query(Payment).filter(Payment.id == payment_id).first()
     p = _require_payment_not_trashed(p)
     assert_partner_access(db, current_user, p.partner_id)
-    upd = data.model_dump(exclude_none=True)
+    upd = data.model_dump(exclude_unset=True)
     if "partner_id" in upd:
         assert_partner_access(db, current_user, upd["partner_id"])
     for field, value in upd.items():
         setattr(p, field, value)
+    sync_hosting_fields(p)
+    _require_hosting_has_renewal_anchor(p)
     db.commit()
     p = load_payment(db, payment_id)
     return enrich(p)

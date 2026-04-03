@@ -80,6 +80,10 @@ def _last_calendar_day_of_ym(ym: str) -> date:
     return date(y, m, monthrange(y, m)[1])
 
 
+def _sort_payment_month_lines(months: Optional[List[PaymentMonth]]) -> List[PaymentMonth]:
+    return sorted(months or [], key=lambda x: (x.month, x.id))
+
+
 def _payment_work_span(p: Payment) -> Tuple[date, Optional[date]]:
     """
     Интервал активной работы [start, end] включительно.
@@ -87,7 +91,7 @@ def _payment_work_span(p: Payment) -> Tuple[date, Optional[date]]:
     Конец — deadline_date проекта; иначе макс. due_date по строкам графика; иначе последний день последнего месяца графика.
     Если графика нет, end остаётся None (используется запасная логика по месяцу создания/оплаты).
     """
-    months_sorted = sorted(p.months or [], key=lambda x: x.month)
+    months_sorted = _sort_payment_month_lines(p.months)
     work_lo = _payment_created_date(p)
     if months_sorted:
         try:
@@ -121,7 +125,7 @@ def _payment_overlaps_month_window(p: Payment, mf: str, mt: str) -> bool:
     """
     window_lo = _first_calendar_day_of_ym(mf)
     window_hi = _last_calendar_day_of_ym(mt)
-    months_sorted = sorted(p.months or [], key=lambda x: x.month)
+    months_sorted = _sort_payment_month_lines(p.months)
     work_lo, work_hi = _payment_work_span(p)
 
     if work_hi is not None:
@@ -156,7 +160,7 @@ def _line_amount(pm: PaymentMonth, p: Payment) -> Decimal:
 
 def _payment_to_project_cost_row(p: Payment) -> ProjectCostRowOut:
     """Одна строка отчёта Projects Cost из загруженного Payment (partner + months)."""
-    months_sorted = sorted(p.months or [], key=lambda x: x.month)
+    months_sorted = _sort_payment_month_lines(p.months)
     sum_paid = Decimal("0")
     schedule_items: List[ProjectCostScheduleMonthOut] = []
     for pm in months_sorted:

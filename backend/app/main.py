@@ -1,16 +1,19 @@
 import logging
-from typing import Optional
+from typing import List, Optional
 
 from apscheduler.schedulers.background import BackgroundScheduler
 from zoneinfo import ZoneInfo
-from fastapi import FastAPI, Request
+from fastapi import Depends, FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import HTMLResponse
 from starlette.responses import JSONResponse
 
 from app.core.companies import normalize_company_slug
+from sqlalchemy.orm import Session
+
 from app.db.database import (
     Base,
+    get_db,
     iter_company_engines,
     iter_company_sessionmakers,
     is_registered_company_slug,
@@ -32,7 +35,10 @@ import app.models.access_entry  # noqa: F401
 import app.models.cash_flow  # noqa: F401 — ДДС
 import app.models.available_funds_manual  # noqa: F401
 from app.core.config import settings
-from app.core.security import get_password_hash
+from app.core.security import get_current_user, get_password_hash
+from app.models.user import User
+from app.schemas.schemas import Token, UserOut
+from app.api.routes.auth import CompanyOut, LoginRequest, compute_companies_list, perform_json_login
 
 app = FastAPI(title="EnterDebt API", version="1.0.0", redirect_slashes=False)
 
@@ -191,6 +197,22 @@ app.include_router(commissions.router)
 app.include_router(subscription_items.router)
 app.include_router(access_entries.router)
 app.include_router(trash.router)
+
+
+# Если nginx проксирует с location /api/ { proxy_pass http://backend/; }, на API приходит путь без префикса /api
+@app.post("/auth/login", response_model=Token, tags=["auth"], include_in_schema=False)
+def _auth_login_no_api_prefix(data: LoginRequest, db: Session = Depends(get_db)):
+    return perform_json_login(data, db)
+
+
+@app.get("/auth/companies", response_model=List[CompanyOut], tags=["auth"], include_in_schema=False)
+def _auth_companies_no_api_prefix():
+    return compute_companies_list()
+
+
+@app.get("/auth/me", response_model=UserOut, tags=["auth"], include_in_schema=False)
+def _auth_me_no_api_prefix(current_user: User = Depends(get_current_user)):
+    return current_user
 
 
 @app.on_event("startup")
@@ -434,6 +456,14 @@ def _migrate():
         "ALTER TABLE available_funds_manual ADD COLUMN IF NOT EXISTS adjust_account_uzs NUMERIC(15,2) NOT NULL DEFAULT 0",
         "ALTER TABLE available_funds_manual ADD COLUMN IF NOT EXISTS adjust_cards_uzs NUMERIC(15,2) NOT NULL DEFAULT 0",
         "ALTER TABLE available_funds_manual ADD COLUMN IF NOT EXISTS usd_to_uzs_rate NUMERIC(15,4) NOT NULL DEFAULT 0",
+        "ALTER TABLE payments ADD COLUMN IF NOT EXISTS billing_variant VARCHAR(40)",
+        "ALTER TABLE payments ADD COLUMN IF NOT EXISTS billing_notes TEXT",
+        "ALTER TABLE payments ADD COLUMN IF NOT EXISTS hosting_contact_name VARCHAR(200)",
+        "ALTER TABLE payments ADD COLUMN IF NOT EXISTS hosting_payment_kind VARCHAR(120)",
+        "ALTER TABLE payments ADD COLUMN IF NOT EXISTS hosting_renewal_anchor DATE",
+        "ALTER TABLE payments ADD COLUMN IF NOT EXISTS hosting_prepaid_years INTEGER NOT NULL DEFAULT 0",
+        """UPDATE payments SET hosting_renewal_anchor = deadline_date, hosting_prepaid_years = 0
+           WHERE project_category = 'hosting_domain' AND hosting_renewal_anchor IS NULL AND deadline_date IS NOT NULL""",
     ]
     for sql in migrations:
         # Защита от случайного удаления данных

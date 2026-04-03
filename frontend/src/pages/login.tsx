@@ -43,10 +43,18 @@ export default function LoginPage() {
       const status = err?.response?.status
       const detail = err?.response?.data?.detail
       const msg = typeof detail === 'string' ? detail : Array.isArray(detail) ? detail.map((x: { msg?: string }) => x?.msg).filter(Boolean).join(' ') : ''
-      if (status === 500 || status === 503 || !status) {
+      const notFound =
+        status === 404 ||
+        msg === 'Not Found' ||
+        (typeof err?.response?.data === 'string' && err.response.data.includes('Not Found'))
+      if (notFound) {
+        setError(
+          'API не найден (404). Чаще всего Next проксирует не на тот порт: в frontend/.env.local задайте BACKEND_URL=http://127.0.0.1:ПОРТ (без /api), где запущен uvicorn этого проекта. Проверка: curl http://127.0.0.1:ПОРТ/api/auth/companies должен вернуть JSON, не 404. После правки .env.local обязательно перезапустите npm run dev.',
+        )
+      } else if (status === 500 || status === 503 || !status) {
         setError(
           !status
-            ? 'Нет ответа от API. Запустите бэкенд и проверьте в frontend/.env.local переменную BACKEND_URL (должен совпадать с портом uvicorn, обычно http://127.0.0.1:8000). После смены порта перезапустите npm run dev.'
+            ? 'Нет ответа от API. Запустите бэкенд и проверьте в frontend/.env.local переменную BACKEND_URL (должен совпадать с портом uvicorn). После смены порта перезапустите npm run dev.'
             : 'Сервер недоступен. Попробуйте позже.'
         )
       } else if (msg) {
