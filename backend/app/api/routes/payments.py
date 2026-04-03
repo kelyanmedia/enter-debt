@@ -336,6 +336,7 @@ def confirm_payment(
         p.paid_at = datetime.utcnow()
         p.confirmed_by = current_user.id
         p.postponed_until = None
+        p.received_payment_method = data.received_payment_method or "transfer"
     db.commit()
     p = load_payment(db, payment_id)
     return enrich(p)

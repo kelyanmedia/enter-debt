@@ -18,6 +18,13 @@ interface ReceivedRow {
   line_description: string | null
   confirmed_by_id: number | null
   confirmed_by_name: string | null
+  received_payment_method?: string | null
+}
+
+const METHOD_LABEL: Record<string, string> = {
+  transfer: 'Перечисление',
+  card: 'Карта',
+  cash: 'Наличные',
 }
 
 const MONTHS_RU = [
@@ -206,6 +213,7 @@ export default function ReceivedPaymentsPage() {
                         <Th>Сумма (Uzs)</Th>
                         <Th>Период услуги</Th>
                         <Th>Строка / комментарий</Th>
+                        <Th>Способ</Th>
                         <Th>Подтвердил</Th>
                       </tr>
                     </thead>
@@ -221,6 +229,11 @@ export default function ReceivedPaymentsPage() {
                           </Td>
                           <Td style={{ color: '#6b7280', maxWidth: 280 }}>
                             {line.line_description || (line.kind === 'project_whole' ? line.project_description : '—')}
+                          </Td>
+                          <Td style={{ color: '#6b7280', fontSize: 12 }}>
+                            {line.received_payment_method
+                              ? METHOD_LABEL[line.received_payment_method] || line.received_payment_method
+                              : '—'}
                           </Td>
                           <Td style={{ color: '#6b7280' }}>{line.confirmed_by_name || '—'}</Td>
                         </tr>

@@ -134,15 +134,17 @@ export function EmployeeTaskStatusSelect({
 
 // ── Modal ─────────────────────────────────────────────────────────────────────
 
-export function Modal({ open, onClose, title, children, footer, width = 480 }: {
+export function Modal({ open, onClose, title, children, footer, width = 480, zIndex = 12000 }: {
   open: boolean; onClose: () => void; title: string;
   children: ReactNode; footer?: ReactNode; width?: number
+  /** Выше боковых панелей (drawer ~200+) и прочего UI */
+  zIndex?: number
 }) {
   if (!open) return null
   return (
     <div
       onClick={e => { if (e.target === e.currentTarget) onClose() }}
-      style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,.35)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 100 }}
+      style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,.35)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex }}
     >
       <div style={{ background: '#fff', borderRadius: 16, width, maxWidth: '95vw', boxShadow: '0 8px 40px rgba(0,0,0,.18)', display: 'flex', flexDirection: 'column', maxHeight: '90vh' }}>
         <div style={{ padding: '20px 24px 16px', borderBottom: '1px solid #e8e9ef', display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexShrink: 0 }}>
@@ -167,6 +169,7 @@ export function ConfirmModal({
   cancelLabel = 'Отмена',
   onConfirm,
   danger = true,
+  zIndex = 12100,
 }: {
   open: boolean
   onClose: () => void
@@ -176,6 +179,7 @@ export function ConfirmModal({
   cancelLabel?: string
   onConfirm: () => void | Promise<void>
   danger?: boolean
+  zIndex?: number
 }) {
   const [busy, setBusy] = useState(false)
   if (!open) return null
@@ -192,7 +196,7 @@ export function ConfirmModal({
   return (
     <div
       onClick={e => { if (e.target === e.currentTarget && !busy) onClose() }}
-      style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,.4)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 200, padding: 16 }}
+      style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,.4)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex, padding: 16 }}
     >
       <div
         onClick={e => e.stopPropagation()}

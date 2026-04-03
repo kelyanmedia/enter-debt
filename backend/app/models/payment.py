@@ -30,6 +30,12 @@ class Payment(Base):
     contract_url = Column(String(500), nullable=True)
     service_period = Column(String(20), nullable=True)  # monthly / yearly — for service_expiry type
     project_category = Column(String(20), nullable=True)  # web | seo | ppc | mobile_app | tech_support | hosting_domain
+    received_payment_method = Column(String(20), nullable=True)  # для проекта без графика месяцев
+    # Разбивка себестоимости Projects Cost (сумма колонок = «Себест.», прибыль = оплата факт − сумма)
+    projects_cost_design_uzs = Column(Numeric(15, 2), nullable=False, default=0)
+    projects_cost_dev_uzs = Column(Numeric(15, 2), nullable=False, default=0)
+    projects_cost_other_uzs = Column(Numeric(15, 2), nullable=False, default=0)
+    projects_cost_seo_uzs = Column(Numeric(15, 2), nullable=False, default=0)
     created_at = Column(DateTime(timezone=True), server_default=func.now())
     updated_at = Column(DateTime(timezone=True), onupdate=func.now())
 
@@ -54,6 +60,8 @@ class PaymentMonth(Base):
     confirmed_by = Column(Integer, ForeignKey("users.id"), nullable=True)
     act_issued = Column(Boolean, nullable=False, default=False)
     act_issued_at = Column(DateTime(timezone=True), nullable=True)
+    # Как пришли деньги при «Оплата прошла»: transfer → счёт, card|cash → карты в «Доступные средства»
+    received_payment_method = Column(String(20), nullable=True)
     created_at = Column(DateTime(timezone=True), server_default=func.now())
 
     payment = relationship("Payment", back_populates="months")

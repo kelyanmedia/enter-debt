@@ -13,6 +13,8 @@ type NavItem = {
   adminOnly?: boolean
   /** P&L, ДДС, Projects Cost, Оплаты, Расходы — админ и роль «Финансист» */
   financeTeam?: boolean
+  /** Пункт «Ввод ДДС» для роли Администрация (упрощённый ввод без полного раздела Финансы) */
+  administrationDdsInput?: boolean
   managerHidden?: boolean
   administrationHidden?: boolean
   accountantHidden?: boolean
@@ -43,6 +45,12 @@ const NAV_SECTIONS: NavSection[] = [
         accountantHidden: true,
       },
       { href: '/commissions', label: 'Комиссия', icon: '💰', administrationHidden: true },
+      {
+        href: '/finance/dds-input',
+        label: 'Ввод ДДС',
+        icon: '✏️',
+        administrationDdsInput: true,
+      },
     ],
   },
   {
@@ -316,6 +324,9 @@ export default function Layout({ children }: { children: ReactNode }) {
           {NAV_SECTIONS.map((section, si) => {
             if (section.hideForFinancier && user.role === 'financier') return null
             const visible = section.items.filter(n => {
+              if (n.administrationDdsInput) {
+                return user.role === 'administration'
+              }
               if (n.adminOnly && user.role !== 'admin') return false
               if (
                 n.financeTeam &&

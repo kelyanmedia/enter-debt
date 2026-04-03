@@ -99,7 +99,7 @@ export default function CeoNetProfitChart({ data }: { data: NetProfitPoint[] }) 
           <Area
             type="monotone"
             dataKey="amount"
-            name="Чистая прибыль"
+            name="Операционный результат"
             stroke="#15803d"
             strokeWidth={2.5}
             fill="url(#ceoNetProfitFill)"

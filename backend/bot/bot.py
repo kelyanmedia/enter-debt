@@ -78,6 +78,25 @@ async def _submit_join_request(chat_id: int, username: str | None, full_name: st
         return {"error": "network", "message": str(e)}
 
 
+async def _fetch_telegram_cc_chats(route_manager_id: Optional[int]) -> list[int]:
+    try:
+        async with httpx.AsyncClient(timeout=8) as client:
+            params = {}
+            if route_manager_id is not None:
+                params["route_manager_id"] = route_manager_id
+            r = await client.get(
+                f"{API_URL}/api/users/internal/telegram-cc-chats",
+                params=params or None,
+                headers=_api_headers(),
+            )
+            if r.status_code != 200:
+                return []
+            data = r.json()
+            return [int(x) for x in data.get("chat_ids", [])]
+    except Exception:
+        return []
+
+
 @dp.message(Command("start"))
 async def cmd_start(message: types.Message, state: FSMContext):
     await state.set_state(Auth.waiting_password)
@@ -263,20 +282,30 @@ async def bridge_text_manager_accountant(message: types.Message, state: FSMConte
     sender_id = int(sender.get("id", 0))
     sender_name = sender.get("name") or message.from_user.full_name or "—"
 
+    # Ответ цитатой на пуш «Акт/оплата» даёт ed_route_user_id; ответ на пересланное от менеджера — ed_reply_to_manager
     rid = _extract_reply_manager_id(message.reply_to_message)
+    route_uid = _extract_route_user_id(message.reply_to_message)
+    mgr_dest = rid or route_uid
 
-    # Бухгалтерия (или админ с цитатой на сообщение менеджера): ответ → в личку автору
-    if role == "accountant" or (role == "admin" and rid):
-        if not rid:
+    # Бухгалтерия (или админ с цитатой на сообщение с адресом менеджера): текст → в личку менеджеру
+    if role == "accountant" or (role == "admin" and mgr_dest):
+        if not mgr_dest:
             await message.answer(
-                "💬 Чтобы написать менеджеру, ответьте <b>цитатой</b> на его сообщение "
-                "(то, что начинается с «Сообщение» и содержит строку <code>ed_reply_to_manager:…</code>).",
+                "💬 <b>Как ответить менеджеру текстом</b>\n\n"
+                "1️⃣ На пуш из бота про <b>акт или оплату</b> — нажмите «Ответить» на <b>это</b> сообщение "
+                "(внизу пуша есть строка <code>ed_route_user_id:…</code>) и напишите текст.\n\n"
+                "2️⃣ На сообщение менеджера, которое начинается с «Сообщение» — там строка "
+                "<code>ed_reply_to_manager:…</code> — тоже ответьте <b>цитатой</b>.\n\n"
+                "📎 Чтобы отправить <b>файл</b> (Акт/СФ), ответьте вложением на тот же пуш про акт/оплату.",
                 parse_mode="HTML",
             )
             return
         try:
             async with httpx.AsyncClient(timeout=8) as client:
-                r = await client.get(f"{API_URL}/api/users/internal/telegram-chat-by-user/{rid}", headers=_api_headers())
+                r = await client.get(
+                    f"{API_URL}/api/users/internal/telegram-chat-by-user/{mgr_dest}",
+                    headers=_api_headers(),
+                )
                 if r.status_code != 200:
                     await message.answer("⚠️ У менеджера нет привязанного Telegram.")
                     return
@@ -293,6 +322,12 @@ async def bridge_text_manager_accountant(message: types.Message, state: FSMConte
         )
         try:
             await bot.send_message(tchat, body, parse_mode="HTML")
+            cc_pref = "📨 <i>Копия (контроль)</i>\n\n"
+            for cid in await _fetch_telegram_cc_chats(mgr_dest):
+                try:
+                    await bot.send_message(cid, cc_pref + body, parse_mode="HTML")
+                except Exception as ce:
+                    logging.warning(f"telegram cc to {cid} failed: {ce}")
             await message.answer("✅ Сообщение отправлено менеджеру в личный чат с ботом.")
         except Exception as e:
             logging.warning(f"bridge accountant→manager failed: {e}")
@@ -339,6 +374,13 @@ async def bridge_text_manager_accountant(message: types.Message, state: FSMConte
             logging.warning(f"bridge to accountant {cid} failed: {e}")
 
     if ok:
+        route_cc = sender_id if role in ("manager", "admin") else None
+        cc_block = "📨 <i>Копия (контроль)</i>\n\n" + block
+        for cid in await _fetch_telegram_cc_chats(route_cc):
+            try:
+                await bot.send_message(cid, cc_block, parse_mode="HTML")
+            except Exception as ce:
+                logging.warning(f"telegram cc to {cid} failed: {ce}")
         await message.answer(
             f"✅ Сообщение отправлено бухгалтерии ({ok}). "
             f"Другие менеджеры его не видят — переписка только через этого бота.",
@@ -451,6 +493,27 @@ async def handle_file_from_accountant(message: types.Message):
             forwarded += 1
         except Exception as e:
             logging.warning(f"Failed to forward to {mgr_chat_id}: {e}")
+
+    cc_route = route_uid if mode == "single" else None
+    cc_cap = "📨 <i>Копия (контроль)</i>\n\n" + forward_caption
+    for cid in await _fetch_telegram_cc_chats(cc_route):
+        try:
+            if message.document:
+                await bot.send_document(
+                    chat_id=cid,
+                    document=message.document.file_id,
+                    caption=cc_cap,
+                    parse_mode="HTML",
+                )
+            elif message.photo:
+                await bot.send_photo(
+                    chat_id=cid,
+                    photo=message.photo[-1].file_id,
+                    caption=cc_cap,
+                    parse_mode="HTML",
+                )
+        except Exception as ce:
+            logging.warning(f"telegram cc file to {cid} failed: {ce}")
 
     if forwarded > 0:
         if mode == "single":

@@ -1,4 +1,4 @@
-from sqlalchemy import Column, DateTime, ForeignKey, Integer, Numeric, String, Text
+from sqlalchemy import Column, Date, DateTime, ForeignKey, Integer, Numeric, String, Text
 from sqlalchemy.orm import relationship
 from sqlalchemy.sql import func
 
@@ -27,7 +27,8 @@ class CashFlowEntry(Base):
     __tablename__ = "cash_flow_entries"
 
     id = Column(Integer, primary_key=True, index=True)
-    period_month = Column(String(7), nullable=False, index=True)
+    period_month = Column(String(7), nullable=False, index=True)  # YYYY-MM для отчётов; с entry_date = месяц этой даты
+    entry_date = Column(Date, nullable=True)
     direction = Column(String(10), nullable=False)
     label = Column(String(300), nullable=False)
     amount_uzs = Column(Numeric(15, 2), nullable=False, default=0)

@@ -9,7 +9,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy.orm import Session, joinedload
 
 from app.core.access import filter_payments_query
-from app.core.security import require_admin_or_financier
+from app.core.security import require_admin_or_financier, require_cash_flow_dds_input
 from app.db.database import get_db
 from sqlalchemy import func
 
@@ -23,8 +23,11 @@ from app.finance.cash_flow_catalog import (
 from app.models.cash_flow import CashFlowEntry, CashFlowTemplateLine
 from app.models.payment import Payment
 from app.models.user import User
+from app.models.available_funds_manual import AvailableFundsManual
 from app.schemas.schemas import (
     ApplyCashFlowTemplateIn,
+    AvailableFundsManualPut,
+    AvailableFundsOut,
     CashFlowEntryCreate,
     CashFlowEntryOut,
     CashFlowEntryUpdate,
@@ -34,6 +37,7 @@ from app.schemas.schemas import (
     CashFlowTemplateLineOut,
     CashFlowTemplateLineUpdate,
 )
+from app.services.available_funds import available_funds_for_period
 
 
 def _check_expense_category(slug: str | None) -> None:
@@ -71,7 +75,7 @@ _YM = re.compile(r"^\d{4}-\d{2}$")
 @router.get("/cash-flow/meta", response_model=CashFlowMetaOut)
 def cash_flow_meta(
     db: Session = Depends(get_db),
-    _admin: User = Depends(require_admin_or_financier),
+    current_user: User = Depends(require_cash_flow_dds_input),
 ):
     distinct = (
         db.query(CashFlowTemplateLine.template_group)
@@ -88,6 +92,8 @@ def cash_flow_meta(
                 "description": "",
             }
         )
+    if current_user.role == "administration":
+        template_groups = []
     return CashFlowMetaOut(
         payment_methods=[{"id": a, "label": b} for a, b in PAYMENT_METHODS],
         expense_categories=expense_categories_for_api(),
@@ -294,16 +300,32 @@ def apply_template(
 def create_entry(
     body: CashFlowEntryCreate,
     db: Session = Depends(get_db),
-    _admin: User = Depends(require_admin_or_financier),
+    current_user: User = Depends(require_cash_flow_dds_input),
 ):
-    if body.payment_id is not None:
-        p = db.query(Payment).filter(Payment.id == body.payment_id).first()
+    pay_id = body.payment_id
+    if pay_id is not None and pay_id <= 0:
+        pay_id = None
+    if current_user.role == "administration":
+        pay_id = None
+    if pay_id is not None:
+        p = db.query(Payment).filter(Payment.id == pay_id).first()
         if not p or p.trashed_at is not None:
             raise HTTPException(status_code=404, detail="Проект не найден")
     if body.direction == "expense":
         _check_expense_category(body.flow_category)
+    else:
+        _check_income_category(body.flow_category)
+    if body.entry_date is not None:
+        period_month = f"{body.entry_date.year:04d}-{body.entry_date.month:02d}"
+        entry_date_val = body.entry_date
+    else:
+        period_month = body.period_month
+        if not period_month:
+            raise HTTPException(status_code=400, detail="Укажите месяц учёта или дату операции")
+        entry_date_val = None
     row = CashFlowEntry(
-        period_month=body.period_month,
+        period_month=period_month,
+        entry_date=entry_date_val,
         direction=body.direction,
         label=body.label.strip(),
         amount_uzs=body.amount_uzs,
@@ -311,7 +333,7 @@ def create_entry(
         payment_method=body.payment_method,
         flow_category=(body.flow_category or "").strip() or None,
         recipient=(body.recipient or "").strip() or None,
-        payment_id=body.payment_id,
+        payment_id=pay_id,
         notes=(body.notes or "").strip() or None,
         template_line_id=None,
     )
@@ -332,14 +354,21 @@ def update_entry(
     if not row:
         raise HTTPException(status_code=404, detail="Строка не найдена")
     data = body.model_dump(exclude_unset=True)
-    if "payment_id" in data and data["payment_id"] is not None:
-        p = db.query(Payment).filter(Payment.id == data["payment_id"]).first()
-        if not p or p.trashed_at is not None:
-            raise HTTPException(status_code=404, detail="Проект не найден")
+    if "payment_id" in data:
+        pid = data["payment_id"]
+        if pid is not None and pid <= 0:
+            data["payment_id"] = None
+            pid = None
+        if pid is not None:
+            p = db.query(Payment).filter(Payment.id == pid).first()
+            if not p or p.trashed_at is not None:
+                raise HTTPException(status_code=404, detail="Проект не найден")
     for k, v in data.items():
         setattr(row, k, v)
     if row.direction == "expense":
         _check_expense_category(row.flow_category)
+    else:
+        _check_income_category(row.flow_category)
     db.commit()
     db.refresh(row)
     return row
@@ -357,3 +386,38 @@ def delete_entry(
     db.delete(row)
     db.commit()
     return {"ok": True}
+
+
+@router.get("/available-funds", response_model=AvailableFundsOut)
+def get_available_funds(
+    period_month: str = Query(..., description="YYYY-MM"),
+    db: Session = Depends(get_db),
+    _admin: User = Depends(require_admin_or_financier),
+):
+    if not _YM.match(period_month):
+        raise HTTPException(status_code=400, detail="period_month: формат YYYY-MM")
+    return available_funds_for_period(db, period_month)
+
+
+@router.put("/available-funds", response_model=AvailableFundsOut)
+def put_available_funds_deposits(
+    body: AvailableFundsManualPut,
+    db: Session = Depends(get_db),
+    _admin: User = Depends(require_admin_or_financier),
+):
+    row = db.query(AvailableFundsManual).filter(AvailableFundsManual.period_month == body.period_month).first()
+    if not row:
+        row = AvailableFundsManual(
+            period_month=body.period_month,
+            deposits_uzs=body.deposits_uzs,
+            adjust_account_uzs=body.adjust_account_uzs,
+            adjust_cards_uzs=body.adjust_cards_uzs,
+        )
+        db.add(row)
+    else:
+        row.deposits_uzs = body.deposits_uzs
+        row.adjust_account_uzs = body.adjust_account_uzs
+        row.adjust_cards_uzs = body.adjust_cards_uzs
+    db.commit()
+    db.refresh(row)
+    return available_funds_for_period(db, body.period_month)

@@ -11,8 +11,11 @@ interface User {
   web_access?: boolean
   can_view_subscriptions?: boolean
   can_view_accesses?: boolean
+  can_enter_cash_flow?: boolean
   see_all_partners?: boolean
   visible_manager_ids?: number[]
+  admin_telegram_notify_all?: boolean
+  admin_telegram_notify_manager_ids?: number[]
   payment_details?: string | null
   multi_company_access?: boolean
   last_login_at?: string | null
@@ -32,6 +35,8 @@ const EMPTY = {
   name: '', email: '', password: '', role: 'manager', telegram_chat_id: '', telegram_username: '', is_active: 'true',
   see_all_partners: 'false', new_password: '', payment_details: '', multi_company_access: 'false',
   can_view_subscriptions: 'false', can_view_accesses: 'false',
+  can_enter_cash_flow: 'false',
+  admin_telegram_notify_all: 'false',
 }
 
 export default function UsersPage() {
@@ -45,13 +50,21 @@ export default function UsersPage() {
   const [error, setError] = useState('')
   const [pending, setPending] = useState<TelegramJoinRequest[]>([])
   const [approveReq, setApproveReq] = useState<TelegramJoinRequest | null>(null)
-  const [approveForm, setApproveForm] = useState({ role: 'manager' as 'manager' | 'accountant', name: '', email: '' })
+  const [approveForm, setApproveForm] = useState({
+    role: 'manager' as 'manager' | 'accountant' | 'administration',
+    name: '',
+    email: '',
+    linkUserId: '' as string | number,
+  })
+  const [approveLinkNew, setApproveLinkNew] = useState(true)
+  const [approveVisibleManagerIds, setApproveVisibleManagerIds] = useState<number[]>([])
   const [approveSaving, setApproveSaving] = useState(false)
   const [allPartners, setAllPartners] = useState<PartnerRow[]>([])
   const [assignedPartnerIds, setAssignedPartnerIds] = useState<number[]>([])
   const [rejectJoinId, setRejectJoinId] = useState<number | null>(null)
   const [deleteUserId, setDeleteUserId] = useState<number | null>(null)
   const [visibleManagerIds, setVisibleManagerIds] = useState<number[]>([])
+  const [adminNotifyManagerIds, setAdminNotifyManagerIds] = useState<number[]>([])
   const [managerOptions, setManagerOptions] = useState<User[]>([])
 
   const loadAll = () => {
@@ -69,6 +82,7 @@ export default function UsersPage() {
     setForm({ ...EMPTY })
     setAssignedPartnerIds([])
     setVisibleManagerIds([])
+    setAdminNotifyManagerIds([])
     setError('')
     setModal(true)
   }
@@ -85,6 +99,8 @@ export default function UsersPage() {
       see_all_partners: u.see_all_partners ? 'true' : 'false',
       can_view_subscriptions: u.can_view_subscriptions ? 'true' : 'false',
       can_view_accesses: u.can_view_accesses ? 'true' : 'false',
+      can_enter_cash_flow: u.can_enter_cash_flow ? 'true' : 'false',
+      admin_telegram_notify_all: u.admin_telegram_notify_all ? 'true' : 'false',
       new_password: '',
       payment_details: u.payment_details || '',
       multi_company_access: u.multi_company_access ? 'true' : 'false',
@@ -92,6 +108,7 @@ export default function UsersPage() {
     setError('')
     setAssignedPartnerIds([])
     setVisibleManagerIds(Array.isArray(u.visible_manager_ids) ? u.visible_manager_ids : [])
+    setAdminNotifyManagerIds(Array.isArray(u.admin_telegram_notify_manager_ids) ? u.admin_telegram_notify_manager_ids : [])
     if (u.role === 'manager') {
       try {
         const [ap, pr] = await Promise.all([
@@ -110,12 +127,20 @@ export default function UsersPage() {
   }
 
   useEffect(() => {
-    if (!modal || form.role !== 'administration') return
+    if (!modal || (form.role !== 'administration' && form.role !== 'admin')) return
     api
       .get<User[]>('users')
       .then(r => setManagerOptions(r.data.filter(x => x.role === 'manager')))
       .catch(() => setManagerOptions([]))
   }, [modal, form.role])
+
+  useEffect(() => {
+    if (!approveReq || (approveForm.role !== 'administration' && approveForm.role !== 'manager')) return
+    api
+      .get<User[]>('users')
+      .then(r => setManagerOptions(r.data.filter(x => x.role === 'manager')))
+      .catch(() => setManagerOptions([]))
+  }, [approveReq, approveForm.role])
 
   const save = async () => {
     if (!form.name || !form.email) { setError('Заполните имя и email'); return }
@@ -138,6 +163,11 @@ export default function UsersPage() {
         if (form.role === 'administration') {
           payload.can_view_subscriptions = form.can_view_subscriptions === 'true'
           payload.can_view_accesses = form.can_view_accesses === 'true'
+          payload.can_enter_cash_flow = form.can_enter_cash_flow === 'true'
+        }
+        if (form.role === 'admin') {
+          payload.admin_telegram_notify_all = form.admin_telegram_notify_all === 'true'
+          payload.admin_telegram_notify_manager_ids = adminNotifyManagerIds
         }
         if (form.role === 'employee') {
           payload.payment_details = form.payment_details.trim() || null
@@ -163,8 +193,11 @@ export default function UsersPage() {
           visible_manager_ids: form.role === 'administration' ? visibleManagerIds : undefined,
           can_view_subscriptions: form.role === 'administration' ? form.can_view_subscriptions === 'true' : undefined,
           can_view_accesses: form.role === 'administration' ? form.can_view_accesses === 'true' : undefined,
+          can_enter_cash_flow: form.role === 'administration' ? form.can_enter_cash_flow === 'true' : undefined,
           payment_details: form.role === 'employee' ? (form.payment_details.trim() || null) : undefined,
           multi_company_access: form.role === 'employee' ? form.multi_company_access === 'true' : false,
+          admin_telegram_notify_all: form.role === 'admin' ? form.admin_telegram_notify_all === 'true' : undefined,
+          admin_telegram_notify_manager_ids: form.role === 'admin' ? adminNotifyManagerIds : undefined,
         })
       }
       setModal(false)
@@ -188,10 +221,13 @@ export default function UsersPage() {
 
   const openApprove = (r: TelegramJoinRequest) => {
     setApproveReq(r)
+    setApproveLinkNew(true)
+    setApproveVisibleManagerIds([])
     setApproveForm({
       role: 'manager',
       name: r.full_name || '',
       email: '',
+      linkUserId: '',
     })
     setApproveSaving(false)
   }
@@ -199,11 +235,28 @@ export default function UsersPage() {
   const submitApprove = async () => {
     if (!approveReq) return
     if (!approveForm.name.trim()) return
-    if (approveForm.role === 'manager' && !approveForm.email.trim()) return
+    if (approveLinkNew) {
+      if ((approveForm.role === 'manager' || approveForm.role === 'administration') && !approveForm.email.trim()) return
+      if (approveForm.role === 'administration' && approveVisibleManagerIds.length === 0) return
+    } else if (!approveForm.linkUserId) {
+      return
+    }
     setApproveSaving(true)
     try {
-      const payload: any = { role: approveForm.role, name: approveForm.name.trim() }
-      if (approveForm.role === 'manager') payload.email = approveForm.email.trim()
+      const payload: Record<string, unknown> = { role: approveForm.role, name: approveForm.name.trim() }
+      if (approveLinkNew) {
+        if (approveForm.role === 'manager' || approveForm.role === 'administration') {
+          payload.email = approveForm.email.trim().toLowerCase()
+        }
+        if (approveForm.role === 'administration') {
+          payload.visible_manager_ids = approveVisibleManagerIds
+        }
+      } else {
+        payload.link_user_id = Number(approveForm.linkUserId)
+        if (approveForm.role === 'administration' && approveVisibleManagerIds.length > 0) {
+          payload.visible_manager_ids = approveVisibleManagerIds
+        }
+      }
       await api.post(`telegram-join/${approveReq.id}/approve`, payload)
       setApproveReq(null)
       loadAll()
@@ -213,6 +266,12 @@ export default function UsersPage() {
       setApproveSaving(false)
     }
   }
+
+  const approveLinkCandidates = users.filter((u) => {
+    if (approveForm.role === 'manager') return u.role === 'manager' || u.role === 'admin'
+    if (approveForm.role === 'accountant') return u.role === 'accountant'
+    return u.role === 'administration'
+  })
 
   const runRejectJoin = async () => {
     if (rejectJoinId === null) return
@@ -389,7 +448,11 @@ export default function UsersPage() {
               onChange={e => {
                 const r = e.target.value
                 setForm(f => ({ ...f, role: r }))
-                if (r !== 'administration') setVisibleManagerIds([])
+                if (r !== 'administration') {
+                  setVisibleManagerIds([])
+                  setForm((f) => ({ ...f, can_enter_cash_flow: 'false' }))
+                }
+                if (r !== 'admin') setAdminNotifyManagerIds([])
               }}
             >
               <option value="admin">Администратор</option>
@@ -407,6 +470,50 @@ export default function UsersPage() {
             </Select>
           </Field>
         </div>
+        {form.role === 'admin' && (
+          <div style={{ marginBottom: 14 }}>
+            <div style={{ fontSize: 12, fontWeight: 600, marginBottom: 8 }}>Копии в Telegram (менеджер ↔ бухгалтерия)</div>
+            <Field label="Все уведомления по всем менеджерам">
+              <Select
+                value={form.admin_telegram_notify_all}
+                onChange={(e) => setForm((f) => ({ ...f, admin_telegram_notify_all: e.target.value }))}
+              >
+                <option value="false">Нет — только отмеченные ниже менеджеры</option>
+                <option value="true">Да — все пуши и ответы бухгалтерии (как в цепочке)</option>
+              </Select>
+            </Field>
+            {form.admin_telegram_notify_all === 'false' && (
+              <>
+                <div style={{ fontSize: 12, fontWeight: 600, marginBottom: 8, marginTop: 10 }}>
+                  Менеджеры, чьи цепочки с бухгалтерией дублировать вам в Telegram
+                </div>
+                <div style={{ maxHeight: 200, overflowY: 'auto', border: '1px solid #e8e9ef', borderRadius: 8, padding: 8 }}>
+                  {managerOptions.length === 0 ? (
+                    <div style={{ fontSize: 12, color: '#8a8fa8' }}>Загрузка списка менеджеров…</div>
+                  ) : (
+                    managerOptions.map(m => (
+                      <label key={m.id} style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '4px 0', fontSize: 13, cursor: 'pointer' }}>
+                        <input
+                          type="checkbox"
+                          checked={adminNotifyManagerIds.includes(m.id)}
+                          onChange={(e) => {
+                            setAdminNotifyManagerIds(prev =>
+                              e.target.checked ? [...prev, m.id] : prev.filter(x => x !== m.id),
+                            )
+                          }}
+                        />
+                        {m.name}
+                      </label>
+                    ))
+                  )}
+                </div>
+                <div style={{ fontSize: 11, color: '#8a8fa8', marginTop: 6, lineHeight: 1.45 }}>
+                  Нужен привязанный Telegram в этой карточке. Администрация получает копии по своим менеджерам из списка «Партнёры выбранных менеджеров».
+                </div>
+              </>
+            )}
+          </div>
+        )}
         {form.role === 'administration' && (
           <div style={{ marginBottom: 14 }}>
             <div style={{ fontSize: 12, fontWeight: 600, marginBottom: 8 }}>
@@ -454,6 +561,11 @@ export default function UsersPage() {
                   <option value="true">Да</option>
                 </Select>
               </Field>
+            </div>
+            <div style={{ fontSize: 11, color: '#64748b', lineHeight: 1.45, padding: '8px 0' }}>
+              Раздел <strong>«Ввод ДДС»</strong> в меню «Проекты» доступен <strong>всем</strong> пользователям с ролью Администрация:
+              упрощённый ввод прихода/расхода в учёт ДДС. Полный отчёт «ДДС» и остальные пункты «Финансы» по-прежнему только у
+              админа и финансиста.
             </div>
           </div>
         )}
@@ -538,28 +650,132 @@ export default function UsersPage() {
         footer={(
           <>
             <BtnOutline onClick={() => setApproveReq(null)}>Отмена</BtnOutline>
-            <BtnPrimary onClick={submitApprove} disabled={approveSaving || !approveForm.name.trim() || (approveForm.role === 'manager' && !approveForm.email.trim())}>
+            <BtnPrimary
+              onClick={submitApprove}
+              disabled={
+                approveSaving
+                || !approveForm.name.trim()
+                || (approveLinkNew && (approveForm.role === 'manager' || approveForm.role === 'administration') && !approveForm.email.trim())
+                || (approveLinkNew && approveForm.role === 'administration' && approveVisibleManagerIds.length === 0)
+                || (!approveLinkNew && !approveForm.linkUserId)
+              }
+            >
               {approveSaving ? 'Сохраняем...' : 'Подтвердить'}
             </BtnPrimary>
           </>
         )}
       >
         <div style={{ fontSize: 12, color: '#8a8fa8', marginBottom: 12 }}>
-          После подтверждения пользователь получит сообщение в Telegram: менеджеру — ссылку и пароль в панель; бухгалтерии — только текст о том, что пуши будут здесь.
+          Можно создать нового пользователя или <b>привязать этот Telegram</b> к уже заведённой учётной записи (без дубликата email).
+          После одобрения в Telegram придёт сообщение: новому менеджеру/администрации — ссылка и пароль; при привязке — подтверждение; бухгалтерии — что пуши будут здесь.
+        </div>
+        <div style={{ display: 'flex', gap: 10, marginBottom: 14, flexWrap: 'wrap' }}>
+          <BtnOutline
+            type="button"
+            onClick={() => setApproveLinkNew(true)}
+            style={{ fontWeight: 600, borderColor: approveLinkNew ? '#1a6b3c' : undefined, color: approveLinkNew ? '#1a6b3c' : undefined }}
+          >
+            Новый пользователь
+          </BtnOutline>
+          <BtnOutline
+            type="button"
+            onClick={() => setApproveLinkNew(false)}
+            style={{ fontWeight: 600, borderColor: !approveLinkNew ? '#1a6b3c' : undefined, color: !approveLinkNew ? '#1a6b3c' : undefined }}
+          >
+            Привязать к существующему
+          </BtnOutline>
         </div>
         <Field label="Роль">
-          <Select value={approveForm.role} onChange={e => setApproveForm(f => ({ ...f, role: e.target.value as 'manager' | 'accountant' }))}>
+          <Select
+            value={approveForm.role}
+            onChange={(e) => {
+              const r = e.target.value as 'manager' | 'accountant' | 'administration'
+              setApproveForm((f) => ({ ...f, role: r, linkUserId: '' }))
+            }}
+          >
             <option value="manager">Менеджер (веб + Telegram)</option>
+            <option value="administration">Администрация (веб + Telegram + копии по менеджерам)</option>
             <option value="accountant">Бухгалтерия (только Telegram)</option>
           </Select>
         </Field>
         <Field label="Имя *">
           <Input value={approveForm.name} onChange={e => setApproveForm(f => ({ ...f, name: e.target.value }))} placeholder="Как в системе" />
         </Field>
-        {approveForm.role === 'manager' && (
+        {!approveLinkNew && (
+          <Field label="Пользователь в системе *">
+            <Select
+              value={approveForm.linkUserId === '' ? '' : String(approveForm.linkUserId)}
+              onChange={(e) => setApproveForm((f) => ({ ...f, linkUserId: e.target.value ? Number(e.target.value) : '' }))}
+            >
+              <option value="">— Выберите —</option>
+              {approveLinkCandidates.map((u) => (
+                <option key={u.id} value={u.id}>
+                  {u.name} · {u.email}
+                  {u.telegram_chat_id ? ' (уже есть Telegram — снимите в карточке)' : ''}
+                </option>
+              ))}
+            </Select>
+            <div style={{ fontSize: 11, color: '#8a8fa8', marginTop: 6 }}>
+              Если у выбранного пользователя уже указан другой Chat ID, сначала очистите поле Telegram в его карточке.
+            </div>
+          </Field>
+        )}
+        {approveLinkNew && (approveForm.role === 'manager' || approveForm.role === 'administration') && (
           <Field label="Email (логин) *">
             <Input type="email" value={approveForm.email} onChange={e => setApproveForm(f => ({ ...f, email: e.target.value }))} placeholder="user@company.uz" />
           </Field>
+        )}
+        {approveForm.role === 'administration' && approveLinkNew && (
+          <div style={{ marginBottom: 14 }}>
+            <div style={{ fontSize: 12, fontWeight: 600, marginBottom: 8 }}>Менеджеры в зоне видимости *</div>
+            <div style={{ maxHeight: 160, overflowY: 'auto', border: '1px solid #e8e9ef', borderRadius: 8, padding: 8 }}>
+              {managerOptions.length === 0 ? (
+                <div style={{ fontSize: 12, color: '#8a8fa8' }}>Загрузка…</div>
+              ) : (
+                managerOptions.map(m => (
+                  <label key={m.id} style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '4px 0', fontSize: 13, cursor: 'pointer' }}>
+                    <input
+                      type="checkbox"
+                      checked={approveVisibleManagerIds.includes(m.id)}
+                      onChange={(e) => {
+                        setApproveVisibleManagerIds((prev) =>
+                          e.target.checked ? [...prev, m.id] : prev.filter((x) => x !== m.id),
+                        )
+                      }}
+                    />
+                    {m.name}
+                  </label>
+                ))
+              )}
+            </div>
+          </div>
+        )}
+        {approveForm.role === 'administration' && !approveLinkNew && (
+          <div style={{ marginBottom: 12, fontSize: 12, color: '#6b7280' }}>
+            Список менеджеров берётся из карточки пользователя. При необходимости измените зону видимости в разделе «Пользователи» после привязки (или отметьте менеджеров ниже — перезапишет список).
+          </div>
+        )}
+        {approveForm.role === 'administration' && !approveLinkNew && (
+          <div style={{ marginBottom: 14 }}>
+            <div style={{ fontSize: 12, fontWeight: 600, marginBottom: 8 }}>Обновить менеджеров при одобрении (необязательно)</div>
+            <div style={{ maxHeight: 140, overflowY: 'auto', border: '1px solid #e8e9ef', borderRadius: 8, padding: 8 }}>
+              {managerOptions.map(m => (
+                <label key={m.id} style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '4px 0', fontSize: 13, cursor: 'pointer' }}>
+                  <input
+                    type="checkbox"
+                    checked={approveVisibleManagerIds.includes(m.id)}
+                    onChange={(e) => {
+                      setApproveVisibleManagerIds((prev) =>
+                        e.target.checked ? [...prev, m.id] : prev.filter((x) => x !== m.id),
+                      )
+                    }}
+                  />
+                  {m.name}
+                </label>
+              ))}
+            </div>
+            <div style={{ fontSize: 11, color: '#8a8fa8', marginTop: 4 }}>Если никого не отметить — список в профиле не меняется.</div>
+          </div>
         )}
       </Modal>
 

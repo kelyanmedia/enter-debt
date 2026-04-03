@@ -57,6 +57,7 @@ def fetch_received_payment_rows_range(
                 line_description=line_desc,
                 confirmed_by_id=pm.confirmed_by,
                 confirmed_by_name=cu.name if cu else None,
+                received_payment_method=getattr(pm, "received_payment_method", None),
             )
         )
 
@@ -92,6 +93,7 @@ def fetch_received_payment_rows_range(
                 line_description=None,
                 confirmed_by_id=pay.confirmed_by,
                 confirmed_by_name=cu.name if cu else None,
+                received_payment_method=getattr(pay, "received_payment_method", None),
             )
         )
 

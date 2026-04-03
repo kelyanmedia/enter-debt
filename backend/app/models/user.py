@@ -25,6 +25,11 @@ class User(Base):
     # Только role=administration: доступ к разделам подписок/доступов
     can_view_subscriptions = Column(Boolean, nullable=False, default=False)
     can_view_accesses = Column(Boolean, nullable=False, default=False)
+    # Только role=administration: ввод строк ДДС без просмотра отчёта
+    can_enter_cash_flow = Column(Boolean, nullable=False, default=False)
+    # Только role=admin: копии Telegram по цепочке менеджер–бухгалтерия
+    admin_telegram_notify_all = Column(Boolean, nullable=False, default=False)
+    admin_telegram_notify_manager_ids = Column(Text, nullable=True)  # JSON [id, ...]
     # Сотрудник (freelance): True = в кабинете можно переключать компанию (отдельные БД и выплаты)
     multi_company_access = Column(Boolean, nullable=False, default=False)
     see_all_partners = Column(Boolean, nullable=False, default=False)  # менеджер: True = видит всех партнёров

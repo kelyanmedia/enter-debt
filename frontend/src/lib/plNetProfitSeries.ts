@@ -28,9 +28,11 @@ export interface NetProfitSeriesPoint {
 
 function netProfitCells(report: PLReportForNet | null | undefined): number[] {
   if (!report?.rows?.length) return Array(12).fill(0)
+  const op = report.rows.find(r => r.row_id === 'operating_profit')
   const net = report.rows.find(r => r.row_id === 'net_profit')
-  if (!net?.cells?.length) return Array(12).fill(0)
-  return net.cells.map(c => Number(c.uzs) || 0)
+  const row = op ?? net
+  if (!row?.cells?.length) return Array(12).fill(0)
+  return row.cells.map(c => Number(c.uzs) || 0)
 }
 
 /** Точки для графика: текущий год из P&L + тот же месяц год назад. */

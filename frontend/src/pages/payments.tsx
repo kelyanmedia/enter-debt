@@ -12,6 +12,7 @@ interface PaymentMonth {
   due_date?: string | null
   status: 'pending' | 'paid'; description?: string; note?: string; paid_at?: string; created_at: string
   act_issued?: boolean; act_issued_at?: string
+  received_payment_method?: string | null
 }
 interface Payment {
   id: number; partner_id: number; description: string; amount: number
@@ -186,6 +187,10 @@ export default function PaymentsPage() {
   const [confirmingAct, setConfirmingAct] = useState<number | null>(null)
   const [duplicatingMonth, setDuplicatingMonth] = useState<number | null>(null)
   const [monthSaved, setMonthSaved] = useState<number | null>(null)
+  const [monthPayMethods, setMonthPayMethods] = useState<Record<number, string>>({})
+  /** Модалка «Оплата прошла»: выбор сегодня / дата задним числом */
+  const [payConfirmModalMonthId, setPayConfirmModalMonthId] = useState<number | null>(null)
+  const [payConfirmBackdateYmd, setPayConfirmBackdateYmd] = useState('')
   const [deletePaymentId, setDeletePaymentId] = useState<number | null>(null)
   const [deleteMonthId, setDeleteMonthId] = useState<number | null>(null)
 
@@ -335,6 +340,9 @@ export default function PaymentsPage() {
 
   // Drawer actions
   const openDrawer = async (p: Payment) => {
+    setMonthPayMethods({})
+    setPayConfirmModalMonthId(null)
+    setPayConfirmBackdateYmd('')
     setDrawer(p)
     setDrawerLoading(true)
     setAddMonthOpen(false)
@@ -354,6 +362,13 @@ export default function PaymentsPage() {
         api.get<Payment>(`payments/${p.id}`),
       ])
       setDrawerMonths(monthsRes.data)
+      const pmInit: Record<number, string> = {}
+      for (const row of monthsRes.data) {
+        if (row.status !== 'paid') {
+          pmInit[row.id] = (row.received_payment_method || 'transfer').toLowerCase()
+        }
+      }
+      setMonthPayMethods(pmInit)
       setDrawer(payRes.data)
     } finally {
       setDrawerLoading(false)
@@ -396,15 +411,42 @@ export default function PaymentsPage() {
     }
   }
 
-  const confirmMonth = async (monthId: number) => {
+  /** when: `now` — сервер ставит текущее время; `backdate` — полдень по локальному календарю для ymd */
+  const confirmMonth = async (
+    monthId: number,
+    when: 'now' | { backdateYmd: string },
+  ) => {
     if (!drawer) return
+    let paidAtIso: string | undefined
+    if (when !== 'now') {
+      const [y, mo, d] = when.backdateYmd.split('-').map(Number)
+      if (!y || !mo || !d) {
+        alert('Укажите дату зачисления')
+        return
+      }
+      const localNoon = new Date(y, mo - 1, d, 12, 0, 0, 0)
+      if (Number.isNaN(localNoon.getTime())) {
+        alert('Некорректная дата')
+        return
+      }
+      paidAtIso = localNoon.toISOString()
+    }
     setConfirmingMonth(monthId)
     try {
-      const r = await api.post(`payments/${drawer.id}/months/${monthId}/confirm`, {})
+      const method = (monthPayMethods[monthId] || 'transfer').toLowerCase()
+      const payload: { received_payment_method: string; paid_at?: string } = {
+        received_payment_method: ['transfer', 'card', 'cash'].includes(method) ? method : 'transfer',
+      }
+      if (paidAtIso) payload.paid_at = paidAtIso
+      const r = await api.post(`payments/${drawer.id}/months/${monthId}/confirm`, payload)
       setDrawerMonths(prev => prev.map(m => m.id === monthId ? r.data : m))
       setMonthSaved(monthId)
       setTimeout(() => setMonthSaved(null), 3000)
       await syncDrawerPayment(drawer.id)
+      setPayConfirmModalMonthId(null)
+      setPayConfirmBackdateYmd('')
+    } catch (e: unknown) {
+      alert(formatApiError(e))
     } finally {
       setConfirmingMonth(null)
     }
@@ -472,6 +514,10 @@ export default function PaymentsPage() {
   const paidMonths = drawerMonths.filter(m => m.status === 'paid').length
   const actMonths = drawerMonths.filter(m => m.act_issued).length
   const totalMonths = drawerMonths.length
+  const payModalMonth =
+    payConfirmModalMonthId != null
+      ? drawerMonths.find((x) => x.id === payConfirmModalMonthId) ?? null
+      : null
 
   return (
     <Layout>
@@ -653,12 +699,25 @@ export default function PaymentsPage() {
           />
           {/* panel */}
           <div style={{
-            position: 'fixed', top: 0, right: 0, bottom: 0, width: 460,
+            position: 'fixed', top: 0, right: 0, bottom: 0,
+            width: 'min(100vw, 520px)',
+            maxWidth: '100vw',
+            boxSizing: 'border-box',
             background: '#fff', boxShadow: '-4px 0 32px rgba(0,0,0,.12)',
             zIndex: 201, display: 'flex', flexDirection: 'column', overflowY: 'auto',
+            WebkitOverflowScrolling: 'touch',
           }}>
             {/* header */}
-            <div style={{ padding: '20px 24px 16px', borderBottom: '1px solid #e8e9ef', display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start' }}>
+            <div style={{
+              padding: '16px 16px 14px',
+              borderBottom: '1px solid #e8e9ef',
+              display: 'flex',
+              justifyContent: 'space-between',
+              alignItems: 'flex-start',
+              gap: 12,
+              flexShrink: 0,
+            }}
+            >
               <div>
                 <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 4 }}>
                   <PartnerAvatar name={drawer.partner.name} />
@@ -758,7 +817,7 @@ export default function PaymentsPage() {
 
             {/* progress bar */}
             {totalMonths > 0 && (
-              <div style={{ padding: '12px 24px 0' }}>
+              <div style={{ padding: '12px 16px 0', flexShrink: 0 }}>
                 <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 12, color: '#8a8fa8', marginBottom: 4 }}>
                   <span>Акт выставлен</span>
                   <span style={{ fontWeight: 600, color: actMonths === totalMonths ? '#1a6b3c' : '#1a1d23' }}>
@@ -791,10 +850,18 @@ export default function PaymentsPage() {
             )}
 
             {/* months list */}
-            <div style={{ padding: '16px 24px', flex: 1 }}>
-              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 12 }}>
-                <span style={{ fontWeight: 700, fontSize: 14 }}>Разбивка по месяцам</span>
-                <div style={{ display: 'flex', gap: 6 }}>
+            <div style={{ padding: '14px 16px 20px', flex: 1, minWidth: 0 }}>
+              <div style={{
+                display: 'flex',
+                flexWrap: 'wrap',
+                alignItems: 'center',
+                justifyContent: 'space-between',
+                gap: 10,
+                marginBottom: 14,
+              }}
+              >
+                <span style={{ fontWeight: 700, fontSize: 14, lineHeight: 1.3 }}>Разбивка по месяцам</span>
+                <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6, justifyContent: 'flex-end' }}>
                   {drawer.contract_months && drawerMonths.length === 0 && (
                     <BtnOutline onClick={bulkAddMonths} style={{ fontSize: 12, padding: '5px 10px' }}>
                       ⚡ Авто ({drawer.contract_months} мес.)
@@ -833,7 +900,7 @@ export default function PaymentsPage() {
                       placeholder={`${drawer.description} Март 2026 Акт/СФ`}
                       onChange={e => setAddMonthForm(f => ({ ...f, description: e.target.value }))} />
                   </Field>
-                  <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10, marginTop: 10 }}>
+                  <div style={{ display: 'grid', gridTemplateColumns: 'minmax(0, 1fr)', gap: 10, marginTop: 10 }}>
                     <Field label="Месяц услуги (период акта)">
                       <Input type="month" value={addMonthForm.month}
                         onChange={e => {
@@ -893,105 +960,177 @@ export default function PaymentsPage() {
                   background: primary ? '#1a6b3c' : '#fff',
                   color: primary ? '#fff' : '#4361ee',
                   border: primary ? 'none' : '1px solid #c8d4f0',
-                  borderRadius: 7,
-                  padding: '5px 10px',
-                  fontSize: 11,
+                  borderRadius: 8,
+                  padding: '7px 11px',
+                  fontSize: 12,
                   fontWeight: 600,
                   cursor: disabled ? 'default' : 'pointer',
                   fontFamily: 'inherit',
                   opacity: disabled ? 0.55 : 1,
+                  minHeight: 34,
+                  boxSizing: 'border-box' as const,
                 } as const)
                 return (
-                  <div key={m.id} style={{
-                    display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between',
-                    padding: '11px 14px', borderRadius: 10, marginBottom: 8,
-                    background: bothDone ? '#f0faf4' : '#fafbfc',
-                    border: `1px solid ${bothDone ? '#c3e6d0' : '#e8e9ef'}`,
-                    transition: 'background .2s',
-                  }}>
-                    <div style={{ display: 'flex', alignItems: 'flex-start', gap: 10, minWidth: 0 }}>
-                      <div style={{
-                        width: 32, height: 32, borderRadius: '50%', display: 'flex', alignItems: 'center',
-                        justifyContent: 'center', fontSize: 15, flexShrink: 0,
-                        background: bothDone ? '#d1f0de' : '#e8e9ef',
-                      }}>
-                        {bothDone ? '✅' : '⏳'}
-                      </div>
-                      <div style={{ minWidth: 0 }}>
-                        <div style={{ fontWeight: 600, fontSize: 13 }}>{monthLabel(m.month)}</div>
-                        {m.due_date && (
-                          <div style={{ fontSize: 11, color: '#64748b', marginTop: 2 }}>
-                            Срок оплаты: {formatDate(m.due_date)}
-                          </div>
-                        )}
-                        {m.description && (
-                          <div style={{ fontSize: 11, color: '#444', marginTop: 1 }}>{m.description}</div>
-                        )}
-                        <div style={{ fontSize: 10, color: '#6b7088', marginTop: 6, display: 'flex', flexDirection: 'column', gap: 2 }}>
-                          <span>
-                            <b style={{ color: actOk ? '#1a6b3c' : '#999' }}>Акт</b>
-                            {actOk
-                              ? ` ✓ ${m.act_issued_at ? new Date(m.act_issued_at).toLocaleDateString('ru-RU') : ''}`
-                              : ' — не отмечен'}
-                          </span>
-                          <span>
-                            <b style={{ color: isPaid ? '#1a6b3c' : '#999' }}>Оплата</b>
-                            {isPaid
-                              ? ` ✓ ${m.paid_at ? new Date(m.paid_at).toLocaleDateString('ru-RU') : ''}`
-                              : ' — ожидается'}
-                          </span>
-                          {m.note && <span style={{ color: '#8a8fa8' }}>{m.note}</span>}
+                  <div
+                    key={m.id}
+                    style={{
+                      borderRadius: 12,
+                      marginBottom: 10,
+                      background: '#fff',
+                      border: '1px solid #e8e9ef',
+                      overflow: 'hidden',
+                      minWidth: 0,
+                    }}
+                  >
+                    <div
+                      style={{
+                        display: 'flex',
+                        flexWrap: 'wrap',
+                        alignItems: 'flex-start',
+                        justifyContent: 'space-between',
+                        gap: 10,
+                        padding: '11px 14px',
+                        borderBottom: '1px solid #f1f5f9',
+                      }}
+                    >
+                      <div style={{ display: 'flex', gap: 10, minWidth: 0, flex: '1 1 180px' }}>
+                        <div
+                          style={{
+                            width: 32,
+                            height: 32,
+                            borderRadius: '50%',
+                            display: 'flex',
+                            alignItems: 'center',
+                            justifyContent: 'center',
+                            fontSize: 14,
+                            flexShrink: 0,
+                            background: bothDone ? '#d1f0de' : '#e8e9ef',
+                          }}
+                        >
+                          {bothDone ? '✅' : '⏳'}
+                        </div>
+                        <div style={{ minWidth: 0, flex: 1 }}>
+                          <div style={{ fontWeight: 700, fontSize: 14, lineHeight: 1.3 }}>{monthLabel(m.month)}</div>
+                          {m.due_date && (
+                            <div style={{ fontSize: 11, color: '#64748b', marginTop: 2 }}>
+                              Срок оплаты: {formatDate(m.due_date)}
+                            </div>
+                          )}
+                          {m.description && (
+                            <div
+                              style={{
+                                fontSize: 11,
+                                color: '#64748b',
+                                marginTop: 4,
+                                lineHeight: 1.4,
+                                wordBreak: 'break-word',
+                              }}
+                            >
+                              {m.description}
+                            </div>
+                          )}
                         </div>
                       </div>
-                    </div>
-                    <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-end', gap: 6, flexShrink: 0 }}>
-                      <span style={{ fontWeight: 700, fontSize: 13, color: isPaid ? '#1a6b3c' : '#1a1d23' }}>
-                        {formatMoneyNumber(effAmount)}
-                      </span>
-                      <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6, justifyContent: 'flex-end' }}>
-                        {['admin', 'manager', 'administration'].includes(user?.role || '') && (
-                          <button
-                            type="button"
-                            title={nextMonthTaken ? `Месяц ${monthLabel(nextYm)} уже в графике` : `Создать строку на ${monthLabel(nextYm)}`}
-                            onClick={() => duplicateMonthToNext(m.id)}
-                            disabled={nextMonthTaken || duplicatingMonth === m.id}
-                            style={btnStyle(false, nextMonthTaken || duplicatingMonth === m.id)}
-                          >
-                            {duplicatingMonth === m.id ? '...' : '→ След. месяц'}
-                          </button>
-                        )}
-                        {!actOk && (
-                          <button
-                            type="button"
-                            onClick={() => markActMonth(m.id)}
-                            disabled={confirmingAct === m.id}
-                            style={btnStyle(false, confirmingAct === m.id)}
-                          >
-                            {confirmingAct === m.id ? '...' : 'Добавить'}
-                          </button>
-                        )}
-                        {!isPaid && (
-                          <button
-                            type="button"
-                            onClick={() => confirmMonth(m.id)}
-                            disabled={confirmingMonth === m.id}
-                            style={btnStyle(true, confirmingMonth === m.id)}
-                          >
-                            {confirmingMonth === m.id ? '...' : 'Оплата прошла'}
-                          </button>
-                        )}
-                      </div>
-                      {monthSaved === m.id && (
-                        <span style={{ fontSize: 10, color: '#1a6b3c', fontWeight: 600 }}>✓ TG</span>
-                      )}
-                      <button
-                        type="button"
-                        onClick={() => setDeleteMonthId(m.id)}
+                      <div
                         style={{
-                          background: 'none', border: 'none', color: '#ccc',
-                          fontSize: 15, cursor: 'pointer', lineHeight: 1, padding: 2,
+                          display: 'flex',
+                          alignItems: 'center',
+                          gap: 8,
+                          flexShrink: 0,
+                          marginLeft: 'auto',
                         }}
-                      >✕</button>
+                      >
+                        <span style={{ fontWeight: 700, fontSize: 14, color: isPaid ? '#1a6b3c' : '#0f172a', whiteSpace: 'nowrap' }}>
+                          {formatMoneyNumber(effAmount)}
+                          <span style={{ fontSize: 10, fontWeight: 600, color: '#94a3b8', marginLeft: 4 }}>UZS</span>
+                        </span>
+                        <button
+                          type="button"
+                          onClick={() => setDeleteMonthId(m.id)}
+                          title="Удалить строку месяца"
+                          style={{
+                            background: '#fff',
+                            border: '1px solid #e8e9ef',
+                            borderRadius: 8,
+                            color: '#94a3b8',
+                            fontSize: 15,
+                            cursor: 'pointer',
+                            lineHeight: 1,
+                            padding: '5px 9px',
+                            flexShrink: 0,
+                          }}
+                        >
+                          ✕
+                        </button>
+                      </div>
+                    </div>
+
+                    <div style={{ padding: '8px 14px', display: 'flex', flexDirection: 'column', gap: 4 }}>
+                      <div style={{ fontSize: 12, color: '#475569', lineHeight: 1.35 }}>
+                        <b style={{ color: actOk ? '#166534' : '#94a3b8' }}>Акт</b>
+                        {actOk
+                          ? ` ✓ ${m.act_issued_at ? new Date(m.act_issued_at).toLocaleDateString('ru-RU') : ''}`
+                          : ' — не отмечен'}
+                      </div>
+                      <div style={{ fontSize: 12, color: '#475569', lineHeight: 1.35 }}>
+                        <b style={{ color: isPaid ? '#166534' : '#94a3b8' }}>Оплата</b>
+                        {isPaid
+                          ? ` ✓ ${m.paid_at ? new Date(m.paid_at).toLocaleDateString('ru-RU') : ''}`
+                          : ' — ожидается'}
+                      </div>
+                      {m.note && <div style={{ fontSize: 11, color: '#8a8fa8', lineHeight: 1.35 }}>{m.note}</div>}
+                    </div>
+
+                    <div
+                      style={{
+                        padding: '9px 14px 11px',
+                        borderTop: '1px solid #f1f5f9',
+                        display: 'flex',
+                        flexWrap: 'wrap',
+                        gap: 8,
+                        alignItems: 'center',
+                        minWidth: 0,
+                      }}
+                    >
+                      {['admin', 'manager', 'administration', 'financier'].includes(user?.role || '') && (
+                        <button
+                          type="button"
+                          title={nextMonthTaken ? `Месяц ${monthLabel(nextYm)} уже в графике` : `Создать строку на ${monthLabel(nextYm)}`}
+                          onClick={() => duplicateMonthToNext(m.id)}
+                          disabled={nextMonthTaken || duplicatingMonth === m.id}
+                          style={btnStyle(false, nextMonthTaken || duplicatingMonth === m.id)}
+                        >
+                          {duplicatingMonth === m.id ? '…' : '→ След. месяц'}
+                        </button>
+                      )}
+                      {!actOk && (
+                        <button
+                          type="button"
+                          title="Отметить акт / счёт-фактуру"
+                          onClick={() => markActMonth(m.id)}
+                          disabled={confirmingAct === m.id}
+                          style={btnStyle(false, confirmingAct === m.id)}
+                        >
+                          {confirmingAct === m.id ? '…' : 'АКТ/СФ'}
+                        </button>
+                      )}
+                      {!isPaid && (
+                        <button
+                          type="button"
+                          title="Зафиксировать поступление денег"
+                          onClick={() => {
+                            setPayConfirmBackdateYmd('')
+                            setPayConfirmModalMonthId(m.id)
+                          }}
+                          disabled={confirmingMonth === m.id}
+                          style={btnStyle(true, confirmingMonth === m.id)}
+                        >
+                          Оплата прошла
+                        </button>
+                      )}
+                      {monthSaved === m.id && (
+                        <span style={{ fontSize: 11, color: '#1a6b3c', fontWeight: 600, width: '100%' }}>✓ Уведомление в Telegram</span>
+                      )}
                     </div>
                   </div>
                 )
@@ -1000,7 +1139,18 @@ export default function PaymentsPage() {
 
             {/* footer */}
             {totalMonths > 0 && (
-              <div style={{ padding: '14px 24px', borderTop: '1px solid #e8e9ef', display: 'flex', justifyContent: 'space-between', fontSize: 13 }}>
+              <div style={{
+                padding: '14px 16px',
+                borderTop: '1px solid #e8e9ef',
+                display: 'flex',
+                flexWrap: 'wrap',
+                gap: 8,
+                justifyContent: 'space-between',
+                alignItems: 'center',
+                fontSize: 13,
+                flexShrink: 0,
+              }}
+              >
                 <span style={{ color: '#8a8fa8' }}>Итого оплачено</span>
                 <span style={{ fontWeight: 700, color: '#1a6b3c' }}>
                   {formatAmount(drawerMonths.filter(m => m.status === 'paid').reduce((s, m) => s + Number(m.amount ?? drawer.amount), 0))}
@@ -1131,6 +1281,72 @@ export default function PaymentsPage() {
             }} />
           </div>
         </div>
+      </Modal>
+
+      <Modal
+        open={payConfirmModalMonthId !== null && !!payModalMonth}
+        onClose={() => {
+          setPayConfirmModalMonthId(null)
+          setPayConfirmBackdateYmd('')
+        }}
+        title={payModalMonth ? `Оплата прошла — ${monthLabel(payModalMonth.month)}` : 'Оплата прошла'}
+        footer={(
+          <>
+            <BtnOutline
+              onClick={() => {
+                setPayConfirmModalMonthId(null)
+                setPayConfirmBackdateYmd('')
+              }}
+              disabled={payConfirmModalMonthId !== null && confirmingMonth === payConfirmModalMonthId}
+            >
+              Отмена
+            </BtnOutline>
+            <BtnPrimary
+              disabled={payConfirmModalMonthId === null || confirmingMonth === payConfirmModalMonthId}
+              onClick={() => {
+                if (payConfirmModalMonthId === null) return
+                const d = payConfirmBackdateYmd.trim()
+                if (d) void confirmMonth(payConfirmModalMonthId, { backdateYmd: d })
+                else void confirmMonth(payConfirmModalMonthId, 'now')
+              }}
+            >
+              {confirmingMonth === payConfirmModalMonthId ? 'Сохраняем…' : 'Подтвердить оплату'}
+            </BtnPrimary>
+          </>
+        )}
+      >
+        {payModalMonth && payConfirmModalMonthId !== null && (
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
+            <Field label="Способ поступления">
+              <Select
+                value={monthPayMethods[payConfirmModalMonthId] ?? 'transfer'}
+                onChange={(e) =>
+                  setMonthPayMethods((prev) => ({ ...prev, [payConfirmModalMonthId]: e.target.value }))
+                }
+              >
+                <option value="transfer">Перечисление (счёт)</option>
+                <option value="card">Карта</option>
+                <option value="cash">Наличные</option>
+              </Select>
+            </Field>
+            <div style={{ fontSize: 13, color: '#475569', lineHeight: 1.5 }}>
+              <span style={{ fontWeight: 600, color: '#334155' }}>Оплата пришла сегодня?</span>{' '}
+              Оставьте дату пустой и нажмите <b>Подтвердить оплату</b> внизу — зачисление зафиксируется на текущий момент.
+            </div>
+            <Field label="Дата фактического зачисления (необязательно)">
+              <Input
+                type="date"
+                value={payConfirmBackdateYmd}
+                onChange={(e) => setPayConfirmBackdateYmd(e.target.value)}
+                disabled={confirmingMonth === payConfirmModalMonthId}
+              />
+            </Field>
+            <div style={{ fontSize: 12, color: '#64748b', lineHeight: 1.45 }}>
+              Если деньги пришли раньше — выберите дату (задним числом для ДДС и «Доступные средства»), затем снова{' '}
+              <b>Подтвердить оплату</b>.
+            </div>
+          </div>
+        )}
       </Modal>
 
       <ConfirmModal

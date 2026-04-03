@@ -1,9 +1,11 @@
+import json
 import logging
 import secrets
 from typing import Optional
 
 import httpx
 from fastapi import APIRouter, Depends, Header, HTTPException
+from sqlalchemy import func
 from sqlalchemy.orm import Session
 
 from app.db.database import get_db
@@ -14,8 +16,9 @@ from app.schemas.schemas import (
     TelegramJoinApprove,
     TelegramJoinInternalRequest,
 )
-from app.core.security import get_password_hash, require_admin
+from app.core.security import get_password_hash, normalize_email, require_admin
 from app.core.config import settings
+from app.api.routes.users import _validate_visible_manager_ids
 
 router = APIRouter(prefix="/api/telegram-join", tags=["telegram-join"])
 logger = logging.getLogger(__name__)
@@ -130,6 +133,89 @@ def list_pending(
     )
 
 
+def _approve_link_telegram(db: Session, req: TelegramJoinRequest, data: TelegramJoinApprove) -> dict:
+    """Привязать chat_id заявки к существующей учётной записи."""
+    chat_id = req.telegram_chat_id
+    uid = data.link_user_id
+    if uid is None:
+        raise HTTPException(status_code=400, detail="Не указан пользователь для привязки")
+
+    u = db.query(User).filter(User.id == uid).first()
+    if not u or not u.is_active:
+        raise HTTPException(status_code=400, detail="Пользователь не найден или деактивирован")
+
+    expected = {
+        "manager": ("manager", "admin"),
+        "accountant": ("accountant",),
+        "administration": ("administration",),
+    }
+    if u.role not in expected[data.role]:
+        raise HTTPException(
+            status_code=400,
+            detail="Роль выбранного пользователя не совпадает с типом одобрения",
+        )
+
+    other = (
+        db.query(User)
+        .filter(
+            User.telegram_chat_id == chat_id,
+            User.is_active == True,
+            User.id != uid,
+        )
+        .first()
+    )
+    if other:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Этот Chat ID уже привязан к пользователю «{other.name}»",
+        )
+
+    if u.telegram_chat_id is not None and int(u.telegram_chat_id) != int(chat_id):
+        raise HTTPException(
+            status_code=400,
+            detail="У пользователя уже другой Telegram. Снимите Chat ID в карточке или выберите другого пользователя.",
+        )
+
+    u.telegram_chat_id = chat_id
+    u.telegram_username = req.telegram_username
+    if data.name.strip():
+        u.name = data.name.strip()
+
+    if data.role == "administration" and data.visible_manager_ids is not None:
+        u.visible_manager_ids = json.dumps(_validate_visible_manager_ids(db, data.visible_manager_ids))
+
+    db.delete(req)
+    db.commit()
+    db.refresh(u)
+
+    url = settings.APP_PUBLIC_URL.rstrip("/")
+    if data.role == "manager":
+        if u.web_access:
+            text = (
+                f"✅ <b>Telegram привязан</b>\n\n"
+                f"Уведомления по проектам будут приходить в этот чат.\n\n"
+                f"🌐 Панель:\n<code>{url}</code>\n"
+                f"📧 Логин:\n<code>{u.email}</code>"
+            )
+        else:
+            text = "✅ <b>Telegram привязан</b> к вашей учётной записи."
+    elif data.role == "accountant":
+        text = (
+            f"✅ <b>Telegram привязан</b>\n\n"
+            f"Уведомления о платежах и документы будут приходить <b>в этот чат</b>."
+        )
+    else:
+        text = (
+            f"✅ <b>Telegram привязан</b>\n\n"
+            f"Роль: <b>администрация</b> — пуши по выбранным менеджерам и копии переписки с бухгалтерией "
+            f"будут приходить сюда.\n\n"
+            f"🌐 Панель:\n<code>{url}</code>\n"
+            f"📧 Логин:\n<code>{u.email}</code>"
+        )
+    _send_telegram_message(int(chat_id), text)
+    return {"ok": True, "user_id": u.id, "role": data.role, "linked": True}
+
+
 @router.post("/{request_id}/approve")
 def approve_request(
     request_id: int,
@@ -137,8 +223,8 @@ def approve_request(
     db: Session = Depends(get_db),
     _=Depends(require_admin),
 ):
-    if data.role not in ("manager", "accountant"):
-        raise HTTPException(status_code=400, detail="Роль: manager или accountant")
+    if data.role not in ("manager", "accountant", "administration"):
+        raise HTTPException(status_code=400, detail="Роль: manager, accountant или administration")
 
     req = db.query(TelegramJoinRequest).filter(TelegramJoinRequest.id == request_id).first()
     if not req or req.status != "pending":
@@ -146,7 +232,11 @@ def approve_request(
 
     chat_id = req.telegram_chat_id
 
-    if db.query(User).filter(User.telegram_chat_id == chat_id, User.is_active == True).first():
+    if data.link_user_id is not None:
+        return _approve_link_telegram(db, req, data)
+
+    conflict = db.query(User).filter(User.telegram_chat_id == chat_id, User.is_active == True).first()
+    if conflict:
         db.delete(req)
         db.commit()
         raise HTTPException(status_code=400, detail="Пользователь с этим Chat ID уже есть")
@@ -154,8 +244,8 @@ def approve_request(
     if data.role == "manager":
         if not data.email or not data.email.strip():
             raise HTTPException(status_code=400, detail="Для менеджера укажите email")
-        email = data.email.strip()
-        if db.query(User).filter(User.email == email).first():
+        email = normalize_email(data.email.strip())
+        if db.query(User).filter(func.lower(User.email) == email).first():
             raise HTTPException(status_code=400, detail="Email уже занят")
         plain_password = secrets.token_urlsafe(10)
         user = User(
@@ -184,6 +274,48 @@ def approve_request(
         )
         _send_telegram_message(int(chat_id), text)
         return {"ok": True, "user_id": user.id, "role": "manager"}
+
+    if data.role == "administration":
+        if not data.email or not data.email.strip():
+            raise HTTPException(status_code=400, detail="Для администрации укажите email (логин в панель)")
+        if not data.visible_manager_ids:
+            raise HTTPException(
+                status_code=400,
+                detail="Отметьте хотя бы одного менеджера в зоне видимости (как в карточке пользователя)",
+            )
+        email = normalize_email(data.email.strip())
+        if db.query(User).filter(func.lower(User.email) == email).first():
+            raise HTTPException(status_code=400, detail="Email уже занят")
+        vm_json = json.dumps(_validate_visible_manager_ids(db, data.visible_manager_ids))
+        plain_password = secrets.token_urlsafe(10)
+        user = User(
+            name=data.name.strip(),
+            email=email,
+            role="administration",
+            hashed_password=get_password_hash(plain_password),
+            telegram_chat_id=chat_id,
+            telegram_username=req.telegram_username,
+            is_active=True,
+            web_access=True,
+            visible_manager_ids=vm_json,
+            can_view_subscriptions=False,
+            can_view_accesses=False,
+        )
+        db.add(user)
+        db.delete(req)
+        db.commit()
+        db.refresh(user)
+        url = settings.APP_PUBLIC_URL.rstrip("/")
+        text = (
+            f"✅ <b>Заявка одобрена</b>\n\n"
+            f"Роль: <b>администрация</b>\n\n"
+            f"🌐 Вход в панель:\n<code>{url}</code>\n\n"
+            f"📧 Логин:\n<code>{email}</code>\n\n"
+            f"🔑 Пароль:\n<code>{plain_password}</code>\n\n"
+            f"В панели видны партнёры и проекты выбранных менеджеров; в Telegram — копии уведомлений и ответов бухгалтерии по ним."
+        )
+        _send_telegram_message(int(chat_id), text)
+        return {"ok": True, "user_id": user.id, "role": "administration"}
 
     # accountant — только пуши в Telegram, без веб-доступа (служебный email для БД)
     email = f"tg_buh_{chat_id}@enterdebt.app"

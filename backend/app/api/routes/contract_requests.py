@@ -12,6 +12,7 @@ from app.core.config import settings
 from app.core.security import get_current_user
 from app.db.database import get_db
 from app.models.user import User
+from app.services.telegram_cc import collect_telegram_cc_chat_ids
 
 logger = logging.getLogger(__name__)
 
@@ -132,6 +133,10 @@ async def notify_accounting_new_contract(
             detail="Нет активных бухгалтеров с привязанным Telegram. Сначала привяжите бота в разделе пользователей.",
         )
 
+    route_mid = actor.id if actor.role in ("manager", "admin") else None
+    cc_chats = collect_telegram_cc_chat_ids(db, route_mid)
+    cc_prefix = "📨 <i>Копия (контроль)</i>\n\n"
+
     ok_count = 0
     for acc in accountants:
         cid = str(acc.telegram_chat_id)
@@ -143,6 +148,15 @@ async def notify_accounting_new_contract(
             sent = await _send_tg_message(cid, full)
         if sent:
             ok_count += 1
+
+    for cc in cc_chats:
+        scid = str(cc)
+        if file_body:
+            cap = cc_prefix + _build_caption(c, url_part, actor, for_document=True)
+            await _send_tg_document(scid, file_body, file_name or "file", cap)
+        else:
+            full = cc_prefix + _build_caption(c, url_part, actor, for_document=False)
+            await _send_tg_message(scid, full)
 
     if ok_count == 0:
         raise HTTPException(status_code=502, detail="Не удалось доставить сообщение в Telegram (проверьте логи)")

@@ -27,6 +27,17 @@ interface Meta {
   template_groups: { id: string; label: string; description?: string }[]
 }
 
+interface AvailableFundsResponse {
+  period_month: string
+  on_account_uzs: string
+  on_cards_uzs: string
+  deposits_uzs: string
+  from_payments_account_uzs: string
+  from_payments_cards_uzs: string
+  adjust_account_uzs: string
+  adjust_cards_uzs: string
+}
+
 interface CFEntry {
   id: number
   period_month: string
@@ -151,6 +162,15 @@ function shiftYM(ym: string, d: number) {
   return `${dt.getFullYear()}-${String(dt.getMonth() + 1).padStart(2, '0')}`
 }
 
+/** Только положительный id проекта; иначе null (без привязки). */
+function parseOptionalPaymentId(s: string): number | null {
+  const t = (s || '').trim()
+  if (!t) return null
+  const n = Number(t)
+  if (!Number.isFinite(n) || n <= 0) return null
+  return Math.trunc(n)
+}
+
 function ymTitle(ym: string) {
   const [y, m] = ym.split('-').map(Number)
   const names = [
@@ -219,9 +239,20 @@ export default function FinanceCashflowPage() {
   const [selExpense, setSelExpense] = useState<number[]>([])
   const [bulkDeleteIds, setBulkDeleteIds] = useState<number[] | null>(null)
 
+  const [availableFunds, setAvailableFunds] = useState<AvailableFundsResponse | null>(null)
+  const [afEditOpen, setAfEditOpen] = useState(false)
+  const [afEditSaving, setAfEditSaving] = useState(false)
+  const [afEditForm, setAfEditForm] = useState({ deposits: '', adjust_account: '', adjust_cards: '' })
+  /** Показ сумм только пока указатель в колонке (чистый CSS :hover с filter часто «залипает» после ухода курсора). */
+  const [afReveal, setAfReveal] = useState({ account: false, cards: false, deposits: false })
+
   useEffect(() => {
     if (!loading && user && !isFinanceTeamRole(user.role)) router.replace('/')
   }, [loading, user, router])
+
+  useEffect(() => {
+    setAfReveal({ account: false, cards: false, deposits: false })
+  }, [ym])
 
   const loadMeta = useCallback(() => {
     api.get<Meta>('finance/cash-flow/meta').then((r) => setMeta(r.data))
@@ -245,6 +276,42 @@ export default function FinanceCashflowPage() {
       .finally(() => setBusy(false))
   }, [user, ym])
 
+  const loadAvailableFunds = useCallback(() => {
+    if (!user || !isFinanceTeamRole(user.role)) return
+    api
+      .get<AvailableFundsResponse>(`finance/available-funds?period_month=${encodeURIComponent(ym)}`)
+      .then((r) => setAvailableFunds(r.data))
+      .catch(() => setAvailableFunds(null))
+  }, [user, ym])
+
+  const openAfEditModal = useCallback(() => {
+    const d = availableFunds
+    setAfEditForm({
+      deposits: String(Number(d?.deposits_uzs) || 0),
+      adjust_account: String(Number(d?.adjust_account_uzs) || 0),
+      adjust_cards: String(Number(d?.adjust_cards_uzs) || 0),
+    })
+    setAfEditOpen(true)
+  }, [availableFunds])
+
+  const saveAfEdit = async () => {
+    setAfEditSaving(true)
+    try {
+      const r = await api.put<AvailableFundsResponse>('finance/available-funds', {
+        period_month: ym,
+        deposits_uzs: afEditForm.deposits || '0',
+        adjust_account_uzs: afEditForm.adjust_account || '0',
+        adjust_cards_uzs: afEditForm.adjust_cards || '0',
+      })
+      setAvailableFunds(r.data)
+      setAfEditOpen(false)
+    } catch {
+      /* quiet */
+    } finally {
+      setAfEditSaving(false)
+    }
+  }
+
   useEffect(() => {
     loadMeta()
   }, [loadMeta])
@@ -256,6 +323,10 @@ export default function FinanceCashflowPage() {
   useEffect(() => {
     loadEntries()
   }, [loadEntries])
+
+  useEffect(() => {
+    loadAvailableFunds()
+  }, [loadAvailableFunds])
 
   useEffect(() => {
     setBulkIncome(false)
@@ -410,7 +481,7 @@ export default function FinanceCashflowPage() {
       amount_uzs: '',
       amount_usd: '',
       payment_method: 'transfer',
-      flow_category: 'other',
+      flow_category: dir === 'expense' ? 'other' : '',
       recipient: '',
       payment_id: '',
       notes: '',
@@ -424,6 +495,7 @@ export default function FinanceCashflowPage() {
     const usd = Number(String(form.amount_usd).replace(/\s/g, '').replace(',', '.')) || 0
     if (!form.label.trim()) return
     if (addOpen === 'expense' && !form.flow_category) return
+    if (addOpen === 'income' && !form.flow_category.trim()) return
     setBusy(true)
     try {
       await api.post('finance/cash-flow/entries', {
@@ -433,13 +505,17 @@ export default function FinanceCashflowPage() {
         amount_uzs: uzs,
         amount_usd: usd,
         payment_method: form.payment_method,
-        flow_category: addOpen === 'expense' ? form.flow_category || null : null,
+        flow_category: form.flow_category.trim().toLowerCase() || null,
         recipient: form.recipient.trim() || null,
-        payment_id: form.payment_id ? Number(form.payment_id) : null,
+        payment_id: parseOptionalPaymentId(form.payment_id),
         notes: form.notes.trim() || null,
       })
       setAddOpen(null)
       loadEntries()
+    } catch (e: unknown) {
+      const d = (e as { response?: { data?: { detail?: unknown } } }).response?.data?.detail
+      const msg = typeof d === 'string' ? d : d != null ? JSON.stringify(d) : 'Не удалось сохранить строку'
+      alert(msg)
     } finally {
       setBusy(false)
     }
@@ -449,6 +525,7 @@ export default function FinanceCashflowPage() {
     if (!editRow) return
     const uzs = Number(String(form.amount_uzs).replace(/\s/g, '').replace(',', '.')) || 0
     const usd = Number(String(form.amount_usd).replace(/\s/g, '').replace(',', '.')) || 0
+    if (editRow.direction === 'income' && !form.flow_category.trim()) return
     setBusy(true)
     try {
       const payload: Record<string, unknown> = {
@@ -461,13 +538,17 @@ export default function FinanceCashflowPage() {
       if (editRow.direction === 'expense') {
         payload.flow_category = form.flow_category || null
       } else {
-        payload.flow_category = null
+        payload.flow_category = form.flow_category.trim().toLowerCase() || null
         payload.recipient = form.recipient.trim() || null
-        payload.payment_id = form.payment_id ? Number(form.payment_id) : null
+        payload.payment_id = parseOptionalPaymentId(form.payment_id)
       }
       await api.patch(`finance/cash-flow/entries/${editRow.id}`, payload)
       setEditRow(null)
       loadEntries()
+    } catch (e: unknown) {
+      const d = (e as { response?: { data?: { detail?: unknown } } }).response?.data?.detail
+      const msg = typeof d === 'string' ? d : d != null ? JSON.stringify(d) : 'Не удалось сохранить'
+      alert(msg)
     } finally {
       setBusy(false)
     }
@@ -479,7 +560,7 @@ export default function FinanceCashflowPage() {
       amount_uzs: String(r.amount_uzs ?? ''),
       amount_usd: String(r.amount_usd ?? ''),
       payment_method: r.payment_method,
-      flow_category: r.flow_category || 'other',
+      flow_category: r.flow_category || (r.direction === 'expense' ? 'other' : ''),
       recipient: r.recipient || '',
       payment_id: r.payment_id ? String(r.payment_id) : '',
       notes: r.notes || '',
@@ -532,7 +613,7 @@ export default function FinanceCashflowPage() {
     <Layout>
       <PageHeader
         title="ДДС"
-        subtitle="Движение денежных средств по месяцам: приход и расход. Шаблоны добавляют повторяющиеся строки в выбранный месяц; их можно смотреть, править и удалять. Данные учитываются в P&L."
+        subtitle="Движение денежных средств по месяцам: приход и расход. Личный вывод — категория «Агаси Д (дивиденды)» в расходах. Шаблоны добавляют повторяющиеся строки в месяц. Данные учитываются в P&L."
       />
       <div
         style={{
@@ -548,26 +629,152 @@ export default function FinanceCashflowPage() {
           gap: 16,
         }}
       >
-        <div style={{ display: 'flex', flexWrap: 'wrap', alignItems: 'center', gap: 10 }}>
-          <BtnOutline type="button" onClick={() => setYm((x) => shiftYM(x, -1))} disabled={busy}>
-            ←
-          </BtnOutline>
-          <span style={{ fontWeight: 800, fontSize: 16, minWidth: 160, textAlign: 'center' }}>{ymTitle(ym)}</span>
-          <BtnOutline type="button" onClick={() => setYm((x) => shiftYM(x, 1))} disabled={busy}>
-            →
-          </BtnOutline>
-          <input
-            type="month"
-            value={ym}
-            onChange={(e) => setYm(e.target.value)}
-            style={{ marginLeft: 8, padding: 6, borderRadius: 8, border: '1px solid #e2e8f0', fontFamily: 'inherit' }}
-          />
-          <BtnOutline type="button" onClick={() => loadEntries()} style={{ marginLeft: 8 }}>
-            Обновить
-          </BtnOutline>
-          <Link href="/finance/pl" style={{ marginLeft: 12, fontSize: 13, fontWeight: 600, color: '#1a6b3c' }}>
-            Открыть P&L →
-          </Link>
+        <div
+          style={{
+            display: 'flex',
+            flexWrap: 'wrap',
+            alignItems: 'flex-start',
+            justifyContent: 'space-between',
+            gap: 16,
+            width: '100%',
+          }}
+        >
+          <div style={{ display: 'flex', flexWrap: 'wrap', alignItems: 'center', gap: 10 }}>
+            <BtnOutline type="button" onClick={() => setYm((x) => shiftYM(x, -1))} disabled={busy}>
+              ←
+            </BtnOutline>
+            <span style={{ fontWeight: 800, fontSize: 16, minWidth: 160, textAlign: 'center' }}>{ymTitle(ym)}</span>
+            <BtnOutline type="button" onClick={() => setYm((x) => shiftYM(x, 1))} disabled={busy}>
+              →
+            </BtnOutline>
+            <input
+              type="month"
+              value={ym}
+              onChange={(e) => setYm(e.target.value)}
+              style={{ marginLeft: 8, padding: 6, borderRadius: 8, border: '1px solid #e2e8f0', fontFamily: 'inherit' }}
+            />
+            <BtnOutline
+              type="button"
+              onClick={() => {
+                loadEntries()
+                loadAvailableFunds()
+              }}
+              style={{ marginLeft: 8 }}
+            >
+              Обновить
+            </BtnOutline>
+            <Link href="/finance/pl" style={{ marginLeft: 12, fontSize: 13, fontWeight: 600, color: '#1a6b3c' }}>
+              Открыть P&L →
+            </Link>
+          </div>
+
+          <div
+            style={{
+              flex: '1 1 320px',
+              maxWidth: 520,
+              background: '#fff',
+              border: '1px solid #e2e8f0',
+              borderRadius: 12,
+              padding: '12px 14px',
+              boxShadow: '0 1px 2px rgba(0,0,0,.04)',
+            }}
+          >
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 8, marginBottom: 10 }}>
+              <div style={{ fontWeight: 800, fontSize: 12, color: '#1e293b' }}>Доступные средства</div>
+              <BtnOutline type="button" onClick={openAfEditModal} style={{ fontSize: 11, padding: '5px 12px', flexShrink: 0 }}>
+                Править
+              </BtnOutline>
+            </div>
+            <div style={{ fontSize: 10, color: '#94a3b8', lineHeight: 1.4, marginBottom: 10 }}>
+              Счёт и карты — из оплат за месяц плюс ваши дополнения («Править»). Не P&L. Наведите на сумму, чтобы увидеть.
+            </div>
+            <div style={{ display: 'flex', flexWrap: 'wrap', gap: 10 }}>
+              <div
+                style={{
+                  flex: '1 1 120px',
+                  padding: '8px 10px',
+                  background: '#f0fdf4',
+                  borderRadius: 10,
+                  border: '1px solid #bbf7d0',
+                }}
+                onPointerEnter={() => setAfReveal((s) => ({ ...s, account: true }))}
+                onPointerLeave={() => setAfReveal((s) => ({ ...s, account: false }))}
+              >
+                <div style={{ fontSize: 10, color: '#166534', fontWeight: 700 }}>Деньги на счету</div>
+                <span
+                  style={{
+                    display: 'inline-block',
+                    marginTop: 6,
+                    fontWeight: 800,
+                    fontSize: 15,
+                    color: '#14532d',
+                    filter: afReveal.account ? 'none' : 'blur(11px)',
+                    opacity: afReveal.account ? 1 : 0.35,
+                    transition: 'filter 0.2s ease, opacity 0.2s ease',
+                  }}
+                >
+                  {availableFunds ? formatMoneyNumber(Number(availableFunds.on_account_uzs)) : '—'}
+                </span>
+                <div style={{ fontSize: 9, color: '#86efac', marginTop: 4 }}>Перечисление</div>
+              </div>
+              <div
+                style={{
+                  flex: '1 1 120px',
+                  padding: '8px 10px',
+                  background: '#fffbeb',
+                  borderRadius: 10,
+                  border: '1px solid #fde68a',
+                }}
+                onPointerEnter={() => setAfReveal((s) => ({ ...s, cards: true }))}
+                onPointerLeave={() => setAfReveal((s) => ({ ...s, cards: false }))}
+              >
+                <div style={{ fontSize: 10, color: '#b45309', fontWeight: 700 }}>Деньги на картах</div>
+                <span
+                  style={{
+                    display: 'inline-block',
+                    marginTop: 6,
+                    fontWeight: 800,
+                    fontSize: 15,
+                    color: '#92400e',
+                    filter: afReveal.cards ? 'none' : 'blur(11px)',
+                    opacity: afReveal.cards ? 1 : 0.35,
+                    transition: 'filter 0.2s ease, opacity 0.2s ease',
+                  }}
+                >
+                  {availableFunds ? formatMoneyNumber(Number(availableFunds.on_cards_uzs)) : '—'}
+                </span>
+                <div style={{ fontSize: 9, color: '#fcd34d', marginTop: 4 }}>Карта, наличные</div>
+              </div>
+              <div
+                style={{
+                  flex: '1 1 120px',
+                  padding: '8px 10px',
+                  background: '#f8fafc',
+                  borderRadius: 10,
+                  border: '1px solid #e2e8f0',
+                }}
+                onPointerEnter={() => setAfReveal((s) => ({ ...s, deposits: true }))}
+                onPointerLeave={() => setAfReveal((s) => ({ ...s, deposits: false }))}
+              >
+                <div style={{ fontSize: 10, color: '#475569', fontWeight: 700 }}>Деньги на вкладах</div>
+                <span
+                  style={{
+                    display: 'inline-block',
+                    marginTop: 6,
+                    fontWeight: 800,
+                    fontSize: 15,
+                    color: '#0f172a',
+                    filter: afReveal.deposits ? 'none' : 'blur(11px)',
+                    opacity: afReveal.deposits ? 1 : 0.35,
+                    transition: 'filter 0.2s ease, opacity 0.2s ease',
+                  }}
+                >
+                  {availableFunds ? formatMoneyNumber(Number(availableFunds.deposits_uzs)) : '—'}
+                </span>
+                <div style={{ fontSize: 9, color: '#94a3b8', marginTop: 4 }}>Вручную</div>
+              </div>
+            </div>
+          </div>
         </div>
 
         <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
@@ -945,6 +1152,56 @@ export default function FinanceCashflowPage() {
       </div>
 
       <Modal
+        open={afEditOpen}
+        onClose={() => setAfEditOpen(false)}
+        title={`Доступные средства · ${ymTitle(ym)}`}
+        footer={(
+          <>
+            <BtnOutline type="button" onClick={() => setAfEditOpen(false)} disabled={afEditSaving}>
+              Отмена
+            </BtnOutline>
+            <BtnPrimary type="button" onClick={() => void saveAfEdit()} disabled={afEditSaving}>
+              {afEditSaving ? 'Сохранение…' : 'Сохранить'}
+            </BtnPrimary>
+          </>
+        )}
+      >
+        <p style={{ fontSize: 12, color: '#64748b', lineHeight: 1.5, margin: '0 0 14px' }}>
+          Дополнительные суммы прибавляются к автоматическому расчёту из оплат за выбранный месяц (то, что не попало в проекты
+          или нужно поправить вручную).
+        </p>
+        <div style={{ display: 'grid', gap: 12 }}>
+          <div style={{ fontSize: 12, color: '#475569' }}>
+            <span style={{ fontWeight: 600 }}>Из оплат на счёт (авто): </span>
+            {availableFunds
+              ? formatMoneyNumber(Number(availableFunds.from_payments_account_uzs))
+              : '—'}
+          </div>
+          <Field label="Дополнительно на счёт (UZS)">
+            <MoneyInput
+              value={afEditForm.adjust_account}
+              onChange={(v) => setAfEditForm((f) => ({ ...f, adjust_account: v }))}
+            />
+          </Field>
+          <div style={{ fontSize: 12, color: '#475569' }}>
+            <span style={{ fontWeight: 600 }}>Из оплат на карты (авто): </span>
+            {availableFunds
+              ? formatMoneyNumber(Number(availableFunds.from_payments_cards_uzs))
+              : '—'}
+          </div>
+          <Field label="Дополнительно на карты (UZS)">
+            <MoneyInput
+              value={afEditForm.adjust_cards}
+              onChange={(v) => setAfEditForm((f) => ({ ...f, adjust_cards: v }))}
+            />
+          </Field>
+          <Field label="Вклады (UZS)">
+            <MoneyInput value={afEditForm.deposits} onChange={(v) => setAfEditForm((f) => ({ ...f, deposits: v }))} />
+          </Field>
+        </div>
+      </Modal>
+
+      <Modal
         open={addOpen != null}
         onClose={() => setAddOpen(null)}
         title={addOpen === 'income' ? 'Приход' : 'Расход'}
@@ -990,6 +1247,16 @@ export default function FinanceCashflowPage() {
         )}
         {addOpen === 'income' && (
           <>
+            <Field label="Категория прихода *">
+              <Select value={form.flow_category} onChange={(e) => setForm((f) => ({ ...f, flow_category: e.target.value }))}>
+                <option value="">— Выберите —</option>
+                {(meta?.income_categories ?? []).map((c) => (
+                  <option key={c.slug} value={c.slug}>
+                    {c.label}
+                  </option>
+                ))}
+              </Select>
+            </Field>
             <Field label="Кто принял">
               <Input
                 value={form.recipient}
@@ -1061,6 +1328,16 @@ export default function FinanceCashflowPage() {
             )}
             {editRow.direction === 'income' && (
               <>
+                <Field label="Категория прихода *">
+                  <Select value={form.flow_category} onChange={(e) => setForm((f) => ({ ...f, flow_category: e.target.value }))}>
+                    <option value="">— Выберите —</option>
+                    {(meta?.income_categories ?? []).map((c) => (
+                      <option key={c.slug} value={c.slug}>
+                        {c.label}
+                      </option>
+                    ))}
+                  </Select>
+                </Field>
                 <Field label="Кто принял">
                   <Input value={form.recipient} onChange={(e) => setForm((f) => ({ ...f, recipient: e.target.value }))} />
                 </Field>

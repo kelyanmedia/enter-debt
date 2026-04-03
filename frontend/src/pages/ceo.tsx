@@ -347,7 +347,7 @@ export default function CeoDashboardPage() {
       {!loading && user && user.role !== 'manager' && user.role !== 'administration' && <>
       <PageHeader
         title="CEO Dashboard"
-        subtitle="Проекты по линиям, активные партнёры по месяцам, оборот, чистая прибыль по P&L и LTV."
+        subtitle="Проекты по линиям, активные партнёры по месяцам, оборот, операционный результат по P&L (без Агаси Д) и LTV."
       />
       <div style={{ padding: '22px 24px', overflowY: 'auto', flex: 1 }}>
         <div
@@ -540,9 +540,9 @@ export default function CeoDashboardPage() {
             }}
           >
             <div style={{ flex: 1, minWidth: 220 }}>
-              <div style={{ fontSize: 15, fontWeight: 700, color: '#1a1d23' }}>Чистая прибыль (P&L)</div>
+              <div style={{ fontSize: 15, fontWeight: 700, color: '#1a1d23' }}>Операционный результат (P&L)</div>
               <div style={{ fontSize: 12, color: '#8a8fa8', marginTop: 4, lineHeight: 1.5 }}>
-                Строка «Чистая прибыль» из отчёта P&L по месяцам (выручка − расходы, в сумах). Пунктир — тот же месяц{' '}
+                Выручка минус расходы по P&L, без строки «Агаси Д» (дивиденды). В сумах. Пунктир — тот же месяц{' '}
                 {netProfitYear - 1} года. Наведите курсор на график для сумм.
                 {isAdmin && (
                   <>

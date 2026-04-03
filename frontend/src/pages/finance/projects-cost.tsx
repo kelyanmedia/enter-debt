@@ -1,8 +1,8 @@
-import { Fragment, useCallback, useEffect, useMemo, useState } from 'react'
+import { Fragment, useCallback, useEffect, useMemo, useRef, useState, type CSSProperties } from 'react'
 import Link from 'next/link'
 import { useRouter } from 'next/router'
 import Layout from '@/components/Layout'
-import { PageHeader, Card, Th, Td, Empty, formatMoneyNumber, BtnOutline } from '@/components/ui'
+import { PageHeader, Card, Th, Td, Empty, formatMoneyNumber, BtnOutline, MoneyInput } from '@/components/ui'
 import { useAuth } from '@/context/AuthContext'
 import api from '@/lib/api'
 import { isFinanceTeamRole } from '@/lib/roles'
@@ -15,6 +15,8 @@ interface ScheduleMonth {
   paid_at?: string | null
   description?: string | null
 }
+
+type CostFieldApi = 'cost_design_uzs' | 'cost_dev_uzs' | 'cost_other_uzs' | 'cost_seo_uzs'
 
 interface ProjectCostRow {
   payment_id: number
@@ -32,6 +34,10 @@ interface ProjectCostRow {
   pm_name?: string | null
   project_start: string
   schedule_months: ScheduleMonth[]
+  cost_design_uzs: string
+  cost_dev_uzs: string
+  cost_other_uzs: string
+  cost_seo_uzs: string
   internal_cost_sum: string
   profit_actual: string
 }
@@ -94,12 +100,35 @@ function costDisplay(isRec: boolean, billingUnit: string) {
   return n
 }
 
+function moneyCellString(v: string | undefined) {
+  return String(Number(v) || 0)
+}
+
+const breakdownBtnStyle: CSSProperties = {
+  border: 'none',
+  background: 'transparent',
+  padding: '2px 0',
+  margin: 0,
+  font: 'inherit',
+  fontSize: 12,
+  cursor: 'pointer',
+  color: '#334155',
+  textDecoration: 'underline dotted',
+  textUnderlineOffset: 3,
+  maxWidth: 120,
+  textAlign: 'left',
+}
+
 export default function FinanceProjectsCostPage() {
   const { user, loading } = useAuth()
   const router = useRouter()
   const [rows, setRows] = useState<ProjectCostRow[]>([])
   const [fetching, setFetching] = useState(false)
   const [expanded, setExpanded] = useState<Set<number>>(() => new Set())
+  const [costEdit, setCostEdit] = useState<{ paymentId: number; field: CostFieldApi } | null>(null)
+  const [costDraft, setCostDraft] = useState('')
+  const [costSaving, setCostSaving] = useState(false)
+  const costDraftRef = useRef('')
 
   useEffect(() => {
     if (!loading && user && !isFinanceTeamRole(user.role)) router.replace('/')
@@ -128,18 +157,111 @@ export default function FinanceProjectsCostPage() {
     })
   }
 
+  const cancelCostEdit = useCallback(() => {
+    setCostEdit(null)
+    setCostDraft('')
+    costDraftRef.current = ''
+  }, [])
+
+  const startCostEdit = useCallback((row: ProjectCostRow, field: CostFieldApi) => {
+    const v = moneyCellString(row[field])
+    setCostEdit({ paymentId: row.payment_id, field })
+    setCostDraft(v)
+    costDraftRef.current = v
+  }, [])
+
+  const commitCostEdit = useCallback(
+    async (row: ProjectCostRow, field: CostFieldApi) => {
+      if (costSaving) return
+      setCostSaving(true)
+      try {
+        const v = costDraftRef.current.trim() || '0'
+        const body = {
+          cost_design_uzs: field === 'cost_design_uzs' ? v : moneyCellString(row.cost_design_uzs),
+          cost_dev_uzs: field === 'cost_dev_uzs' ? v : moneyCellString(row.cost_dev_uzs),
+          cost_other_uzs: field === 'cost_other_uzs' ? v : moneyCellString(row.cost_other_uzs),
+          cost_seo_uzs: field === 'cost_seo_uzs' ? v : moneyCellString(row.cost_seo_uzs),
+        }
+        const res = await api.put<ProjectCostRow>(
+          `finance/projects-cost/${row.payment_id}/cost-breakdown`,
+          body,
+        )
+        setRows((prev) => prev.map((x) => (x.payment_id === row.payment_id ? res.data : x)))
+        cancelCostEdit()
+      } catch {
+        /* остаёмся в режиме редактирования */
+      } finally {
+        setCostSaving(false)
+      }
+    },
+    [costSaving, cancelCostEdit],
+  )
+
+  const renderBreakdownCell = (row: ProjectCostRow, field: CostFieldApi) => {
+    const open = costEdit?.paymentId === row.payment_id && costEdit.field === field
+    const n = Number(row[field]) || 0
+    if (open) {
+      return (
+        <MoneyInput
+          value={costDraft}
+          onChange={(v) => {
+            setCostDraft(v)
+            costDraftRef.current = v
+          }}
+          autoFocus
+          disabled={costSaving}
+          onKeyDown={(e) => {
+            if (e.key === 'Enter') {
+              e.preventDefault()
+              void commitCostEdit(row, field)
+            }
+            if (e.key === 'Escape') {
+              e.preventDefault()
+              cancelCostEdit()
+            }
+          }}
+          onBlur={() => void commitCostEdit(row, field)}
+          style={{ minWidth: 88, fontSize: 12, padding: '4px 6px' }}
+        />
+      )
+    }
+    return (
+      <button
+        type="button"
+        disabled={costSaving}
+        onClick={() => startCostEdit(row, field)}
+        title="Нажмите, чтобы ввести сумму"
+        style={{
+          ...breakdownBtnStyle,
+          cursor: costSaving ? 'wait' : 'pointer',
+          opacity: n > 0 ? 1 : 0.75,
+        }}
+      >
+        {n > 0 ? formatMoneyNumber(n) : '—'}
+      </button>
+    )
+  }
+
   const totals = useMemo(() => {
     let cost = 0
     let internal = 0
     let profit = 0
     let paid = 0
+    let design = 0
+    let dev = 0
+    let other = 0
+    let seo = 0
     for (const r of rows) {
       cost += Number(r.billing_unit_amount) || 0
       internal += Number(r.internal_cost_sum) || 0
       profit += Number(r.profit_actual) || 0
       paid += Number(r.sum_paid_actual) || 0
+      design += Number(r.cost_design_uzs) || 0
+      dev += Number(r.cost_dev_uzs) || 0
+      other += Number(r.cost_other_uzs) || 0
+      seo += Number(r.cost_seo_uzs) || 0
     }
-    return { cost, internal, profit, paid }
+    return { cost, internal, profit, paid, design, dev, other, seo }
   }, [rows])
 
   if (loading || !user || !isFinanceTeamRole(user.role)) return null
@@ -148,7 +270,7 @@ export default function FinanceProjectsCostPage() {
     <Layout>
       <PageHeader
         title="Projects Cost"
-        subtitle="Проекты из «Проекты» и график оплат. Рекуррент — ставка за период; разовый — сумма в колонке «Стоимость» без подписи «по договору». Прокрутка таблицы — внутри области ниже."
+        subtitle="Проекты из «Проекты» и график оплат. Клик по «Дизайн», «Разраб.», «Прочее», «SEO» — ввод сумм; «Себест.» = их сумма, прибыль = оплата факт − себестоимость. Прокрутка — внутри таблицы."
       />
       <div style={{ padding: '22px 24px', display: 'flex', flexDirection: 'column', gap: 14, minHeight: 0 }}>
         <div style={{ display: 'flex', flexWrap: 'wrap', alignItems: 'center', gap: 12 }}>
@@ -245,7 +367,9 @@ export default function FinanceProjectsCostPage() {
                             <div style={{ fontSize: 10, color: '#64748b', marginTop: 2 }}>{paymentTypeRu(r.payment_type)}</div>
                           </Td>
                           <Td style={{ fontWeight: 600, fontSize: 13, whiteSpace: 'nowrap' }}>{costDisplay(isRec, r.billing_unit_amount)}</Td>
-                          <Td style={{ fontSize: 13 }}>{formatMoneyNumber(Number(r.internal_cost_sum))}</Td>
+                          <Td style={{ fontSize: 13, fontWeight: 600, color: '#334155', whiteSpace: 'nowrap' }}>
+                            {formatMoneyNumber(Number(r.internal_cost_sum))}
+                          </Td>
                           <Td style={{ fontWeight: 700, color: '#1e3a5f' }}>
                             {formatMoneyNumber(Number(r.profit_actual))}
                           </Td>
@@ -253,10 +377,10 @@ export default function FinanceProjectsCostPage() {
                             {formatMoneyNumber(Number(r.sum_paid_actual))}
                           </Td>
                           <Td style={{ fontSize: 13 }}>{isRec ? <span style={{ color: '#94a3b8' }}>n/a</span> : pct}</Td>
-                          <Td style={{ color: '#94a3b8', fontSize: 12 }}>—</Td>
-                          <Td style={{ color: '#94a3b8', fontSize: 12 }}>—</Td>
-                          <Td style={{ color: '#94a3b8', fontSize: 12 }}>—</Td>
-                          <Td style={{ color: '#94a3b8', fontSize: 12 }}>—</Td>
+                          <Td style={{ fontSize: 12, verticalAlign: 'middle' }}>{renderBreakdownCell(r, 'cost_design_uzs')}</Td>
+                          <Td style={{ fontSize: 12, verticalAlign: 'middle' }}>{renderBreakdownCell(r, 'cost_dev_uzs')}</Td>
+                          <Td style={{ fontSize: 12, verticalAlign: 'middle' }}>{renderBreakdownCell(r, 'cost_other_uzs')}</Td>
+                          <Td style={{ fontSize: 12, verticalAlign: 'middle' }}>{renderBreakdownCell(r, 'cost_seo_uzs')}</Td>
                           <Td style={{ fontSize: 13 }}>{formatStart(r.project_start)}</Td>
                           <Td>
                             <button
@@ -326,8 +450,17 @@ export default function FinanceProjectsCostPage() {
                       <Td style={{ borderTop: '2px solid #94a3b8', color: '#1e3a5f' }}>{formatMoneyNumber(totals.profit)}</Td>
                       <Td style={{ borderTop: '2px solid #94a3b8', color: '#166534' }}>{formatMoneyNumber(totals.paid)}</Td>
                       <Td style={{ borderTop: '2px solid #94a3b8', color: '#64748b' }}>—</Td>
-                      <Td colSpan={4} style={{ borderTop: '2px solid #94a3b8', color: '#94a3b8' }}>
-                        —
+                      <Td style={{ borderTop: '2px solid #94a3b8', fontSize: 12, whiteSpace: 'nowrap' }}>
+                        {formatMoneyNumber(totals.design)}
+                      </Td>
+                      <Td style={{ borderTop: '2px solid #94a3b8', fontSize: 12, whiteSpace: 'nowrap' }}>
+                        {formatMoneyNumber(totals.dev)}
+                      </Td>
+                      <Td style={{ borderTop: '2px solid #94a3b8', fontSize: 12, whiteSpace: 'nowrap' }}>
+                        {formatMoneyNumber(totals.other)}
+                      </Td>
+                      <Td style={{ borderTop: '2px solid #94a3b8', fontSize: 12, whiteSpace: 'nowrap' }}>
+                        {formatMoneyNumber(totals.seo)}
                       </Td>
                       <Td colSpan={3} style={{ borderTop: '2px solid #94a3b8' }} />
                     </tr>
@@ -339,9 +472,8 @@ export default function FinanceProjectsCostPage() {
         </Card>
 
         <div style={{ fontSize: 12, color: '#64748b', lineHeight: 1.55, maxWidth: 900 }}>
-          Колонки «Дизайн», «Разработка», «Прочее», «SEO» пока из базы не заполняются. В «Итого» по стоимости суммируются
-          значения из колонки «Стоимость» (ставки за период и разовые суммы в одной шкале — для отчётности; при необходимости
-          разделим рекуррент отдельно).
+          Себестоимость по проекту = сумма четырёх колонок. Раньше введённая одна сумма «Себест.» при обновлении переносится в
+          «Прочее». В «Итого» по стоимости суммируются ставки за период и разовые суммы в одной шкале (для отчётности).
         </div>
       </div>
     </Layout>

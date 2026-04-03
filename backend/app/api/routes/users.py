@@ -31,6 +31,24 @@ def _validate_visible_manager_ids(db: Session, ids: Optional[List[int]]) -> List
     return uniq
 
 
+def _validate_notify_manager_ids(db: Session, ids: Optional[List[int]]) -> List[int]:
+    """Список менеджеров для копий Telegram у администратора; пустой список допустим."""
+    if not ids:
+        return []
+    uniq: List[int] = []
+    seen = set()
+    for x in ids:
+        i = int(x)
+        if i not in seen:
+            seen.add(i)
+            uniq.append(i)
+    for mid in uniq:
+        u = db.query(User).filter(User.id == mid, User.role == "manager", User.is_active == True).first()
+        if not u:
+            raise HTTPException(status_code=400, detail=f"Пользователь {mid} не является активным менеджером")
+    return uniq
+
+
 @router.get("", response_model=List[UserOut])
 def list_users(db: Session = Depends(get_db), _=Depends(require_admin)):
     return db.query(User).filter(User.is_active == True).order_by(User.name).all()
@@ -70,6 +88,9 @@ def create_user(data: UserCreate, db: Session = Depends(get_db), _=Depends(requi
     vm_json = None
     if data.role == "administration":
         vm_json = json.dumps(_validate_visible_manager_ids(db, getattr(data, "visible_manager_ids", None)))
+    admin_notify_json = None
+    if data.role == "admin":
+        admin_notify_json = json.dumps(_validate_notify_manager_ids(db, getattr(data, "admin_telegram_notify_manager_ids", None) or []))
     pd = None
     if data.role == "employee" and getattr(data, "payment_details", None):
         pd = str(data.payment_details).strip() or None
@@ -85,10 +106,13 @@ def create_user(data: UserCreate, db: Session = Depends(get_db), _=Depends(requi
         web_access=data.web_access,
         can_view_subscriptions=bool(getattr(data, "can_view_subscriptions", False)) if data.role == "administration" else False,
         can_view_accesses=bool(getattr(data, "can_view_accesses", False)) if data.role == "administration" else False,
+        can_enter_cash_flow=bool(getattr(data, "can_enter_cash_flow", False)) if data.role == "administration" else False,
         see_all_partners=data.see_all_partners if data.role == "manager" else False,
         visible_manager_ids=vm_json,
         payment_details=pd,
         multi_company_access=mca,
+        admin_telegram_notify_all=bool(getattr(data, "admin_telegram_notify_all", False)) if data.role == "admin" else False,
+        admin_telegram_notify_manager_ids=admin_notify_json if data.role == "admin" else None,
         hashed_password=get_password_hash(plain),
     )
     db.add(user)
@@ -102,6 +126,12 @@ def create_user(data: UserCreate, db: Session = Depends(get_db), _=Depends(requi
 def _apply_update(user: User, data: UserUpdate):
     for field, value in data.model_dump(exclude_none=True).items():
         if field == "visible_manager_ids":
+            continue
+        if field == "admin_telegram_notify_manager_ids":
+            continue
+        if field == "admin_telegram_notify_all":
+            continue
+        if field == "can_enter_cash_flow":
             continue
         if field == "password":
             pv = (value or "").strip()
@@ -132,6 +162,7 @@ def _sync_visible_managers_after_user_update(db: Session, user: User, data: User
         user.visible_manager_ids = None
         user.can_view_subscriptions = False
         user.can_view_accesses = False
+        user.can_enter_cash_flow = False
     if data.visible_manager_ids is not None:
         if user.role != "administration":
             raise HTTPException(status_code=400, detail="Список менеджеров задаётся только для роли «Администрация»")
@@ -141,9 +172,29 @@ def _sync_visible_managers_after_user_update(db: Session, user: User, data: User
     if user.role != "administration":
         user.can_view_subscriptions = False
         user.can_view_accesses = False
+        user.can_enter_cash_flow = False
     if data.role is not None and data.role != "employee":
         user.payment_details = None
         user.multi_company_access = False
+
+
+def _sync_administration_cash_flow_input(db: Session, user: User, data: UserUpdate) -> None:
+    if user.role != "administration":
+        user.can_enter_cash_flow = False
+        return
+    if data.can_enter_cash_flow is not None:
+        user.can_enter_cash_flow = bool(data.can_enter_cash_flow)
+
+
+def _sync_admin_telegram_prefs(db: Session, user: User, data: UserUpdate) -> None:
+    if user.role != "admin":
+        user.admin_telegram_notify_all = False
+        user.admin_telegram_notify_manager_ids = None
+        return
+    if data.admin_telegram_notify_all is not None:
+        user.admin_telegram_notify_all = bool(data.admin_telegram_notify_all)
+    if data.admin_telegram_notify_manager_ids is not None:
+        user.admin_telegram_notify_manager_ids = json.dumps(_validate_notify_manager_ids(db, data.admin_telegram_notify_manager_ids))
 
 
 @router.put("/{user_id}", response_model=UserOut)
@@ -153,6 +204,8 @@ def update_user(user_id: int, data: UserUpdate, db: Session = Depends(get_db), _
         raise HTTPException(status_code=404, detail="User not found")
     _apply_update(user, data)
     _sync_visible_managers_after_user_update(db, user, data)
+    _sync_administration_cash_flow_input(db, user, data)
+    _sync_admin_telegram_prefs(db, user, data)
     db.commit()
     db.refresh(user)
     return user
@@ -165,6 +218,8 @@ def patch_user(user_id: int, data: UserUpdate, db: Session = Depends(get_db), _=
         raise HTTPException(status_code=404, detail="User not found")
     _apply_update(user, data)
     _sync_visible_managers_after_user_update(db, user, data)
+    _sync_administration_cash_flow_input(db, user, data)
+    _sync_admin_telegram_prefs(db, user, data)
     db.commit()
     db.refresh(user)
     return user
@@ -257,6 +312,17 @@ def internal_telegram_chat_by_user(user_id: int, db: Session = Depends(get_db)):
     if not u:
         raise HTTPException(status_code=404, detail="User or telegram not linked")
     return {"telegram_chat_id": int(u.telegram_chat_id), "name": u.name}
+
+
+@router.get("/internal/telegram-cc-chats")
+def internal_telegram_cc_chats(
+    route_manager_id: Optional[int] = None,
+    db: Session = Depends(get_db),
+):
+    """Для бота: chat_id получателей копий переписки менеджер–бухгалтерия (админ по настройкам + администрация)."""
+    from app.services.telegram_cc import collect_telegram_cc_chat_ids
+
+    return {"chat_ids": collect_telegram_cc_chat_ids(db, route_manager_id)}
 
 
 @router.get("/internal/accountants")

@@ -84,6 +84,15 @@ def require_admin_or_financier(current_user=Depends(get_current_user)):
     return current_user
 
 
+def require_cash_flow_dds_input(current_user=Depends(get_current_user)):
+    """Справочники и создание строки ДДС: админ, финансист или любая администрация (страница «Ввод ДДС»)."""
+    if current_user.role in ("admin", "financier"):
+        return current_user
+    if current_user.role == "administration":
+        return current_user
+    raise HTTPException(status_code=403, detail="Доступ запрещён")
+
+
 def require_admin_or_accountant(current_user=Depends(get_current_user)):
     """CEO Dashboard и агрегированная аналитика — админ, бухгалтерия, финансист; не менеджеры."""
     if current_user.role not in ("admin", "accountant", "financier"):

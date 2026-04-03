@@ -1,4 +1,4 @@
-from pydantic import BaseModel, EmailStr, Field, BeforeValidator, field_validator
+from pydantic import BaseModel, EmailStr, Field, BeforeValidator, field_validator, model_validator
 from typing import Optional, List, Literal, Dict, Any, Annotated
 from datetime import datetime, date
 from decimal import Decimal
@@ -56,14 +56,18 @@ class UserBase(BaseModel):
     web_access: bool = True
     can_view_subscriptions: bool = False
     can_view_accesses: bool = False
+    can_enter_cash_flow: bool = False  # только administration: ввод ДДС без отчёта
     see_all_partners: bool = False
     payment_details: Optional[str] = None  # реквизиты выплат для сотрудников (freelance)
     multi_company_access: bool = False  # только employee: переключение компаний в кабинете
+    # только role=admin: копии Telegram (менеджер ↔ бухгалтерия)
+    admin_telegram_notify_all: bool = False
 
 
 class UserCreate(UserBase):
     password: str
     visible_manager_ids: Optional[List[int]] = None
+    admin_telegram_notify_manager_ids: Optional[List[int]] = None
 
 
 class UserUpdate(BaseModel):
@@ -77,11 +81,14 @@ class UserUpdate(BaseModel):
     web_access: Optional[bool] = None
     can_view_subscriptions: Optional[bool] = None
     can_view_accesses: Optional[bool] = None
+    can_enter_cash_flow: Optional[bool] = None
     see_all_partners: Optional[bool] = None
     password: Optional[str] = None
     visible_manager_ids: Optional[List[int]] = None
     payment_details: Optional[str] = None
     multi_company_access: Optional[bool] = None
+    admin_telegram_notify_all: Optional[bool] = None
+    admin_telegram_notify_manager_ids: Optional[List[int]] = None
 
 
 class AssignedPartnersBody(BaseModel):
@@ -96,6 +103,7 @@ class UserOut(UserBase):
     email: str
     last_login_at: Optional[datetime] = None
     visible_manager_ids: VisibleManagerIds = Field(default_factory=list)
+    admin_telegram_notify_manager_ids: VisibleManagerIds = Field(default_factory=list)
     payment_details_updated_at: Optional[datetime] = None
 
     class Config:
@@ -451,10 +459,26 @@ class PaymentMonthOut(BaseModel):
     confirmed_by: Optional[int] = None
     act_issued: bool = False
     act_issued_at: Optional[datetime] = None
+    received_payment_method: Optional[str] = None
     created_at: datetime
 
     class Config:
         from_attributes = True
+
+
+class PaymentMonthConfirmIn(BaseModel):
+    """Тело POST «Оплата прошла» по строке графика."""
+
+    received_payment_method: str = "transfer"
+    paid_at: Optional[datetime] = None
+
+    @field_validator("received_payment_method")
+    @classmethod
+    def _v_recv_pm(cls, v: str) -> str:
+        s = (v or "transfer").strip().lower()
+        if s not in ("transfer", "card", "cash"):
+            raise ValueError("Способ поступления: transfer | card | cash")
+        return s
 
 
 class PaymentUpdate(BaseModel):
@@ -476,6 +500,17 @@ class PaymentUpdate(BaseModel):
 
 class PaymentConfirm(BaseModel):
     postpone_days: Optional[int] = 0
+    received_payment_method: Optional[str] = None
+
+    @field_validator("received_payment_method")
+    @classmethod
+    def _v_pay_confirm_pm(cls, v: Optional[str]) -> Optional[str]:
+        if v is None or str(v).strip() == "":
+            return None
+        s = str(v).strip().lower()
+        if s not in ("transfer", "card", "cash"):
+            raise ValueError("Способ поступления: transfer | card | cash")
+        return s
 
 
 class PaymentOut(PaymentBase):
@@ -483,6 +518,7 @@ class PaymentOut(PaymentBase):
     status: str
     paid_at: Optional[datetime] = None
     confirmed_by: Optional[int] = None
+    received_payment_method: Optional[str] = None
     postponed_until: Optional[date] = None
     last_notified_at: Optional[datetime] = None
     is_archived: bool
@@ -598,6 +634,7 @@ class CashFlowTemplateLineUpdate(BaseModel):
 class CashFlowEntryOut(BaseModel):
     id: int
     period_month: str
+    entry_date: Optional[date] = None
     direction: str
     label: str
     amount_uzs: Decimal
@@ -615,7 +652,8 @@ class CashFlowEntryOut(BaseModel):
 
 
 class CashFlowEntryCreate(BaseModel):
-    period_month: str = Field(..., pattern=r"^\d{4}-\d{2}$")
+    period_month: Optional[str] = Field(default=None, pattern=r"^\d{4}-\d{2}$")
+    entry_date: Optional[date] = None
     direction: Literal["income", "expense"]
     label: str = Field(..., min_length=1, max_length=300)
     amount_uzs: Decimal = Decimal("0")
@@ -625,6 +663,12 @@ class CashFlowEntryCreate(BaseModel):
     recipient: Optional[str] = Field(None, max_length=120)
     payment_id: Optional[int] = None
     notes: Optional[str] = Field(None, max_length=500)
+
+    @model_validator(mode="after")
+    def _period_or_entry_date(self):
+        if self.entry_date is not None or (self.period_month and str(self.period_month).strip()):
+            return self
+        raise ValueError("Укажите месяц учёта (YYYY-MM) или дату операции")
 
     @field_validator("payment_method")
     @classmethod
@@ -674,6 +718,15 @@ class CashFlowPaymentOptionOut(BaseModel):
     partner_name: str
 
 
+class ProjectCostBreakdownPut(BaseModel):
+    """Разбивка себестоимости по статьям (UZS); сумма попадает в internal_cost_sum."""
+
+    cost_design_uzs: Decimal = Field(ge=Decimal("0"), default=Decimal("0"))
+    cost_dev_uzs: Decimal = Field(ge=Decimal("0"), default=Decimal("0"))
+    cost_other_uzs: Decimal = Field(ge=Decimal("0"), default=Decimal("0"))
+    cost_seo_uzs: Decimal = Field(ge=Decimal("0"), default=Decimal("0"))
+
+
 class ProjectCostRowOut(BaseModel):
     """Сводка по проекту для отчёта «Projects Cost»: синхронизировано с payments / payment_months."""
 
@@ -692,6 +745,10 @@ class ProjectCostRowOut(BaseModel):
     pm_name: Optional[str] = None
     project_start: date
     schedule_months: List[ProjectCostScheduleMonthOut] = []
+    cost_design_uzs: Decimal = Decimal("0")
+    cost_dev_uzs: Decimal = Decimal("0")
+    cost_other_uzs: Decimal = Decimal("0")
+    cost_seo_uzs: Decimal = Decimal("0")
     internal_cost_sum: Decimal = Decimal("0")
     profit_actual: Decimal
 
@@ -733,6 +790,25 @@ class ReceivedPaymentRowOut(BaseModel):
     line_description: Optional[str] = None
     confirmed_by_id: Optional[int] = None
     confirmed_by_name: Optional[str] = None
+    received_payment_method: Optional[str] = None
+
+
+class AvailableFundsOut(BaseModel):
+    period_month: str
+    on_account_uzs: Decimal
+    on_cards_uzs: Decimal
+    deposits_uzs: Decimal
+    from_payments_account_uzs: Decimal
+    from_payments_cards_uzs: Decimal
+    adjust_account_uzs: Decimal
+    adjust_cards_uzs: Decimal
+
+
+class AvailableFundsManualPut(BaseModel):
+    period_month: str = Field(..., pattern=r"^\d{4}-\d{2}$")
+    deposits_uzs: Decimal = Field(default=Decimal("0"), ge=Decimal("0"))
+    adjust_account_uzs: Decimal = Field(default=Decimal("0"), ge=Decimal("0"))
+    adjust_cards_uzs: Decimal = Field(default=Decimal("0"), ge=Decimal("0"))
 
 
 class CeoStats(BaseModel):
@@ -827,9 +903,11 @@ class TelegramJoinRequestOut(BaseModel):
 
 
 class TelegramJoinApprove(BaseModel):
-    role: str  # manager | accountant
+    role: str  # manager | accountant | administration
     name: str
     email: Optional[str] = None
+    link_user_id: Optional[int] = None  # привязать Chat ID к существующему пользователю
+    visible_manager_ids: Optional[List[int]] = None  # для новой administration
 
 
 class TelegramJoinInternalRequest(BaseModel):

@@ -81,27 +81,6 @@ function CopyBtn({ value }: { value?: string | null }) {
   )
 }
 
-function SecretValue({ value }: { value?: string | null }) {
-  const [hovered, setHovered] = useState(false)
-  if (!value?.trim()) return <span style={{ color: '#94a3b8' }}>—</span>
-  const hidden = '•'.repeat(Math.max(8, Math.min(16, value.length)))
-  return (
-    <span
-      onMouseEnter={() => setHovered(true)}
-      onMouseLeave={() => setHovered(false)}
-      title={hovered ? '' : 'Наведите курсор, чтобы показать'}
-      style={{
-        fontFamily: 'ui-monospace, SFMono-Regular, Menlo, monospace',
-        letterSpacing: hovered ? 0 : 1,
-        color: hovered ? '#1a1d23' : '#64748b',
-        userSelect: 'none',
-      }}
-    >
-      {hovered ? value : hidden}
-    </span>
-  )
-}
-
 function InfoField({
   label,
   value,
@@ -113,6 +92,11 @@ function InfoField({
   copy?: boolean
   secret?: boolean
 }) {
+  const [secretHovered, setSecretHovered] = useState(false)
+  const trimmed = value?.trim() || ''
+  const showSecret = !!secret && !!trimmed
+  const hiddenDots = '•'.repeat(Math.max(8, Math.min(16, trimmed.length)))
+
   return (
     <div
       style={{
@@ -122,11 +106,37 @@ function InfoField({
         borderRadius: 8,
         padding: '7px 8px',
         minHeight: 34,
+        display: 'flex',
+        flexWrap: 'wrap',
+        alignItems: 'center',
+        gap: '4px 6px',
       }}
+      onMouseEnter={showSecret ? () => setSecretHovered(true) : undefined}
+      onMouseLeave={showSecret ? () => setSecretHovered(false) : undefined}
+      title={showSecret && !secretHovered ? 'Наведите курсор, чтобы показать' : undefined}
     >
-      <span style={{ color: '#64748b', marginRight: 4 }}>{label}:</span>
-      {secret ? <SecretValue value={value} /> : <span>{value?.trim() || '—'}</span>}
-      {copy && <span style={{ marginLeft: 6 }}><CopyBtn value={value} /></span>}
+      <span style={{ color: '#64748b' }}>{label}:</span>
+      {secret ? (
+        trimmed ? (
+          <span
+            style={{
+              fontFamily: 'ui-monospace, SFMono-Regular, Menlo, monospace',
+              letterSpacing: 0,
+              color: secretHovered ? '#1a1d23' : '#64748b',
+              userSelect: 'none',
+              minWidth: 0,
+              wordBreak: 'break-all',
+            }}
+          >
+            {secretHovered ? trimmed : hiddenDots}
+          </span>
+        ) : (
+          <span style={{ color: '#94a3b8' }}>—</span>
+        )
+      ) : (
+        <span>{trimmed || '—'}</span>
+      )}
+      {copy && <CopyBtn value={value} />}
     </div>
   )
 }

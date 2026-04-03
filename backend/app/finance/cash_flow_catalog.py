@@ -17,6 +17,7 @@ EXPENSE_CATEGORY_LABELS: Dict[str, str] = {
     "fund_development": "Ф: развития, кризиса, прочность, обучение",
     "it_infra": "IT инфраструктура",
     "dividends": "Дивиденды",
+    "agasi_d": "Агаси Д (дивиденды)",
     "refund": "Возврат",
     "loss": "Утеря",
     "printing": "Распечатки и канцелярия",
@@ -41,7 +42,7 @@ def normalize_flow_category(slug: str | None) -> str:
 def expense_pl_bucket(slug: str | None) -> str:
     """
     Группа для строк P&L (ДДС расходы).
-    salary | office | accounting | marketing | taxes | personal_brand | publics | other
+    salary | office | accounting | marketing | taxes | personal_brand | publics | agasi_d | other
     """
     c = normalize_flow_category(slug)
     if c in ("salary", "зарплата"):
@@ -58,6 +59,8 @@ def expense_pl_bucket(slug: str | None) -> str:
         return "personal_brand"
     if c in ("publics", "паблики", "public"):
         return "publics"
+    if c in ("agasi_d", "agasi-d", "dividends", "dividend"):
+        return "agasi_d"
     return "other"
 
 

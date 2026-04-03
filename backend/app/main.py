@@ -30,6 +30,7 @@ import app.models.subscription_item  # noqa: F401
 import app.models.employee_payment_record  # noqa: F401
 import app.models.access_entry  # noqa: F401
 import app.models.cash_flow  # noqa: F401 — ДДС
+import app.models.available_funds_manual  # noqa: F401
 from app.core.config import settings
 from app.core.security import get_password_hash
 
@@ -298,6 +299,9 @@ def _migrate():
         "ALTER TABLE employee_tasks ADD COLUMN IF NOT EXISTS done_at TIMESTAMP WITH TIME ZONE",
         "ALTER TABLE users ADD COLUMN IF NOT EXISTS payment_details_updated_at TIMESTAMP WITH TIME ZONE",
         "ALTER TABLE users ADD COLUMN IF NOT EXISTS multi_company_access BOOLEAN NOT NULL DEFAULT FALSE",
+        "ALTER TABLE users ADD COLUMN IF NOT EXISTS admin_telegram_notify_all BOOLEAN NOT NULL DEFAULT FALSE",
+        "ALTER TABLE users ADD COLUMN IF NOT EXISTS admin_telegram_notify_manager_ids TEXT",
+        "ALTER TABLE users ADD COLUMN IF NOT EXISTS can_enter_cash_flow BOOLEAN NOT NULL DEFAULT FALSE",
         # Commissions table
         """CREATE TABLE IF NOT EXISTS commissions (
             id SERIAL PRIMARY KEY,
@@ -409,10 +413,26 @@ def _migrate():
             created_at TIMESTAMP WITH TIME ZONE DEFAULT now()
         )""",
         "CREATE INDEX IF NOT EXISTS ix_cash_flow_entries_period ON cash_flow_entries (period_month)",
+        "ALTER TABLE cash_flow_entries ADD COLUMN IF NOT EXISTS entry_date DATE",
         "ALTER TABLE payments ADD COLUMN IF NOT EXISTS trashed_at TIMESTAMP WITH TIME ZONE",
         "ALTER TABLE partners ADD COLUMN IF NOT EXISTS trashed_at TIMESTAMP WITH TIME ZONE",
         "CREATE INDEX IF NOT EXISTS ix_payments_trashed_at ON payments (trashed_at) WHERE trashed_at IS NOT NULL",
         "CREATE INDEX IF NOT EXISTS ix_partners_trashed_at ON partners (trashed_at) WHERE trashed_at IS NOT NULL",
+        "ALTER TABLE payment_months ADD COLUMN IF NOT EXISTS received_payment_method VARCHAR(20)",
+        "ALTER TABLE payments ADD COLUMN IF NOT EXISTS received_payment_method VARCHAR(20)",
+        "ALTER TABLE payments ADD COLUMN IF NOT EXISTS projects_cost_prime_uzs NUMERIC(15,2)",
+        "ALTER TABLE payments ADD COLUMN IF NOT EXISTS projects_cost_design_uzs NUMERIC(15,2) NOT NULL DEFAULT 0",
+        "ALTER TABLE payments ADD COLUMN IF NOT EXISTS projects_cost_dev_uzs NUMERIC(15,2) NOT NULL DEFAULT 0",
+        "ALTER TABLE payments ADD COLUMN IF NOT EXISTS projects_cost_other_uzs NUMERIC(15,2) NOT NULL DEFAULT 0",
+        "ALTER TABLE payments ADD COLUMN IF NOT EXISTS projects_cost_seo_uzs NUMERIC(15,2) NOT NULL DEFAULT 0",
+        "UPDATE payments SET projects_cost_other_uzs = COALESCE(projects_cost_other_uzs, 0) + COALESCE(projects_cost_prime_uzs, 0) WHERE projects_cost_prime_uzs IS NOT NULL",
+        "UPDATE payments SET projects_cost_prime_uzs = NULL",
+        """CREATE TABLE IF NOT EXISTS available_funds_manual (
+            period_month VARCHAR(7) PRIMARY KEY,
+            deposits_uzs NUMERIC(15,2) NOT NULL DEFAULT 0
+        )""",
+        "ALTER TABLE available_funds_manual ADD COLUMN IF NOT EXISTS adjust_account_uzs NUMERIC(15,2) NOT NULL DEFAULT 0",
+        "ALTER TABLE available_funds_manual ADD COLUMN IF NOT EXISTS adjust_cards_uzs NUMERIC(15,2) NOT NULL DEFAULT 0",
     ]
     for sql in migrations:
         # Защита от случайного удаления данных

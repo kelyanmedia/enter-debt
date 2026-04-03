@@ -5,11 +5,11 @@ from datetime import date, datetime
 from decimal import Decimal
 from typing import Dict, List, Optional
 
-from fastapi import APIRouter, Depends, Query
+from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy.orm import Session, joinedload
 
 from app.core.access import filter_payments_query
-from app.core.security import get_current_user
+from app.core.security import get_current_user, require_admin_or_financier
 from app.db.database import get_db
 from app.models.cash_flow import CashFlowEntry
 from app.models.employee_payment_record import EmployeePaymentRecord
@@ -21,6 +21,7 @@ from app.schemas.schemas import (
     PLCellOut,
     PLDataRowOut,
     PLReportOut,
+    ProjectCostBreakdownPut,
     ProjectCostRowOut,
     ProjectCostScheduleMonthOut,
 )
@@ -47,6 +48,93 @@ def _line_amount(pm: PaymentMonth, p: Payment) -> Decimal:
     return Decimal(str(p.amount))
 
 
+def _payment_to_project_cost_row(p: Payment) -> ProjectCostRowOut:
+    """Одна строка отчёта Projects Cost из загруженного Payment (partner + months)."""
+    months_sorted = sorted(p.months or [], key=lambda x: x.month)
+    sum_paid = Decimal("0")
+    schedule_items: List[ProjectCostScheduleMonthOut] = []
+    for pm in months_sorted:
+        amt = _line_amount(pm, p)
+        if pm.status == "paid":
+            sum_paid += amt
+        schedule_items.append(
+            ProjectCostScheduleMonthOut(
+                month=pm.month,
+                amount=amt,
+                status=pm.status,
+                due_date=pm.due_date,
+                paid_at=pm.paid_at,
+                description=pm.description,
+            )
+        )
+
+    if not months_sorted and p.status == "paid" and p.paid_at:
+        sum_paid = Decimal(str(p.amount))
+
+    rec = _is_recurring_billing(p)
+    unit = Decimal(str(p.amount))
+    contract_total: Decimal | None = None if rec else unit
+    paid_pct: Decimal | None = None
+    if not rec and contract_total is not None and contract_total > 0:
+        paid_pct = (sum_paid / contract_total * Decimal(100)).quantize(Decimal("0.01"))
+        if paid_pct > Decimal("100"):
+            paid_pct = Decimal("100")
+
+    started: date
+    if isinstance(p.created_at, datetime):
+        started = p.created_at.date()
+    else:
+        started = p.created_at  # type: ignore[assignment]
+
+    if months_sorted:
+        try:
+            y_s, m_s = months_sorted[0].month.split("-")
+            d0 = date(int(y_s), int(m_s), 1)
+            if d0 < started:
+                started = d0
+        except (ValueError, IndexError):
+            pass
+
+    pm_name = None
+    if p.partner and p.partner.manager:
+        pm_name = p.partner.manager.name
+
+    def _cz(attr: str) -> Decimal:
+        v = getattr(p, attr, None)
+        return Decimal(str(v)) if v is not None else Decimal("0")
+
+    c_des = _cz("projects_cost_design_uzs")
+    c_dev = _cz("projects_cost_dev_uzs")
+    c_oth = _cz("projects_cost_other_uzs")
+    c_seo = _cz("projects_cost_seo_uzs")
+    internal = (c_des + c_dev + c_oth + c_seo).quantize(Decimal("0.01"))
+    profit = (sum_paid - internal).quantize(Decimal("0.01"))
+
+    return ProjectCostRowOut(
+        payment_id=p.id,
+        partner_id=p.partner_id,
+        partner_name=(p.partner.name if p.partner else "") or "",
+        project_name=(p.description or "").strip(),
+        project_category=p.project_category,
+        payment_type=p.payment_type,
+        is_recurring_billing=rec,
+        amount_basis="monthly" if rec else "contract_total",
+        contract_total=contract_total,
+        billing_unit_amount=unit,
+        sum_paid_actual=sum_paid.quantize(Decimal("0.01")),
+        paid_percent=paid_pct,
+        pm_name=pm_name,
+        project_start=started,
+        schedule_months=schedule_items,
+        cost_design_uzs=c_des.quantize(Decimal("0.01")),
+        cost_dev_uzs=c_dev.quantize(Decimal("0.01")),
+        cost_other_uzs=c_oth.quantize(Decimal("0.01")),
+        cost_seo_uzs=c_seo.quantize(Decimal("0.01")),
+        internal_cost_sum=internal,
+        profit_actual=profit,
+    )
+
+
 @router.get("/projects-cost", response_model=List[ProjectCostRowOut])
 def projects_cost_report(
     db: Session = Depends(get_db),
@@ -68,89 +156,53 @@ def projects_cost_report(
     q = filter_payments_query(q, db, current_user)
     payments = q.all()
 
-    def sort_key(p: Payment) -> tuple:
-        cat = p.project_category or ""
-        return (_CATEGORY_SORT.get(cat, 99), (p.description or "").lower(), p.id)
+    def sort_key(pay: Payment) -> tuple:
+        cat = pay.project_category or ""
+        return (_CATEGORY_SORT.get(cat, 99), (pay.description or "").lower(), pay.id)
 
     payments_sorted = sorted(payments, key=sort_key)
-    out: List[ProjectCostRowOut] = []
+    return [_payment_to_project_cost_row(p) for p in payments_sorted]
 
-    for p in payments_sorted:
-        months_sorted = sorted(p.months or [], key=lambda x: x.month)
-        sum_paid = Decimal("0")
-        schedule_items: List[ProjectCostScheduleMonthOut] = []
-        for pm in months_sorted:
-            amt = _line_amount(pm, p)
-            if pm.status == "paid":
-                sum_paid += amt
-            schedule_items.append(
-                ProjectCostScheduleMonthOut(
-                    month=pm.month,
-                    amount=amt,
-                    status=pm.status,
-                    due_date=pm.due_date,
-                    paid_at=pm.paid_at,
-                    description=pm.description,
-                )
-            )
 
-        if not months_sorted and p.status == "paid" and p.paid_at:
-            sum_paid = Decimal(str(p.amount))
-
-        rec = _is_recurring_billing(p)
-        unit = Decimal(str(p.amount))
-        contract_total: Decimal | None = None if rec else unit
-        paid_pct: Decimal | None = None
-        if not rec and contract_total is not None and contract_total > 0:
-            paid_pct = (sum_paid / contract_total * Decimal(100)).quantize(Decimal("0.01"))
-            if paid_pct > Decimal("100"):
-                paid_pct = Decimal("100")
-
-        started: date
-        if isinstance(p.created_at, datetime):
-            started = p.created_at.date()
-        else:
-            started = p.created_at  # type: ignore[assignment]
-
-        if months_sorted:
-            try:
-                y_s, m_s = months_sorted[0].month.split("-")
-                d0 = date(int(y_s), int(m_s), 1)
-                if d0 < started:
-                    started = d0
-            except (ValueError, IndexError):
-                pass
-
-        pm_name = None
-        if p.partner and p.partner.manager:
-            pm_name = p.partner.manager.name
-
-        internal = Decimal("0")
-        profit = (sum_paid - internal).quantize(Decimal("0.01"))
-
-        out.append(
-            ProjectCostRowOut(
-                payment_id=p.id,
-                partner_id=p.partner_id,
-                partner_name=(p.partner.name if p.partner else "") or "",
-                project_name=(p.description or "").strip(),
-                project_category=p.project_category,
-                payment_type=p.payment_type,
-                is_recurring_billing=rec,
-                amount_basis="monthly" if rec else "contract_total",
-                contract_total=contract_total,
-                billing_unit_amount=unit,
-                sum_paid_actual=sum_paid.quantize(Decimal("0.01")),
-                paid_percent=paid_pct,
-                pm_name=pm_name,
-                project_start=started,
-                schedule_months=schedule_items,
-                internal_cost_sum=internal,
-                profit_actual=profit,
-            )
+@router.put("/projects-cost/{payment_id}/cost-breakdown", response_model=ProjectCostRowOut)
+def put_projects_cost_breakdown(
+    payment_id: int,
+    body: ProjectCostBreakdownPut,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(require_admin_or_financier),
+):
+    """Разбивка себестоимости (дизайн / разработка / прочее / SEO) — сумма в колонке «Себест.»."""
+    q = (
+        db.query(Payment)
+        .options(
+            joinedload(Payment.partner).joinedload(Partner.manager),
+            joinedload(Payment.months),
         )
-
-    return out
+        .filter(
+            Payment.id == payment_id,
+            Payment.is_archived == False,
+            Payment.trashed_at.is_(None),
+        )
+    )
+    q = filter_payments_query(q, db, current_user)
+    p = q.first()
+    if not p:
+        raise HTTPException(status_code=404, detail="Проект не найден")
+    p.projects_cost_design_uzs = body.cost_design_uzs
+    p.projects_cost_dev_uzs = body.cost_dev_uzs
+    p.projects_cost_other_uzs = body.cost_other_uzs
+    p.projects_cost_seo_uzs = body.cost_seo_uzs
+    db.commit()
+    p = (
+        db.query(Payment)
+        .options(
+            joinedload(Payment.partner).joinedload(Partner.manager),
+            joinedload(Payment.months),
+        )
+        .filter(Payment.id == payment_id)
+        .first()
+    )
+    return _payment_to_project_cost_row(p)
 
 
 _REV_CATEGORY_LABELS: Dict[str, str] = {
@@ -202,7 +254,8 @@ def pl_report(
 ):
     """
     P&L по месяцам: выручка — оплаты по графику проектов (категории) + приходы из ДДС;
-    расходы — команда + ДДС по статьям (зарплата, офис, бухгалтерия, паблики, налоги, личный бренд, маркетинг, прочее).
+    расходы — команда + ДДС по статьям (в т.ч. отдельная строка «Агаси Д» для дивидендов).
+    Итог: операционный результат без вывода Агаси Д; строка «Чистая прибыль» — только суммы категории Агаси Д/дивиденды из ДДС.
     """
     y = year if year is not None else date.today().year
     columns = [f"{y}-{str(m).zfill(2)}" for m in range(1, 13)]
@@ -251,6 +304,8 @@ def pl_report(
     cf_mkt_usd = [Decimal("0") for _ in range(n)]
     cf_oth_uzs = [Decimal("0") for _ in range(n)]
     cf_oth_usd = [Decimal("0") for _ in range(n)]
+    cf_agasi_uzs = [Decimal("0") for _ in range(n)]
+    cf_agasi_usd = [Decimal("0") for _ in range(n)]
 
     for e in (
         db.query(CashFlowEntry)
@@ -296,6 +351,9 @@ def pl_report(
         elif b == "marketing":
             cf_mkt_uzs[idx] += au
             cf_mkt_usd[idx] += ad
+        elif b == "agasi_d":
+            cf_agasi_uzs[idx] += au
+            cf_agasi_usd[idx] += ad
         else:
             cf_oth_uzs[idx] += au
             cf_oth_usd[idx] += ad
@@ -490,6 +548,22 @@ def pl_report(
 
     rows.append(
         PLDataRowOut(
+            row_id="exp_cf_agasi_d",
+            label="Агаси Д (дивиденды, ДДС)",
+            section="expenses_fixed",
+            is_calculated=False,
+            cells=[
+                PLCellOut(
+                    uzs=cf_agasi_uzs[i].quantize(Decimal("0.01")),
+                    usd=cf_agasi_usd[i].quantize(Decimal("0.01")),
+                )
+                for i in range(n)
+            ],
+        )
+    )
+
+    rows.append(
+        PLDataRowOut(
             row_id="exp_cf_other",
             label="Прочие расходы (ДДС)",
             section="expenses_fixed",
@@ -512,6 +586,7 @@ def pl_report(
         + cf_tax_uzs[i]
         + cf_pb_uzs[i]
         + cf_mkt_uzs[i]
+        + cf_agasi_uzs[i]
         + cf_oth_uzs[i]
         for i in range(n)
     ]
@@ -523,6 +598,7 @@ def pl_report(
         + cf_tax_usd[i]
         + cf_pb_usd[i]
         + cf_mkt_usd[i]
+        + cf_agasi_usd[i]
         + cf_oth_usd[i]
         for i in range(n)
     ]
@@ -543,19 +619,37 @@ def pl_report(
         )
     )
 
-    net_uzs = [grand_rev_uzs[i] - exp_total_uzs[i] for i in range(n)]
-    net_usd = [grand_rev_usd[i] - exp_total_usd[i] for i in range(n)]
+    exp_operating_uzs = [exp_total_uzs[i] - cf_agasi_uzs[i] for i in range(n)]
+    exp_operating_usd = [exp_total_usd[i] - cf_agasi_usd[i] for i in range(n)]
+    operating_uzs = [grand_rev_uzs[i] - exp_operating_uzs[i] for i in range(n)]
+    operating_usd = [grand_rev_usd[i] - exp_operating_usd[i] for i in range(n)]
 
     rows.append(
         PLDataRowOut(
-            row_id="net_profit",
-            label="Чистая прибыль (выручка − расходы)",
+            row_id="operating_profit",
+            label="Операционный результат (выручка − расходы без Агаси Д)",
             section="summary",
             is_calculated=True,
             cells=[
                 PLCellOut(
-                    uzs=net_uzs[i].quantize(Decimal("0.01")),
-                    usd=net_usd[i].quantize(Decimal("0.01")),
+                    uzs=operating_uzs[i].quantize(Decimal("0.01")),
+                    usd=operating_usd[i].quantize(Decimal("0.01")),
+                )
+                for i in range(n)
+            ],
+        )
+    )
+
+    rows.append(
+        PLDataRowOut(
+            row_id="net_profit",
+            label="Чистая прибыль (Агаси Д — суммы из ДДС)",
+            section="summary",
+            is_calculated=True,
+            cells=[
+                PLCellOut(
+                    uzs=cf_agasi_uzs[i].quantize(Decimal("0.01")),
+                    usd=cf_agasi_usd[i].quantize(Decimal("0.01")),
                 )
                 for i in range(n)
             ],
