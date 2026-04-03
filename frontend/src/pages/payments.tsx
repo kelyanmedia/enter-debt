@@ -109,6 +109,16 @@ const textareaStyle: CSSProperties = {
 const MONTHS_RU = ['Январь','Февраль','Март','Апрель','Май','Июнь',
                    'Июль','Август','Сентябрь','Октябрь','Ноябрь','Декабрь']
 
+/** Совпадает с опциями фильтра «Все линии» (query ?category=). */
+const PAYMENTS_CATEGORY_QUERY_VALUES = new Set([
+  'web',
+  'seo',
+  'ppc',
+  'mobile_app',
+  'tech_support',
+  'hosting_domain',
+])
+
 function monthLabel(ym: string) {
   const [y, m] = ym.split('-')
   return `${MONTHS_RU[parseInt(m) - 1]} ${y}`
@@ -292,8 +302,11 @@ export default function PaymentsPage() {
     if (!router.isReady) return
     const raw = router.query.category
     const c = Array.isArray(raw) ? raw[0] : raw
-    if (typeof c === 'string' && ['web', 'seo', 'ppc'].includes(c)) setFilterCategory(c)
-    else if (!c) setFilterCategory('')
+    if (typeof c === 'string' && PAYMENTS_CATEGORY_QUERY_VALUES.has(c)) {
+      setFilterCategory(c)
+    } else if (!c) {
+      setFilterCategory('')
+    }
   }, [router.isReady, router.query.category])
 
   const setCategoryFilter = (v: string) => {

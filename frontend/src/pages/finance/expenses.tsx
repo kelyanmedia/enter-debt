@@ -15,6 +15,8 @@ interface PayrollExpenseRow {
   period_year?: number | null
   period_month?: number | null
   amount: string
+  budget_amount?: string
+  operating_amount: string
   currency: string
   note?: string | null
   has_receipt: boolean
@@ -117,7 +119,7 @@ export default function FinanceExpensesPage() {
     let uzs = 0
     let usd = 0
     for (const r of list) {
-      const n = Number(r.amount)
+      const n = Number(r.operating_amount)
       if (!Number.isFinite(n)) continue
       if (r.currency === 'UZS') uzs += n
       else usd += n
@@ -129,7 +131,7 @@ export default function FinanceExpensesPage() {
     let uzs = 0
     let usd = 0
     for (const r of rows) {
-      const n = Number(r.amount)
+      const n = Number(r.operating_amount)
       if (!Number.isFinite(n)) continue
       if (r.currency === 'UZS') uzs += n
       else usd += n
@@ -154,12 +156,12 @@ export default function FinanceExpensesPage() {
     <Layout>
       <PageHeader
         title="Расходы"
-        subtitle="Выплаты сотрудникам, которые администратор вносит в «Команда» → «История выплат» → «Запись о выплате». Учёт только в БД текущей компании."
+        subtitle="Выплаты из «Команда» → «История выплат». Здесь только строки администратора. В итогах и в P&L учитывается сумма перевода минус «бюджет клиента» (проходные средства). USD в P&L переводятся в сумы по курсу ДДС за месяц колонки."
       />
       <div style={{ padding: '22px 24px', display: 'flex', flexDirection: 'column', gap: 16 }}>
         <div style={{ fontSize: 13, color: '#64748b', lineHeight: 1.5 }}>
-          Источник данных — те же записи, что в кабинете сотрудника; сюда попадают только строки, созданные админом (
-          не самостоятельные отметки сотрудника). Редактирование — в разделе{' '}
+          Источник — записи из «Команда»; сюда только строки админа. Колонка «В расходах» — то, что идёт в P&L (перевод − бюджет).
+          Редактирование — в разделе{' '}
           <Link href="/staff" style={{ color: '#1a6b3c', fontWeight: 600 }}>
             Команда
           </Link>
@@ -169,7 +171,7 @@ export default function FinanceExpensesPage() {
 
         <Card style={{ padding: '16px 18px' }}>
           <div style={{ display: 'flex', flexWrap: 'wrap', alignItems: 'center', gap: 12, marginBottom: 14 }}>
-            <span style={{ fontSize: 13, fontWeight: 700, color: '#1a1d23' }}>Итого по списку</span>
+            <span style={{ fontSize: 13, fontWeight: 700, color: '#1a1d23' }}>Итого в расходах (к P&L)</span>
             {totals.uzs > 0 && (
               <span style={{ fontSize: 14, fontWeight: 700, color: '#166534' }}>
                 {formatMoneyNumber(totals.uzs)} UZS
@@ -297,7 +299,8 @@ export default function FinanceExpensesPage() {
                             <tr style={{ background: '#f8fafc' }}>
                               <Th>Дата выплаты</Th>
                               <Th>Сотрудник</Th>
-                              <Th>Сумма</Th>
+                              <Th>В расходах</Th>
+                              <Th>Перевод всего</Th>
                               <Th>Период задач</Th>
                               <Th>Комментарий</Th>
                             </tr>
@@ -307,8 +310,16 @@ export default function FinanceExpensesPage() {
                               <tr key={r.id} style={{ borderBottom: '1px solid #eef2f7' }}>
                                 <Td style={{ fontWeight: 600, whiteSpace: 'nowrap' }}>{formatPaymentDate(r.paid_on)}</Td>
                                 <Td style={{ fontWeight: 600 }}>{r.employee_name}</Td>
-                                <Td>
-                                  {formatMoneyNumber(Number(r.amount))} {r.currency}
+                                <Td style={{ fontWeight: 700 }}>
+                                  {formatMoneyNumber(Number(r.operating_amount))} {r.currency}
+                                </Td>
+                                <Td style={{ lineHeight: 1.35 }}>
+                                  <div>{formatMoneyNumber(Number(r.amount))} {r.currency}</div>
+                                  {Number(r.budget_amount ?? 0) > 0 && (
+                                    <div style={{ fontSize: 11, color: '#64748b', marginTop: 4 }}>
+                                      бюджет: {formatMoneyNumber(Number(r.budget_amount))} {r.currency}
+                                    </div>
+                                  )}
                                 </Td>
                                 <Td>{periodLabel(r.period_year, r.period_month)}</Td>
                                 <Td style={{ color: '#64748b', fontSize: 13 }}>{r.note?.trim() || '—'}</Td>

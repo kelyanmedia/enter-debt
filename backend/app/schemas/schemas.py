@@ -118,6 +118,10 @@ class EmployeeTaskBase(BaseModel):
     task_url: Optional[str] = Field(None, max_length=800)
     hours: Optional[Decimal] = None
     amount: Optional[Decimal] = None
+    budget_amount: Optional[Decimal] = Field(
+        None,
+        description="Проходной бюджет клиента (та же валюта, что у суммы); не расход компании при учёте в P&L",
+    )
     currency: str = Field(default="USD", max_length=3)
     status: str = Field(default="not_started", max_length=30)
     paid: bool = False
@@ -139,6 +143,7 @@ class EmployeeTaskUpdate(BaseModel):
     task_url: Optional[str] = Field(None, max_length=800)
     hours: Optional[Decimal] = None
     amount: Optional[Decimal] = None
+    budget_amount: Optional[Decimal] = None
     currency: Optional[str] = Field(None, max_length=3)
     status: Optional[str] = Field(None, max_length=30)
     paid: Optional[bool] = None
@@ -164,6 +169,7 @@ class EmployeePaymentRecordOut(BaseModel):
     period_year: Optional[int] = None
     period_month: Optional[int] = None
     amount: Decimal
+    budget_amount: Decimal = Decimal("0")
     currency: str
     note: Optional[str] = None
     has_receipt: bool
@@ -181,6 +187,11 @@ class EmployeePayrollExpenseOut(BaseModel):
     period_year: Optional[int] = None
     period_month: Optional[int] = None
     amount: Decimal
+    budget_amount: Decimal = Decimal("0")
+    operating_amount: Decimal = Field(
+        ...,
+        description="Сумма, учитываемая как расход / в P&L (amount − budget_amount)",
+    )
     currency: str
     note: Optional[str] = None
     has_receipt: bool
@@ -203,6 +214,8 @@ class StaffMonthTotalsOut(BaseModel):
     total_usd: Decimal
     total_uzs: Decimal
     total_hours: Decimal
+    total_budget_usd: Decimal = Decimal("0")
+    total_budget_uzs: Decimal = Decimal("0")
 
 
 class StaffPendingPaymentMonthOut(BaseModel):
@@ -213,6 +226,8 @@ class StaffPendingPaymentMonthOut(BaseModel):
     total_uzs: Decimal
     total_hours: Decimal
     task_count: int
+    total_budget_usd: Decimal = Decimal("0")
+    total_budget_uzs: Decimal = Decimal("0")
 
 
 AccessEntryCategory = Literal["email", "telegram", "device", "service"]
@@ -764,6 +779,7 @@ class ProjectCostRowOut(BaseModel):
     cost_seo_uzs: Decimal = Decimal("0")
     internal_cost_sum: Decimal = Decimal("0")
     profit_actual: Decimal
+    manager_commission_percent: Optional[Decimal] = None  # % из привязанной записи «Комиссия»
 
 
 # ── DASHBOARD ─────────────────────────────────────────────────────────────────
@@ -945,10 +961,17 @@ class CommissionBase(BaseModel):
     commission_paid_full: bool = False
     project_date: date
     note: Optional[str] = None
+    payment_id: Optional[int] = None          # привязка к проекту в «Проекты»
 
 
 class CommissionCreate(CommissionBase):
     manager_id: Optional[int] = None           # admin may override
+    duplicate_months: int = Field(
+        0,
+        ge=0,
+        le=36,
+        description="Сколько раз продублировать карточку на следующие месяцы (та же сумма и %): 0 — только одна запись",
+    )
 
 
 class CommissionUpdate(BaseModel):
@@ -964,6 +987,7 @@ class CommissionUpdate(BaseModel):
     project_date: Optional[date] = None
     note: Optional[str] = None
     manager_id: Optional[int] = None
+    payment_id: Optional[int] = None
 
 
 class CommissionOut(CommissionBase):
@@ -971,6 +995,8 @@ class CommissionOut(CommissionBase):
     manager_id: int
     manager: Optional["UserOut"] = None
     created_at: datetime
+    linked_payment_description: Optional[str] = None
+    linked_partner_name: Optional[str] = None
     # Computed fields (filled in route)
     profit: Decimal = Decimal(0)
     total_manager_income: Decimal = Decimal(0)
@@ -979,6 +1005,14 @@ class CommissionOut(CommissionBase):
 
     class Config:
         from_attributes = True
+
+
+class CommissionLinkablePaymentOut(BaseModel):
+    """Проекты из «Проекты», доступные для привязки комиссии к менеджеру."""
+
+    id: int
+    description: str
+    partner_name: str
 
 
 class CommissionStatsOut(BaseModel):

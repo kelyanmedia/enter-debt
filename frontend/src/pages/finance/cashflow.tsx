@@ -77,6 +77,18 @@ const DEFAULT_GROUP_LABELS: Record<string, string> = {
   monthly_admin: 'Административные',
 }
 
+/** Курс USD→UZS в полях ввода: целые без «.0000», дробные — без хвостовых нулей */
+function plFxRateInputDisplay(v: string | number | null | undefined): string {
+  if (v == null || v === '') return '0'
+  const normalized = String(v).trim().replace(/\s/g, '').replace(',', '.')
+  if (normalized === '') return '0'
+  const n = Number(normalized)
+  if (!Number.isFinite(n)) return String(v).trim()
+  const intVal = Math.round(n)
+  if (Math.abs(n - intVal) < 1e-6) return String(intVal)
+  return normalized.replace(/(\.\d*?)0+$/, '$1').replace(/\.$/, '')
+}
+
 function IconEye() {
   return (
     <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" aria-hidden>
@@ -262,7 +274,7 @@ export default function FinanceCashflowPage() {
     if (!availableFunds || availableFunds.period_month !== ym) return
     const rx =
       availableFunds.usd_to_uzs_rate != null && availableFunds.usd_to_uzs_rate !== ''
-        ? String(availableFunds.usd_to_uzs_rate)
+        ? plFxRateInputDisplay(availableFunds.usd_to_uzs_rate)
         : '0'
     setFxRateDraft(rx)
   }, [availableFunds, ym])
@@ -299,7 +311,7 @@ export default function FinanceCashflowPage() {
 
   const openAfEditModal = useCallback(() => {
     const d = availableFunds
-    const rx = d?.usd_to_uzs_rate != null && d.usd_to_uzs_rate !== '' ? String(d.usd_to_uzs_rate) : '0'
+    const rx = d?.usd_to_uzs_rate != null && d.usd_to_uzs_rate !== '' ? plFxRateInputDisplay(d.usd_to_uzs_rate) : '0'
     setAfEditForm({
       deposits: String(Number(d?.deposits_uzs) || 0),
       adjust_account: String(Number(d?.adjust_account_uzs) || 0),
@@ -321,7 +333,9 @@ export default function FinanceCashflowPage() {
       })
       setAvailableFunds(r.data)
       setFxRateDraft(
-        r.data.usd_to_uzs_rate != null && r.data.usd_to_uzs_rate !== '' ? String(r.data.usd_to_uzs_rate) : '0',
+        r.data.usd_to_uzs_rate != null && r.data.usd_to_uzs_rate !== ''
+          ? plFxRateInputDisplay(r.data.usd_to_uzs_rate)
+          : '0',
       )
       setAfEditOpen(false)
     } catch {
@@ -344,7 +358,9 @@ export default function FinanceCashflowPage() {
       })
       setAvailableFunds(r.data)
       setFxRateDraft(
-        r.data.usd_to_uzs_rate != null && r.data.usd_to_uzs_rate !== '' ? String(r.data.usd_to_uzs_rate) : '0',
+        r.data.usd_to_uzs_rate != null && r.data.usd_to_uzs_rate !== ''
+          ? plFxRateInputDisplay(r.data.usd_to_uzs_rate)
+          : '0',
       )
     } catch {
       /* quiet */

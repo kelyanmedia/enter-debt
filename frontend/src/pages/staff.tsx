@@ -46,6 +46,7 @@ interface TaskRow {
   task_url?: string | null
   hours?: string | null
   amount?: string | null
+  budget_amount?: string | null
   currency: string
   status: string
   paid?: boolean
@@ -59,6 +60,8 @@ interface MonthTotals {
   total_usd: string
   total_uzs: string
   total_hours: string
+  total_budget_usd?: string
+  total_budget_uzs?: string
 }
 
 interface PendingPaymentMonth {
@@ -69,6 +72,8 @@ interface PendingPaymentMonth {
   total_uzs: string
   total_hours: string
   task_count: number
+  total_budget_usd?: string
+  total_budget_uzs?: string
 }
 
 const MONTH_OPTIONS = [
@@ -198,6 +203,8 @@ export default function StaffPage() {
     task_url: '',
     hours: '',
     amount: '',
+    budget_amount: '',
+    include_budget: false,
     currency: 'USD',
     status: 'in_progress',
   })
@@ -264,10 +271,15 @@ export default function StaffPage() {
           if (t.paid) return acc
           const h = num(t.hours)
           const a = num(t.amount)
+          const b = num(t.budget_amount)
           if (h != null) acc.h += h
           if (a != null) {
             if (t.currency === 'UZS') acc.uzs += a
             else acc.usd += a
+          }
+          if (b != null && b > 0) {
+            if (t.currency === 'UZS') acc.uzs += b
+            else acc.usd += b
           }
           return acc
         },
@@ -310,6 +322,8 @@ export default function StaffPage() {
       task_url: '',
       hours: '',
       amount: '',
+      budget_amount: '',
+      include_budget: false,
       currency: 'UZS',
       status: 'in_progress',
     })
@@ -326,6 +340,8 @@ export default function StaffPage() {
       task_url: t.task_url || '',
       hours: t.hours != null ? String(t.hours) : '',
       amount: t.amount != null ? String(t.amount) : '',
+      budget_amount: t.budget_amount != null ? String(t.budget_amount) : '',
+      include_budget: num(t.budget_amount) != null && (num(t.budget_amount) as number) > 0,
       currency: t.currency || 'USD',
       status: t.status,
     })
@@ -333,8 +349,13 @@ export default function StaffPage() {
 
   const saveEdit = async () => {
     if (!editTask) return
-    setSaving(true)
     setTaskFormError('')
+    const b = form.include_budget ? parseNum(form.budget_amount) : null
+    if (form.include_budget && (b == null || b <= 0)) {
+      setTaskFormError('Укажите сумму бюджета больше нуля или снимите галочку «Бюджет»')
+      return
+    }
+    setSaving(true)
     try {
       await api.patch(`employee-tasks/${editTask.id}`, {
         work_date: form.work_date,
@@ -343,6 +364,7 @@ export default function StaffPage() {
         task_url: form.task_url.trim() || null,
         hours: parseNum(form.hours),
         amount: parseNum(form.amount),
+        budget_amount: form.include_budget ? b : null,
         currency: form.currency,
         status: form.status,
       })
@@ -365,6 +387,11 @@ export default function StaffPage() {
       setTaskFormError('Укажите проект и описание задачи')
       return
     }
+    const b = form.include_budget ? parseNum(form.budget_amount) : null
+    if (form.include_budget && (b == null || b <= 0)) {
+      setTaskFormError('Укажите сумму бюджета больше нуля или снимите галочку «Бюджет»')
+      return
+    }
     setSaving(true)
     try {
       await api.post('employee-tasks', {
@@ -375,6 +402,7 @@ export default function StaffPage() {
         task_url: form.task_url.trim() || null,
         hours: parseNum(form.hours),
         amount: parseNum(form.amount),
+        budget_amount: form.include_budget ? b : null,
         currency: form.currency,
         status: form.status,
       })
@@ -480,12 +508,23 @@ export default function StaffPage() {
         project: t.project_name,
         task: t.task_description,
         hours: num(t.hours) != null ? String(num(t.hours)) : '—',
-        amount:
-          num(t.amount) != null
-            ? t.currency === 'UZS'
-              ? `${formatMoneyNumber(Number(t.amount))} сум`
-              : `$${formatMoneyNumber(Number(t.amount))}`
-            : '—',
+        amount: (() => {
+          const a = num(t.amount)
+          const bud = num(t.budget_amount)
+          if (a == null && !(bud != null && bud > 0)) return '—'
+          const bits: string[] = []
+          if (a != null) {
+            bits.push(t.currency === 'UZS' ? `${formatMoneyNumber(a)} сум` : `$${formatMoneyNumber(a)}`)
+          }
+          if (bud != null && bud > 0) {
+            bits.push(
+              t.currency === 'UZS'
+                ? `+ ${formatMoneyNumber(bud)} сум бюджет`
+                : `+ $${formatMoneyNumber(bud)} бюджет`,
+            )
+          }
+          return bits.join('\n')
+        })(),
         status: taskStatusRu(t.status),
         paid: !!t.paid,
       })),
@@ -541,7 +580,10 @@ export default function StaffPage() {
 
   return (
     <Layout>
-      <PageHeader title="Команда" subtitle="Сотрудники: задачи по месяцам и отдельно — история выплат" />
+      <PageHeader
+        title="Команда"
+        subtitle="Задачи и выплаты. Поле «бюджет» — деньги, которые вы переводите, но не учитываются в P&L и в «Расходах» (укажите ту же долю при записи выплаты в истории)."
+      />
       <div style={{ padding: '22px 24px', overflow: 'auto', flex: 1, display: 'flex', flexDirection: 'column', gap: 0, minHeight: 0 }}>
         <div
           style={{
@@ -805,6 +847,20 @@ export default function StaffPage() {
                       : `${totals ? formatMoneyNumber(Number(totals.total_uzs)) : '0'} сум`}
                   </div>
                   <div style={{ fontSize: 12, color: '#94a3b8', marginTop: 4 }}>{totals?.label || '—'}</div>
+                  {totals &&
+                    summaryCurrency === 'UZS' &&
+                    Number(totals.total_budget_uzs ?? 0) > 0 && (
+                      <div style={{ fontSize: 11, color: '#64748b', marginTop: 8, lineHeight: 1.4 }}>
+                        В т.ч. бюджет клиента (не в P&L): {formatMoneyNumber(Number(totals.total_budget_uzs))} сум
+                      </div>
+                    )}
+                  {totals &&
+                    summaryCurrency === 'USD' &&
+                    Number(totals.total_budget_usd ?? 0) > 0 && (
+                      <div style={{ fontSize: 11, color: '#64748b', marginTop: 8, lineHeight: 1.4 }}>
+                        В т.ч. бюджет клиента (не в P&L): ${formatMoneyNumber(Number(totals.total_budget_usd))}
+                      </div>
+                    )}
                   {totals && summaryCurrency === 'UZS' && Number(totals.total_usd) > 0 && (
                     <div style={{ fontSize: 11, color: '#94a3b8', marginTop: 8, lineHeight: 1.4 }}>
                       Также в USD: ${formatMoneyNumber(Number(totals.total_usd))}
@@ -914,12 +970,36 @@ export default function StaffPage() {
                             )}
                           </Td>
                           <Td style={{ fontSize: 13, ...cellStrike }}>{num(t.hours) != null ? num(t.hours) : '—'}</Td>
-                          <Td style={{ fontSize: 13, fontWeight: 600, ...cellStrike }}>
-                            {num(t.amount) != null
-                              ? t.currency === 'UZS'
-                                ? `${formatMoneyNumber(Number(t.amount))} сум`
-                                : `$${formatMoneyNumber(Number(t.amount))}`
-                              : '—'}
+                          <Td style={{ fontSize: 13, fontWeight: 600, ...cellStrike, whiteSpace: 'pre-line', lineHeight: 1.35 }}>
+                            {(() => {
+                              const a = num(t.amount)
+                              const bud = num(t.budget_amount)
+                              if (a == null && !(bud != null && bud > 0)) return '—'
+                              const lines: ReactNode[] = []
+                              if (a != null) {
+                                lines.push(
+                                  <span key="w">
+                                    {t.currency === 'UZS'
+                                      ? `${formatMoneyNumber(a)} сум`
+                                      : `$${formatMoneyNumber(a)}`}
+                                  </span>,
+                                )
+                              }
+                              if (bud != null && bud > 0) {
+                                lines.push(
+                                  <span key="b" style={{ fontSize: 12, fontWeight: 600, color: strike ? '#94a3b8' : '#64748b' }}>
+                                    {t.currency === 'UZS'
+                                      ? `+ ${formatMoneyNumber(bud)} сум бюджет`
+                                      : `+ $${formatMoneyNumber(bud)} бюджет`}
+                                  </span>,
+                                )
+                              }
+                              return (
+                                <span style={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
+                                  {lines}
+                                </span>
+                              )
+                            })()}
                           </Td>
                           <Td style={{ verticalAlign: 'middle' }}>
                             <div
@@ -1225,7 +1305,7 @@ export default function StaffPage() {
           <Field label="Часы">
             <MoneyInput value={form.hours} onChange={v => setForm(f => ({ ...f, hours: v }))} placeholder="—" />
           </Field>
-          <Field label="Сумма">
+          <Field label="Сумма (работа)">
             <MoneyInput value={form.amount} onChange={v => setForm(f => ({ ...f, amount: v }))} placeholder="—" />
           </Field>
           <Field label="Валюта">
@@ -1235,6 +1315,39 @@ export default function StaffPage() {
             </Select>
           </Field>
         </div>
+        <label
+          style={{
+            display: 'flex',
+            alignItems: 'center',
+            gap: 10,
+            marginBottom: form.include_budget ? 10 : 14,
+            cursor: 'pointer',
+            fontSize: 13,
+            color: '#334155',
+          }}
+        >
+          <input
+            type="checkbox"
+            checked={form.include_budget}
+            onChange={e =>
+              setForm(f => ({
+                ...f,
+                include_budget: e.target.checked,
+                budget_amount: e.target.checked ? f.budget_amount : '',
+              }))
+            }
+          />
+          <span>Бюджет клиента (проходные средства, не расход компании в P&L)</span>
+        </label>
+        {form.include_budget && (
+          <Field label="Сумма бюджета (та же валюта)">
+            <MoneyInput
+              value={form.budget_amount}
+              onChange={v => setForm(f => ({ ...f, budget_amount: v }))}
+              placeholder="0"
+            />
+          </Field>
+        )}
         <Field label="Статус">
           <Select value={form.status} onChange={e => setForm(f => ({ ...f, status: e.target.value }))}>
             <option value="not_started">Не начато</option>

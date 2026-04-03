@@ -16,6 +16,8 @@ class EmployeePaymentRecord(Base):
     period_year = Column(Integer, nullable=True)
     period_month = Column(Integer, nullable=True)
     amount = Column(Numeric(15, 2), nullable=False)
+    # Часть перевода — бюджет клиента; не учитывается в P&L и в «расходах» как зарплатный фонд
+    budget_amount = Column(Numeric(15, 2), nullable=False, default=0)
     currency = Column(String(3), nullable=False, default="USD")
     note = Column(Text, nullable=True)
     receipt_path = Column(String(500), nullable=True)

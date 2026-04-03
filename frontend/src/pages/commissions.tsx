@@ -1,14 +1,17 @@
 import { useEffect, useState, useCallback } from 'react'
+import { useRouter } from 'next/router'
 import { useAuth } from '@/context/AuthContext'
 import Layout from '@/components/Layout'
 import {
   PageHeader, Card, Th, Td, BtnPrimary, BtnOutline, BtnIconEdit, Modal,
-  ConfirmModal, Field, Input, Select, Empty, StatCard, formatMoneyNumber, MoneyInput,
+  ConfirmModal, Field, Input, Select, Empty, formatMoneyNumber, MoneyInput,
 } from '@/components/ui'
 import api from '@/lib/api'
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 interface Manager { id: number; name: string }
+
+interface LinkablePayment { id: number; description: string; partner_name: string }
 
 interface Commission {
   id: number
@@ -24,6 +27,9 @@ interface Commission {
   project_date: string
   note: string | null
   manager_id: number
+  payment_id?: number | null
+  linked_payment_description?: string | null
+  linked_partner_name?: string | null
   manager?: Manager
   // computed
   profit: number
@@ -65,6 +71,8 @@ const EMPTY_FORM = {
   project_date: new Date().toISOString().slice(0, 10),
   note: '',
   manager_id: '',
+  payment_id: '',
+  duplicate_months: '0',
 }
 
 function typeBadge(t: string) {
@@ -159,10 +167,11 @@ function CalcPreview({ form }: { form: typeof EMPTY_FORM }) {
 
 // ── Page ──────────────────────────────────────────────────────────────────────
 export default function CommissionsPage() {
+  const router = useRouter()
   const { user } = useAuth()
   const isAdmin = user?.role === 'admin' || user?.role === 'accountant'
-  /** Колонка «Менеджер», фильтр и выбор в форме — для админа, бухгалтерии и администрации (по списку менеджеров). */
-  const showManagerScope = isAdmin || user?.role === 'administration'
+  /** Колонка «Менеджер», фильтр и выбор в форме — для админа и бухгалтерии. */
+  const showManagerScope = isAdmin
 
   const curYear  = new Date().getFullYear()
   const curMonth = new Date().getMonth() + 1
@@ -183,6 +192,13 @@ export default function CommissionsPage() {
   const [formError, setFormError] = useState('')
 
   const [deleteId, setDeleteId] = useState<number | null>(null)
+  const [linkablePayments, setLinkablePayments] = useState<LinkablePayment[]>([])
+
+  const effectiveManagerIdForLink = (): number | null => {
+    if (user?.role === 'manager') return user.id
+    if (showManagerScope && form.manager_id) return parseInt(form.manager_id, 10)
+    return null
+  }
 
   // ── Fetch ──────────────────────────────────────────────────────────────────
   const load = useCallback(async () => {
@@ -205,11 +221,15 @@ export default function CommissionsPage() {
 
   useEffect(() => {
     if (!user) return
+    if (user.role === 'administration') {
+      void router.replace('/')
+      return
+    }
     load()
-  }, [load, user])
+  }, [load, user, router])
 
   useEffect(() => {
-    if (!user) return
+    if (!user || user.role === 'administration') return
     if (user.role === 'admin' || user.role === 'accountant') {
       api
         .get('users')
@@ -217,25 +237,29 @@ export default function CommissionsPage() {
           setManagers(r.data.filter((u: Manager & { role: string }) => u.role === 'manager')),
         )
         .catch(() => setManagers([]))
-    } else if (user.role === 'administration') {
-      api
-        .get<Manager[]>('users/managers-for-select')
-        .then((r) => setManagers(r.data || []))
-        .catch(() => setManagers([]))
     } else {
       setManagers([])
     }
   }, [user])
 
+  useEffect(() => {
+    if (!modalOpen) return
+    const mid = effectiveManagerIdForLink()
+    if (mid == null || !Number.isFinite(mid)) {
+      setLinkablePayments([])
+      return
+    }
+    const params = user?.role === 'manager' ? {} : { manager_id: mid }
+    api
+      .get<LinkablePayment[]>('commissions/linkable-payments', { params })
+      .then((r) => setLinkablePayments(r.data || []))
+      .catch(() => setLinkablePayments([]))
+  }, [modalOpen, form.manager_id, user?.role, user?.id])
+
   // ── Modal helpers ──────────────────────────────────────────────────────────
   function openAdd() {
     setEditItem(null)
-    const defaultMgr =
-      user?.role === 'manager'
-        ? String(user.id)
-        : user?.role === 'administration' && managers.length === 1
-          ? String(managers[0].id)
-          : ''
+    const defaultMgr = user?.role === 'manager' ? String(user.id) : ''
     setForm({ ...EMPTY_FORM, manager_id: defaultMgr })
     setFormError('')
     setModalOpen(true)
@@ -257,6 +281,8 @@ export default function CommissionsPage() {
       project_date: c.project_date,
       note: c.note || '',
       manager_id: String(c.manager_id),
+      payment_id: c.payment_id != null && c.payment_id !== undefined ? String(c.payment_id) : '',
+      duplicate_months: '0',
     })
     setFormError('')
     setModalOpen(true)
@@ -272,11 +298,6 @@ export default function CommissionsPage() {
     if (!form.manager_percent)     { setFormError('Укажите % менеджера'); return }
     const pct = parseFloat(form.manager_percent)
     if (pct < 1 || pct > 20)      { setFormError('Процент должен быть от 1 до 20'); return }
-    if (user?.role === 'administration' && !editItem && !form.manager_id.trim()) {
-      setFormError('Выберите менеджера')
-      return
-    }
-
     setSaving(true); setFormError('')
     try {
       const body: Record<string, unknown> = {
@@ -293,10 +314,13 @@ export default function CommissionsPage() {
         note: form.note || null,
       }
       if (showManagerScope && form.manager_id) body.manager_id = parseInt(form.manager_id, 10)
+      body.payment_id = form.payment_id ? parseInt(form.payment_id, 10) : null
 
       if (editItem) {
         await api.put(`commissions/${editItem.id}`, body)
-        } else {
+      } else {
+        const dup = Math.min(36, Math.max(0, parseInt(form.duplicate_months || '0', 10) || 0))
+        body.duplicate_months = dup
         await api.post('commissions', body)
       }
       setModalOpen(false)
@@ -318,12 +342,22 @@ export default function CommissionsPage() {
   // ── Year options ───────────────────────────────────────────────────────────
   const years = Array.from({ length: 4 }, (_, i) => curYear - 1 + i)
 
+  if (user?.role === 'administration') {
+    return (
+      <Layout>
+        <div style={{ padding: 48, textAlign: 'center', color: '#64748b' }}>
+          Раздел недоступен. Перенаправление на главную…
+        </div>
+      </Layout>
+    )
+  }
+
   // ── Render ─────────────────────────────────────────────────────────────────
   return (
     <Layout>
       <PageHeader
         title="Комиссия"
-        subtitle="Учёт проектов и доходов менеджеров"
+        subtitle="Учёт комиссий менеджеров. Можно привязать строку к проекту из раздела «Проекты» — тогда % комиссии виден в Projects Cost. При добавлении задайте «Дубли на месяцы вперёд» для ежемесячного повторения той же карточки."
         action={<BtnPrimary onClick={openAdd}>+ Добавить проект</BtnPrimary>}
       />
 
@@ -366,14 +400,15 @@ export default function CommissionsPage() {
       {/* Table */}
       <Card>
         <div style={{ overflowX: 'auto' }}>
-          <table style={{ width: '100%', borderCollapse: 'collapse', minWidth: 900 }}>
+          <table style={{ width: '100%', borderCollapse: 'collapse', minWidth: 980 }}>
             <thead>
               <tr style={{ borderBottom: '2px solid #f1f5f9' }}>
-                <Th>Проект</Th>
+                <Th>Проект (комиссия)</Th>
+                <Th style={{ maxWidth: 200 }}>Проект «Проекты»</Th>
                 {showManagerScope && <Th>Менеджер</Th>}
                 <Th style={{ textAlign: 'right' }}>Стоимость</Th>
                 <Th style={{ textAlign: 'right' }}>Прибыль</Th>
-                <Th style={{ textAlign: 'center' }}>%</Th>
+                <Th style={{ textAlign: 'center', whiteSpace: 'nowrap' }} title="Доля менеджера от прибыли">% менедж.</Th>
                 <Th style={{ textAlign: 'right' }}>Общий доход</Th>
                 <Th style={{ textAlign: 'right' }}>Доход (факт)</Th>
                 <Th style={{ textAlign: 'right' }}>Получено</Th>
@@ -384,11 +419,11 @@ export default function CommissionsPage() {
             </thead>
             <tbody>
               {loading && (
-                <tr><td colSpan={showManagerScope ? 11 : 10}
+                <tr><td colSpan={showManagerScope ? 12 : 11}
                   style={{ textAlign: 'center', padding: 40, color: '#94a3b8' }}>Загрузка…</td></tr>
               )}
               {!loading && commissions.length === 0 && (
-                <tr><td colSpan={showManagerScope ? 11 : 10} style={{ padding: 0 }}>
+                <tr><td colSpan={showManagerScope ? 12 : 11} style={{ padding: 0 }}>
                   <Empty text="Проектов нет. Добавьте первый проект." />
                 </td></tr>
               )}
@@ -410,21 +445,33 @@ export default function CommissionsPage() {
                       <div style={{ fontSize: 11, color: '#94a3b8', marginTop: 2 }}>{c.note}</div>
                     )}
                   </Td>
+                  <Td style={{ fontSize: 12, color: '#475569', verticalAlign: 'top', lineHeight: 1.35 }}>
+                    {c.linked_payment_description ? (
+                      <>
+                        <div style={{ fontWeight: 600 }}>{c.linked_payment_description}</div>
+                        {c.linked_partner_name && (
+                          <div style={{ fontSize: 11, color: '#94a3b8' }}>{c.linked_partner_name}</div>
+                        )}
+                      </>
+                    ) : (
+                      <span style={{ color: '#cbd5e1' }}>—</span>
+                    )}
+                  </Td>
                   {showManagerScope && (
                     <Td><span style={{ fontSize: 13 }}>{c.manager?.name || '—'}</span></Td>
                   )}
-                  <Td style={{ textAlign: 'right', fontWeight: 600 }}>
+                  <Td style={{ textAlign: 'right', fontWeight: 600, whiteSpace: 'nowrap' }}>
                     {formatMoneyNumber(c.project_cost)}
                   </Td>
-                  <Td style={{ textAlign: 'right' }}>
+                  <Td style={{ textAlign: 'right', whiteSpace: 'nowrap' }}>
                     <span style={{ color: c.profit >= 0 ? '#059669' : '#ef4444', fontWeight: 600 }}>
                       {formatMoneyNumber(c.profit)}
                     </span>
                   </Td>
-                  <Td style={{ textAlign: 'center' }}>
+                  <Td style={{ textAlign: 'center', whiteSpace: 'nowrap' }}>
                     <span style={{ fontWeight: 700, color: '#2563eb' }}>{c.manager_percent}%</span>
                   </Td>
-                  <Td style={{ textAlign: 'right', color: '#2563eb', fontWeight: 600 }}>
+                  <Td style={{ textAlign: 'right', color: '#2563eb', fontWeight: 600, whiteSpace: 'nowrap' }}>
                     {formatMoneyNumber(c.total_manager_income)}
                   </Td>
                   <Td style={{ textAlign: 'right', color: '#7c3aed' }}>
@@ -495,7 +542,7 @@ export default function CommissionsPage() {
         open={modalOpen}
         onClose={() => setModalOpen(false)}
         title={editItem ? 'Редактировать проект' : 'Добавить проект'}
-        width={560}
+        width={600}
         footer={
           <>
             <BtnOutline onClick={() => setModalOpen(false)}>Отмена</BtnOutline>
@@ -515,7 +562,7 @@ export default function CommissionsPage() {
 
           {/* Админ / бухгалтерия / администрация: выбор менеджера */}
           {showManagerScope && (
-            <Field label={user?.role === 'administration' ? 'Менеджер *' : 'Менеджер'}>
+            <Field label="Менеджер">
               <Select value={form.manager_id} onChange={e => f('manager_id', e.target.value)}>
                 <option value="">— не выбран —</option>
                 {managers.map(m => (
@@ -526,6 +573,46 @@ export default function CommissionsPage() {
               </Select>
             </Field>
           )}
+
+          {!editItem && (
+            <Field label="Дублей на месяцы вперёд (та же сумма и % менеджера)">
+              <Input
+                type="number"
+                min={0}
+                max={36}
+                value={form.duplicate_months}
+                onChange={(e) => f('duplicate_months', e.target.value)}
+                placeholder="0 = только текущая дата проекта"
+              />
+              <div style={{ fontSize: 11, color: '#94a3b8', marginTop: 6 }}>
+                Для каждого следующего месяца создаётся отдельная строка с датой проекта +1 месяц. Привязка к проекту «Проекты» — только у первой строки.
+              </div>
+            </Field>
+          )}
+
+          <Field label="Привязка к проекту из «Проекты» (необязательно)">
+            <Select
+              value={form.payment_id}
+              onChange={(e) => {
+                const id = e.target.value
+                setForm((p) => {
+                  const next = { ...p, payment_id: id }
+                  if (id) {
+                    const row = linkablePayments.find((x) => String(x.id) === id)
+                    if (row && !p.project_name.trim()) next.project_name = row.description
+                  }
+                  return next
+                })
+              }}
+            >
+              <option value="">— не привязано —</option>
+              {linkablePayments.map((p) => (
+                <option key={p.id} value={p.id}>
+                  {p.partner_name}: {p.description}
+                </option>
+              ))}
+            </Select>
+          </Field>
 
           <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 14 }}>
             <Field label="Название проекта">
@@ -560,7 +647,7 @@ export default function CommissionsPage() {
           </div>
 
           <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 14 }}>
-            <Field label="% менеджера (1–20)">
+            <Field label="% менеджера от прибыли (1–20)">
               <Input
                 type="number" placeholder="10" min={1} max={20} step="0.5"
                 value={form.manager_percent}

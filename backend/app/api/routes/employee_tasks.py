@@ -47,6 +47,14 @@ def _require_employee_or_admin(current_user: User = Depends(get_current_user)) -
     return current_user
 
 
+def _normalize_task_budget(b: Optional[Decimal]) -> Optional[Decimal]:
+    if b is None:
+        return None
+    if b < 0:
+        raise HTTPException(status_code=400, detail="Сумма бюджета не может быть отрицательной")
+    return None if b == 0 else b
+
+
 def _validate_payload(data: Union[EmployeeTaskCreate, EmployeeTaskUpdate], partial: bool = False) -> None:
     st = getattr(data, "status", None)
     if st is not None and st not in VALID_STATUS:
@@ -61,6 +69,10 @@ def _validate_payload(data: Union[EmployeeTaskCreate, EmployeeTaskUpdate], parti
         c = getattr(data, "currency", "USD") or "USD"
         if c not in VALID_CURRENCY:
             raise HTTPException(status_code=400, detail="Валюта: USD или UZS")
+    if not partial:
+        _normalize_task_budget(getattr(data, "budget_amount", None))
+    elif getattr(data, "budget_amount", None) is not None:
+        _normalize_task_budget(data.budget_amount)
 
 
 def _task_query_for_user(db: Session, uid: int, year: Optional[int], month: Optional[int]):
@@ -133,18 +145,29 @@ def staff_month_totals(
     )
     total_usd = Decimal(0)
     total_uzs = Decimal(0)
+    total_budget_usd = Decimal(0)
+    total_budget_uzs = Decimal(0)
     total_hours = Decimal(0)
     for t in rows:
         if getattr(t, "paid", False):
             continue
         if t.hours is not None:
             total_hours += Decimal(str(t.hours))
+        cur = (t.currency or "USD").upper()
         if t.amount is not None:
             a = Decimal(str(t.amount))
-            if (t.currency or "USD").upper() == "UZS":
+            if cur == "UZS":
                 total_uzs += a
             else:
                 total_usd += a
+        bud = Decimal(str(t.budget_amount or 0))
+        if bud > 0:
+            if cur == "UZS":
+                total_budget_uzs += bud
+                total_uzs += bud
+            else:
+                total_budget_usd += bud
+                total_usd += bud
     label = f"{_MONTHS_RU[month - 1]} {year}"
     return StaffMonthTotalsOut(
         year=year,
@@ -153,6 +176,8 @@ def staff_month_totals(
         total_usd=total_usd,
         total_uzs=total_uzs,
         total_hours=total_hours,
+        total_budget_usd=total_budget_usd,
+        total_budget_uzs=total_budget_uzs,
     )
 
 
@@ -185,6 +210,8 @@ def staff_pending_payments_summary(
                 "label": f"{_MONTHS_RU[mm - 1]} {yy}",
                 "total_usd": Decimal(0),
                 "total_uzs": Decimal(0),
+                "total_budget_usd": Decimal(0),
+                "total_budget_uzs": Decimal(0),
                 "total_hours": Decimal(0),
                 "task_count": 0,
             }
@@ -192,12 +219,21 @@ def staff_pending_payments_summary(
         slot["task_count"] += 1
         if t.hours is not None:
             slot["total_hours"] += Decimal(str(t.hours))
+        cur = (t.currency or "USD").upper()
         if t.amount is not None:
             a = Decimal(str(t.amount))
-            if (t.currency or "USD").upper() == "UZS":
+            if cur == "UZS":
                 slot["total_uzs"] += a
             else:
                 slot["total_usd"] += a
+        bud = Decimal(str(t.budget_amount or 0))
+        if bud > 0:
+            if cur == "UZS":
+                slot["total_budget_uzs"] += bud
+                slot["total_uzs"] += bud
+            else:
+                slot["total_budget_usd"] += bud
+                slot["total_usd"] += bud
 
     out = [
         StaffPendingPaymentMonthOut(**slot)
@@ -279,6 +315,7 @@ def create_task(
     paid_flag = bool(data.paid) if current_user.role == "admin" else False
     st = data.status or "not_started"
     now = datetime.now(timezone.utc)
+    b_norm = _normalize_task_budget(data.budget_amount)
     t = EmployeeTask(
         user_id=target_uid,
         work_date=data.work_date,
@@ -287,6 +324,7 @@ def create_task(
         task_url=(data.task_url or "").strip() or None,
         hours=data.hours,
         amount=data.amount,
+        budget_amount=b_norm,
         currency=(data.currency or "USD").upper(),
         status=st,
         paid=paid_flag,
@@ -350,6 +388,8 @@ def update_task(
         upd["task_url"] = (str(v).strip() or None) if v is not None else None
     if "currency" in upd and upd["currency"] is not None:
         upd["currency"] = str(upd["currency"]).upper()
+    if "budget_amount" in upd:
+        upd["budget_amount"] = _normalize_task_budget(upd.get("budget_amount"))
     for k, v in upd.items():
         setattr(t, k, v)
 
@@ -403,6 +443,7 @@ def duplicate_task_next_month(
         task_url=src.task_url,
         hours=src.hours,
         amount=src.amount,
+        budget_amount=src.budget_amount,
         currency=(src.currency or "USD").upper(),
         status="not_started",
         paid=False,

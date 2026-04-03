@@ -21,7 +21,9 @@ class Commission(Base):
     note = Column(String(500), nullable=True)
 
     manager_id = Column(Integer, ForeignKey("users.id"), nullable=False)
+    payment_id = Column(Integer, ForeignKey("payments.id", ondelete="SET NULL"), nullable=True, index=True)
     created_at = Column(DateTime(timezone=True), server_default=func.now())
     updated_at = Column(DateTime(timezone=True), onupdate=func.now())
 
     manager = relationship("User", foreign_keys=[manager_id])
+    payment = relationship("Payment", foreign_keys=[payment_id])

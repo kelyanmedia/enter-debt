@@ -16,6 +16,8 @@ class EmployeeTask(Base):
     task_url = Column(String(800), nullable=True)
     hours = Column(Numeric(10, 2), nullable=True)
     amount = Column(Numeric(15, 2), nullable=True)
+    # Проходные средства клиента (реклама и т.п.): не расход компании, не в P&L при корректной выплате
+    budget_amount = Column(Numeric(15, 2), nullable=True)
     currency = Column(String(3), nullable=False, default="USD")
     status = Column(String(30), nullable=False, default="not_started")
     paid = Column(Boolean, nullable=False, default=False)

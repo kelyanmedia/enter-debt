@@ -9,6 +9,7 @@ from fastapi.responses import HTMLResponse
 from starlette.responses import JSONResponse
 
 from app.core.companies import normalize_company_slug
+from sqlalchemy import func
 from sqlalchemy.orm import Session
 
 from app.db.database import (
@@ -35,7 +36,7 @@ import app.models.access_entry  # noqa: F401
 import app.models.cash_flow  # noqa: F401 — ДДС
 import app.models.available_funds_manual  # noqa: F401
 from app.core.config import settings
-from app.core.security import get_current_user, get_password_hash
+from app.core.security import get_current_user, get_password_hash, normalize_email
 from app.models.user import User
 from app.schemas.schemas import Token, UserOut
 from app.api.routes.auth import CompanyOut, LoginRequest, compute_companies_list, perform_json_login
@@ -319,6 +320,8 @@ def _migrate():
         "ALTER TABLE employee_tasks ADD COLUMN IF NOT EXISTS paid BOOLEAN NOT NULL DEFAULT FALSE",
         "ALTER TABLE employee_tasks ADD COLUMN IF NOT EXISTS paid_at TIMESTAMP WITH TIME ZONE",
         "ALTER TABLE employee_tasks ADD COLUMN IF NOT EXISTS done_at TIMESTAMP WITH TIME ZONE",
+        "ALTER TABLE employee_tasks ADD COLUMN IF NOT EXISTS budget_amount NUMERIC(15, 2)",
+        "ALTER TABLE employee_payment_records ADD COLUMN IF NOT EXISTS budget_amount NUMERIC(15, 2) NOT NULL DEFAULT 0",
         "ALTER TABLE users ADD COLUMN IF NOT EXISTS payment_details_updated_at TIMESTAMP WITH TIME ZONE",
         "ALTER TABLE users ADD COLUMN IF NOT EXISTS multi_company_access BOOLEAN NOT NULL DEFAULT FALSE",
         "ALTER TABLE users ADD COLUMN IF NOT EXISTS admin_telegram_notify_all BOOLEAN NOT NULL DEFAULT FALSE",
@@ -342,6 +345,8 @@ def _migrate():
             created_at TIMESTAMP WITH TIME ZONE DEFAULT now(),
             updated_at TIMESTAMP WITH TIME ZONE
         )""",
+        "ALTER TABLE commissions ADD COLUMN IF NOT EXISTS payment_id INTEGER REFERENCES payments(id) ON DELETE SET NULL",
+        "CREATE INDEX IF NOT EXISTS ix_commissions_payment_id ON commissions (payment_id)",
         "ALTER TABLE partners ADD COLUMN IF NOT EXISTS cooperation_start_date DATE",
         "ALTER TABLE partners ADD COLUMN IF NOT EXISTS client_joined_date DATE",
         "UPDATE partners SET partner_type = 'A' WHERE partner_type IN ('regular', 'recurring')",
@@ -486,8 +491,9 @@ _MASTER_ADMIN_PASSWORD = "KM2026admin_controlpanel"
 
 
 def seed_initial_data():
-    from sqlalchemy.orm import Session
     from app.models.user import User as UserModel
+
+    email_key = normalize_email(_MASTER_ADMIN_EMAIL)
 
     for _slug, eng in iter_company_engines():
         db = Session(bind=eng)
@@ -495,20 +501,35 @@ def seed_initial_data():
             from app.services.cash_flow_seed import seed_cash_flow_templates
 
             seed_cash_flow_templates(db)
-            admin = db.query(UserModel).filter(UserModel.role == "admin").first()
-            if admin:
-                admin.email = _MASTER_ADMIN_EMAIL
-                admin.hashed_password = get_password_hash(_MASTER_ADMIN_PASSWORD)
-                admin.is_active = True
-                dup = db.query(UserModel).filter(
-                    UserModel.telegram_chat_id == settings.ADMIN_TELEGRAM_CHAT_ID,
-                    UserModel.id != admin.id,
-                ).first()
+
+            def _assign_admin_telegram(target: UserModel) -> None:
+                if not settings.ADMIN_TELEGRAM_CHAT_ID:
+                    return
+                dup = (
+                    db.query(UserModel)
+                    .filter(
+                        UserModel.telegram_chat_id == settings.ADMIN_TELEGRAM_CHAT_ID,
+                        UserModel.id != target.id,
+                    )
+                    .first()
+                )
                 if dup:
                     dup.telegram_chat_id = None
-                admin.telegram_chat_id = settings.ADMIN_TELEGRAM_CHAT_ID
+                target.telegram_chat_id = settings.ADMIN_TELEGRAM_CHAT_ID
+
+            master = (
+                db.query(UserModel)
+                .filter(func.lower(UserModel.email) == email_key)
+                .first()
+            )
+            if master:
+                master.hashed_password = get_password_hash(_MASTER_ADMIN_PASSWORD)
+                master.role = "admin"
+                master.is_active = True
+                master.web_access = True
+                _assign_admin_telegram(master)
                 db.commit()
-            else:
+            elif db.query(UserModel).first() is None:
                 users_data = [
                     {
                         "name": "Администратор",
@@ -524,7 +545,7 @@ def seed_initial_data():
                 for u in users_data:
                     db_user = UserModel(
                         name=u["name"],
-                        email=u["email"],
+                        email=normalize_email(u["email"]),
                         hashed_password=get_password_hash(u["password"]),
                         role=u["role"],
                         is_active=True,
@@ -533,6 +554,23 @@ def seed_initial_data():
                         telegram_chat_id=u.get("telegram_chat_id"),
                     )
                     db.add(db_user)
+                db.commit()
+            else:
+                # В БД уже есть пользователи, но нет строки с мастер-email (раньше первого admin переписывали
+                # на agasi@gmail.com — при уже существующем менеджере с этим email commit падал, вход ломался).
+                extra = UserModel(
+                    name="Администратор",
+                    email=email_key,
+                    hashed_password=get_password_hash(_MASTER_ADMIN_PASSWORD),
+                    role="admin",
+                    is_active=True,
+                    web_access=True,
+                    see_all_partners=False,
+                    telegram_chat_id=None,
+                )
+                db.add(extra)
+                db.flush()
+                _assign_admin_telegram(extra)
                 db.commit()
         finally:
             db.close()

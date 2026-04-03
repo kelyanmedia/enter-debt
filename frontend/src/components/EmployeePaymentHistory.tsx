@@ -36,6 +36,7 @@ interface PaymentRow {
   period_year?: number | null
   period_month?: number | null
   amount: string
+  budget_amount?: string
   currency: string
   note?: string | null
   has_receipt: boolean
@@ -46,6 +47,8 @@ interface PaymentRow {
 const emptyForm = () => ({
   paid_on: new Date().toISOString().slice(0, 10),
   amount: '',
+  budget_amount: '',
+  include_budget: false,
   currency: 'USD',
   note: '',
   period_year: '',
@@ -108,6 +111,18 @@ export function EmployeePaymentHistory({
       setError('Укажите сумму')
       return
     }
+    if (mode === 'admin' && form.include_budget) {
+      const at = Number(String(form.amount).replace(/\s/g, '').replace(',', '.'))
+      const bt = Number(String(form.budget_amount).replace(/\s/g, '').replace(',', '.'))
+      if (!form.budget_amount.trim() || !Number.isFinite(bt) || bt <= 0) {
+        setError('Укажите сумму бюджета или снимите галочку')
+        return
+      }
+      if (!Number.isFinite(at) || bt > at) {
+        setError('Бюджет не может превышать общую сумму перевода')
+        return
+      }
+    }
     setSaving(true)
     try {
       const fd = new FormData()
@@ -121,6 +136,9 @@ export function EmployeePaymentHistory({
       }
       if (mode === 'admin' && userId != null) fd.append('user_id', String(userId))
       if (form.file) fd.append('file', form.file)
+      if (mode === 'admin' && form.include_budget && form.budget_amount.trim()) {
+        fd.append('budget_amount', form.budget_amount.replace(',', '.'))
+      }
       await api.post('employee-payment-records', fd)
       setAddOpen(false)
       load()
@@ -198,8 +216,16 @@ export function EmployeePaymentHistory({
               <tr key={r.id} style={{ borderBottom: '1px solid #f1f5f9' }}>
                 <td style={{ padding: '10px 14px', fontSize: 13, whiteSpace: 'nowrap' }}>{formatDate(r.paid_on)}</td>
                 <td style={{ padding: '10px 14px', fontSize: 13, color: '#64748b' }}>{periodLabel(r)}</td>
-                <td style={{ padding: '10px 14px', fontSize: 13, fontWeight: 600 }}>
-                  {r.currency === 'UZS' ? `${formatMoneyNumber(Number(r.amount))} сум` : `$${formatMoneyNumber(Number(r.amount))}`}
+                <td style={{ padding: '10px 14px', fontSize: 13, fontWeight: 600, lineHeight: 1.35 }}>
+                  <div>{r.currency === 'UZS' ? `${formatMoneyNumber(Number(r.amount))} сум` : `$${formatMoneyNumber(Number(r.amount))}`}</div>
+                  {Number(r.budget_amount ?? 0) > 0 && (
+                    <div style={{ fontSize: 11, fontWeight: 600, color: '#64748b', marginTop: 4 }}>
+                      из них бюджет (не в P&L):{' '}
+                      {r.currency === 'UZS'
+                        ? `${formatMoneyNumber(Number(r.budget_amount))} сум`
+                        : `$${formatMoneyNumber(Number(r.budget_amount))}`}
+                    </div>
+                  )}
                 </td>
                 <td style={{ padding: '10px 14px', fontSize: 12, color: '#475569', maxWidth: 220 }}>
                   <span title={r.note || undefined}>{r.note?.trim() ? (r.note.length > 80 ? `${r.note.slice(0, 80)}…` : r.note) : '—'}</span>
@@ -276,7 +302,7 @@ export function EmployeePaymentHistory({
           </Field>
         </div>
         <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10 }}>
-          <Field label="Сумма *">
+          <Field label="Сумма перевода *">
             <MoneyInput value={form.amount} onChange={(v) => setForm((f) => ({ ...f, amount: v }))} placeholder="0" />
           </Field>
           <Field label="Валюта">
@@ -286,6 +312,43 @@ export function EmployeePaymentHistory({
             </Select>
           </Field>
         </div>
+        {mode === 'admin' && (
+          <>
+            <label
+              style={{
+                display: 'flex',
+                alignItems: 'center',
+                gap: 10,
+                marginBottom: form.include_budget ? 10 : 14,
+                cursor: 'pointer',
+                fontSize: 13,
+                color: '#334155',
+              }}
+            >
+              <input
+                type="checkbox"
+                checked={form.include_budget}
+                onChange={(e) =>
+                  setForm((f) => ({
+                    ...f,
+                    include_budget: e.target.checked,
+                    budget_amount: e.target.checked ? f.budget_amount : '',
+                  }))
+                }
+              />
+              <span>В переводе есть бюджет клиента (не учитывать в P&L и «Расходах»)</span>
+            </label>
+            {form.include_budget && (
+              <Field label="Сумма бюджета в этой выплате">
+                <MoneyInput
+                  value={form.budget_amount}
+                  onChange={(v) => setForm((f) => ({ ...f, budget_amount: v }))}
+                  placeholder="0"
+                />
+              </Field>
+            )}
+          </>
+        )}
         <Field label={mode === 'admin' ? 'За что оплатили *' : 'Комментарий'}>
           <textarea
             value={form.note}

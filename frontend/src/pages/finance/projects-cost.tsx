@@ -40,9 +40,11 @@ interface ProjectCostRow {
   cost_seo_uzs: string
   internal_cost_sum: string
   profit_actual: string
+  /** % менеджера из «Комиссия», если строка привязана к этому payment_id */
+  manager_commission_percent?: string | null
 }
 
-const COL_COUNT = 16
+const COL_COUNT = 17
 
 const MONTHS_RU = [
   'Янв.', 'Февр.', 'Март', 'Апр.', 'Май', 'Июнь',
@@ -437,6 +439,7 @@ export default function FinanceProjectsCostPage() {
                     <Th>Прибыль</Th>
                     <Th>Оплата факт</Th>
                     <Th>Оплата %</Th>
+                    <Th title="% менеджера из учёта комиссий (при привязке к проекту)">% комиссии</Th>
                     <Th>Дизайн</Th>
                     <Th>Разраб.</Th>
                     <Th>Прочее</Th>
@@ -479,13 +482,18 @@ export default function FinanceProjectsCostPage() {
                           <Td style={{ fontSize: 13, fontWeight: 600, color: '#334155', whiteSpace: 'nowrap' }}>
                             {formatMoneyNumber(Number(r.internal_cost_sum))}
                           </Td>
-                          <Td style={{ fontWeight: 700, color: '#1e3a5f' }}>
+                          <Td style={{ fontWeight: 700, color: '#1e3a5f', whiteSpace: 'nowrap' }}>
                             {formatMoneyNumber(Number(r.profit_actual))}
                           </Td>
-                          <Td style={{ fontWeight: 700, color: '#166534' }}>
+                          <Td style={{ fontWeight: 700, color: '#166534', whiteSpace: 'nowrap' }}>
                             {formatMoneyNumber(Number(r.sum_paid_actual))}
                           </Td>
                           <Td style={{ fontSize: 13 }}>{isRec ? <span style={{ color: '#94a3b8' }}>n/a</span> : pct}</Td>
+                          <Td style={{ fontSize: 13, textAlign: 'center', whiteSpace: 'nowrap', fontWeight: 700, color: '#2563eb' }}>
+                            {r.manager_commission_percent != null && r.manager_commission_percent !== ''
+                              ? `${formatMoneyNumber(Number(r.manager_commission_percent))} %`
+                              : '—'}
+                          </Td>
                           <Td style={{ fontSize: 12, verticalAlign: 'middle' }}>{renderBreakdownCell(r, 'cost_design_uzs')}</Td>
                           <Td style={{ fontSize: 12, verticalAlign: 'middle' }}>{renderBreakdownCell(r, 'cost_dev_uzs')}</Td>
                           <Td style={{ fontSize: 12, verticalAlign: 'middle' }}>{renderBreakdownCell(r, 'cost_other_uzs')}</Td>
@@ -558,6 +566,7 @@ export default function FinanceProjectsCostPage() {
                       <Td style={{ borderTop: '2px solid #94a3b8' }}>{formatMoneyNumber(totals.internal)}</Td>
                       <Td style={{ borderTop: '2px solid #94a3b8', color: '#1e3a5f' }}>{formatMoneyNumber(totals.profit)}</Td>
                       <Td style={{ borderTop: '2px solid #94a3b8', color: '#166534' }}>{formatMoneyNumber(totals.paid)}</Td>
+                      <Td style={{ borderTop: '2px solid #94a3b8', color: '#64748b' }}>—</Td>
                       <Td style={{ borderTop: '2px solid #94a3b8', color: '#64748b' }}>—</Td>
                       <Td style={{ borderTop: '2px solid #94a3b8', fontSize: 12, whiteSpace: 'nowrap' }}>
                         {formatMoneyNumber(totals.design)}

@@ -33,6 +33,7 @@ export default function LoginPage() {
   const handleSubmit = async (e: FormEvent) => {
     e.preventDefault()
     setError('')
+    persistCompanySlug(workspace)
     setLoading(true)
     try {
       const u = await login(email, password, remember)

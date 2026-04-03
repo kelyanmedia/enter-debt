@@ -35,6 +35,7 @@ def _record_out(r: EmployeePaymentRecord) -> EmployeePaymentRecordOut:
         period_year=r.period_year,
         period_month=r.period_month,
         amount=Decimal(str(r.amount)),
+        budget_amount=Decimal(str(getattr(r, "budget_amount", 0) or 0)),
         currency=(r.currency or "USD").upper(),
         note=r.note,
         has_receipt=bool(r.receipt_path),
@@ -62,6 +63,22 @@ def _parse_amount(s: str) -> Decimal:
     if a <= 0:
         raise HTTPException(status_code=400, detail="Сумма должна быть больше нуля")
     return a
+
+
+def _parse_budget_part(s: Optional[str], total: Decimal) -> Decimal:
+    """Доля проходного бюджета в той же выплате; не больше total."""
+    raw = (s or "").strip().replace(",", ".").replace(" ", "")
+    if not raw:
+        return Decimal(0)
+    try:
+        b = Decimal(raw)
+    except Exception as e:
+        raise HTTPException(status_code=400, detail="Некорректная сумма бюджета") from e
+    if b < 0:
+        raise HTTPException(status_code=400, detail="Бюджет не может быть отрицательным")
+    if b > total:
+        raise HTTPException(status_code=400, detail="Бюджет не может превышать общую сумму выплаты")
+    return b
 
 
 def _ext_from_filename(name: str) -> str:
@@ -137,6 +154,11 @@ def list_payroll_expenses_for_finance(
     )
     out: List[EmployeePayrollExpenseOut] = []
     for r, employee_name in rows:
+        amt = Decimal(str(r.amount))
+        bud = Decimal(str(getattr(r, "budget_amount", 0) or 0))
+        op = amt - bud
+        if op < 0:
+            op = Decimal(0)
         out.append(
             EmployeePayrollExpenseOut(
                 id=r.id,
@@ -145,7 +167,9 @@ def list_payroll_expenses_for_finance(
                 paid_on=r.paid_on,
                 period_year=r.period_year,
                 period_month=r.period_month,
-                amount=Decimal(str(r.amount)),
+                amount=amt,
+                budget_amount=bud,
+                operating_amount=op,
                 currency=(r.currency or "USD").upper(),
                 note=r.note,
                 has_receipt=bool(r.receipt_path),
@@ -160,6 +184,7 @@ async def create_payment_record(
     paid_on: str = Form(...),
     amount: str = Form(...),
     currency: str = Form("USD"),
+    budget_amount: Optional[str] = Form(None),
     note: Optional[str] = Form(None),
     period_year: Optional[str] = Form(None),
     period_month: Optional[str] = Form(None),
@@ -174,6 +199,11 @@ async def create_payment_record(
 
     d = _parse_date(paid_on)
     amt = _parse_amount(amount)
+    bud_amt = (
+        _parse_budget_part(budget_amount, amt)
+        if current_user.role == "admin"
+        else Decimal(0)
+    )
 
     py: Optional[int] = None
     pm: Optional[int] = None
@@ -235,6 +265,7 @@ async def create_payment_record(
         period_year=py,
         period_month=pm,
         amount=amt,
+        budget_amount=bud_amt,
         currency=cur,
         note=note_t,
         receipt_path=receipt_name,

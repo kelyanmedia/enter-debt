@@ -8,6 +8,7 @@ from decimal import Decimal
 from typing import Dict, List, Optional, Tuple
 
 from fastapi import APIRouter, Depends, HTTPException, Query
+from sqlalchemy import and_, or_
 from sqlalchemy.orm import Session, joinedload
 
 from app.core.access import filter_payments_query
@@ -15,6 +16,7 @@ from app.core.security import get_current_user, require_admin_or_financier
 from app.db.database import get_db
 from app.models.available_funds_manual import AvailableFundsManual
 from app.models.cash_flow import CashFlowEntry
+from app.models.commission import Commission
 from app.models.employee_payment_record import EmployeePaymentRecord
 from app.models.partner import Partner
 from app.models.payment import Payment, PaymentMonth
@@ -158,7 +160,25 @@ def _line_amount(pm: PaymentMonth, p: Payment) -> Decimal:
     return Decimal(str(p.amount))
 
 
-def _payment_to_project_cost_row(p: Payment) -> ProjectCostRowOut:
+def _commission_percent_by_payment_id(db: Session) -> Dict[int, Decimal]:
+    """Последняя по id комиссия с привязкой к payment_id → % менеджера для Projects Cost."""
+    rows = (
+        db.query(Commission.payment_id, Commission.manager_percent, Commission.id)
+        .filter(Commission.payment_id.isnot(None))
+        .order_by(Commission.id.desc())
+        .all()
+    )
+    out: Dict[int, Decimal] = {}
+    for pid, pct, _i in rows:
+        if pid not in out:
+            out[int(pid)] = Decimal(str(pct))
+    return out
+
+
+def _payment_to_project_cost_row(
+    p: Payment,
+    manager_commission_percent: Optional[Decimal] = None,
+) -> ProjectCostRowOut:
     """Одна строка отчёта Projects Cost из загруженного Payment (partner + months)."""
     months_sorted = _sort_payment_month_lines(p.months)
     sum_paid = Decimal("0")
@@ -220,6 +240,10 @@ def _payment_to_project_cost_row(p: Payment) -> ProjectCostRowOut:
     internal = (c_des + c_dev + c_oth + c_seo).quantize(Decimal("0.01"))
     profit = (sum_paid - internal).quantize(Decimal("0.01"))
 
+    mcp = None
+    if manager_commission_percent is not None:
+        mcp = Decimal(str(manager_commission_percent)).quantize(Decimal("0.01"))
+
     return ProjectCostRowOut(
         payment_id=p.id,
         partner_id=p.partner_id,
@@ -242,6 +266,7 @@ def _payment_to_project_cost_row(p: Payment) -> ProjectCostRowOut:
         cost_seo_uzs=c_seo.quantize(Decimal("0.01")),
         internal_cost_sum=internal,
         profit_actual=profit,
+        manager_commission_percent=mcp,
     )
 
 
@@ -285,7 +310,8 @@ def projects_cost_report(
     if bounds:
         mf, mt = bounds
         payments_sorted = [p for p in payments_sorted if _payment_overlaps_month_window(p, mf, mt)]
-    return [_payment_to_project_cost_row(p) for p in payments_sorted]
+    pct_map = _commission_percent_by_payment_id(db)
+    return [_payment_to_project_cost_row(p, pct_map.get(p.id)) for p in payments_sorted]
 
 
 @router.put("/projects-cost/{payment_id}/cost-breakdown", response_model=ProjectCostRowOut)
@@ -326,7 +352,8 @@ def put_projects_cost_breakdown(
         .filter(Payment.id == payment_id)
         .first()
     )
-    return _payment_to_project_cost_row(p)
+    pct_map = _commission_percent_by_payment_id(db)
+    return _payment_to_project_cost_row(p, pct_map.get(p.id))
 
 
 _REV_CATEGORY_LABELS: Dict[str, str] = {
@@ -370,6 +397,22 @@ def _paid_month_index(pm: PaymentMonth, year: int) -> Optional[int]:
         return None
 
 
+def _employee_payment_pl_month_index(r: EmployeePaymentRecord, report_year: int) -> Optional[int]:
+    """
+    Номер месяца 1..12 в колонках P&L за report_year.
+    Если задан период начисления (год+месяц) — он; иначе месяц даты выплаты (касса).
+    """
+    py, pm = r.period_year, r.period_month
+    if py is not None and pm is not None and 1 <= int(pm) <= 12:
+        if int(py) != report_year:
+            return None
+        return int(pm)
+    d = r.paid_on
+    if d.year != report_year:
+        return None
+    return int(d.month)
+
+
 @router.get("/pl", response_model=PLReportOut)
 def pl_report(
     year: Optional[int] = Query(None, ge=2000, le=2100, description="Календарный год отчёта"),
@@ -379,8 +422,9 @@ def pl_report(
     """
     P&L по месяцам: выручка — оплаты по графику проектов (категории) + приходы из ДДС;
     расходы — команда + ДДС по статьям (в т.ч. отдельная строка «Агаси Д» для дивидендов).
-    Суммы в USD (строки ДДС, выплаты команде в долларах) при заданном в ДДС курсе за месяц (usd_to_uzs_rate)
-    переводятся в колонку UZS; при курсе 0 поведение как раньше (USD отдельной колонкой).
+    Суммы в USD (строки ДДС, выплаты команде в долларах) при заданном в ДДС курсе за соответствующий месяц
+    (usd_to_uzs_rate в «Доступные средства») переводятся в сумы и попадают в строку «Зарплатный фонд» (команда + ДДС зарплата);
+    при курсе 0 для месяца USD остаётся отдельной колонкой.
     Итог: операционный результат без вывода Агаси Д; строка «Чистая прибыль» — только суммы категории Агаси Д/дивиденды из ДДС.
     """
     y = year if year is not None else date.today().year
@@ -484,27 +528,55 @@ def pl_report(
             cf_oth_uzs[idx] += au
             cf_oth_usd[idx] += ad
 
-    grand_rev_uzs = [total_rev[i] + cf_in_uzs[i] for i in range(n)]
-    grand_rev_usd = [cf_in_usd[i] for i in range(n)]
-
-    # --- Зарплатный фонд: админские выплаты сотрудникам (Команда) ---
+    # --- Зарплатный фонд: все выплаты сотрудникам (роль employee), в т.ч. в USD — дальше × курс ДДС за месяц колонки ---
     salary_uzs = [Decimal("0") for _ in range(n)]
     salary_usd = [Decimal("0") for _ in range(n)]
     payroll = (
         db.query(EmployeePaymentRecord)
-        .filter(EmployeePaymentRecord.created_by_user_id.isnot(None))
-        .filter(EmployeePaymentRecord.paid_on >= date(y, 1, 1))
-        .filter(EmployeePaymentRecord.paid_on <= date(y, 12, 31))
+        .join(User, User.id == EmployeePaymentRecord.user_id)
+        .filter(User.role == "employee", User.is_active == True)
+        .filter(
+            or_(
+                and_(EmployeePaymentRecord.period_year == y, EmployeePaymentRecord.period_month.isnot(None)),
+                and_(
+                    EmployeePaymentRecord.paid_on >= date(y, 1, 1),
+                    EmployeePaymentRecord.paid_on <= date(y, 12, 31),
+                ),
+            )
+        )
         .all()
     )
     for r in payroll:
-        m_idx = r.paid_on.month
+        m_idx = _employee_payment_pl_month_index(r, y)
+        if m_idx is None:
+            continue
         amt = Decimal(str(r.amount))
+        bud = Decimal(str(getattr(r, "budget_amount", 0) or 0))
+        pl_amt = amt - bud
+        if pl_amt < 0:
+            pl_amt = Decimal(0)
         cur = (r.currency or "UZS").upper()
         if cur == "USD":
-            salary_usd[m_idx - 1] += amt
+            salary_usd[m_idx - 1] += pl_amt
         else:
-            salary_uzs[m_idx - 1] += amt
+            salary_uzs[m_idx - 1] += pl_amt
+
+    # --- Процент менеджера (раздел «Комиссия»): доход менеджера = прибыль × %, по месяцу даты проекта
+    mgr_comm_uzs = [Decimal("0") for _ in range(n)]
+    for c in (
+        db.query(Commission)
+        .filter(Commission.project_date >= date(y, 1, 1))
+        .filter(Commission.project_date <= date(y, 12, 31))
+        .all()
+    ):
+        cost_c = Decimal(str(c.project_cost or 0))
+        prod_c = Decimal(str(c.production_cost or 0))
+        pct_c = Decimal(str(c.manager_percent or 0))
+        profit_c = cost_c - prod_c
+        amt_c = (profit_c * pct_c / Decimal(100)).quantize(Decimal("0.01"))
+        mi = int(c.project_date.month)
+        if 1 <= mi <= 12:
+            mgr_comm_uzs[mi - 1] += amt_c
 
     rates = {
         r.period_month: Decimal(str(r.usd_to_uzs_rate or 0))
@@ -548,6 +620,10 @@ def pl_report(
         for zu, us in zip(_uzs_fx, _usd_fx):
             zu[i] = zu[i] + us[i] * rfx
             us[i] = Decimal(0)
+
+    # После конвертации USD→UZS по курсу месяца (ДДС): итог выручки с учётом прихода ДДС в долларах
+    grand_rev_uzs = [total_rev[i] + cf_in_uzs[i] for i in range(n)]
+    grand_rev_usd = [cf_in_usd[i] for i in range(n)]
 
     rows: List[PLDataRowOut] = []
 
@@ -614,6 +690,19 @@ def pl_report(
                     uzs=merged_sal_uzs[i].quantize(Decimal("0.01")),
                     usd=merged_sal_usd[i].quantize(Decimal("0.01")),
                 )
+                for i in range(n)
+            ],
+        )
+    )
+
+    rows.append(
+        PLDataRowOut(
+            row_id="exp_manager_commission",
+            label="Процент менеджера (комиссии)",
+            section="expenses_fixed",
+            is_calculated=False,
+            cells=[
+                PLCellOut(uzs=mgr_comm_uzs[i].quantize(Decimal("0.01")), usd=Decimal("0"))
                 for i in range(n)
             ],
         )
@@ -749,6 +838,7 @@ def pl_report(
 
     exp_total_uzs = [
         merged_sal_uzs[i]
+        + mgr_comm_uzs[i]
         + cf_off_uzs[i]
         + cf_acc_uzs[i]
         + cf_pub_uzs[i]
