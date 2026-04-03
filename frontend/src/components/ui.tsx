@@ -189,6 +189,8 @@ export function ConfirmModal({
     try {
       await onConfirm()
       onClose()
+    } catch {
+      /* Ошибку показывает вызывающий код (alert и т.д.); модалка остаётся открытой */
     } finally {
       setBusy(false)
     }

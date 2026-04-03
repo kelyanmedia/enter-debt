@@ -203,18 +203,19 @@ export default function PaymentsPage() {
     }
   }, [])
 
-  const load = useCallback(() => {
+  const load = useCallback(async () => {
     const params = new URLSearchParams()
     if (filterStatus) params.append('status', filterStatus)
     if (filterType) params.append('payment_type', filterType)
     if (filterCategory) params.append('project_category', filterCategory)
-    api.get(`payments?${params}`)
-      .then(r => {
-        let data = r.data
-        if (filterManager) data = data.filter((p: Payment) => String(p.partner?.manager?.id) === filterManager)
-        setPayments(data)
-      })
-      .catch(() => setPayments([]))
+    try {
+      const r = await api.get<Payment[]>(`payments?${params}`)
+      let data = r.data
+      if (filterManager) data = data.filter((p: Payment) => String(p.partner?.manager?.id) === filterManager)
+      setPayments(data)
+    } catch {
+      setPayments([])
+    }
   }, [filterStatus, filterType, filterCategory, filterManager])
 
   useEffect(() => {
@@ -333,9 +334,14 @@ export default function PaymentsPage() {
   const runDeletePayment = async () => {
     if (deletePaymentId === null) return
     const id = deletePaymentId
-    await api.delete(`payments/${id}`)
-    load()
-    if (drawer?.id === id) setDrawer(null)
+    try {
+      await api.delete(`payments/${id}`)
+      if (drawer?.id === id) setDrawer(null)
+      await load()
+    } catch (e: unknown) {
+      alert(formatApiError(e))
+      throw e
+    }
   }
 
   // Drawer actions
@@ -481,9 +487,16 @@ export default function PaymentsPage() {
 
   const runDeleteMonth = async () => {
     if (!drawer || deleteMonthId === null) return
-    await api.delete(`payments/${drawer.id}/months/${deleteMonthId}`)
-    setDrawerMonths(prev => prev.filter(m => m.id !== deleteMonthId))
-    await syncDrawerPayment(drawer.id)
+    const mid = deleteMonthId
+    const pid = drawer.id
+    try {
+      await api.delete(`payments/${pid}/months/${mid}`)
+      setDrawerMonths(prev => prev.filter(m => m.id !== mid))
+      await syncDrawerPayment(pid)
+    } catch (e: unknown) {
+      alert(formatApiError(e))
+      throw e
+    }
   }
 
   const bulkAddMonths = async () => {
