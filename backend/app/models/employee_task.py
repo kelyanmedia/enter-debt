@@ -25,5 +25,9 @@ class EmployeeTask(Base):
     done_at = Column(DateTime(timezone=True), nullable=True)
     created_at = Column(DateTime(timezone=True), server_default=func.now())
     updated_at = Column(DateTime(timezone=True), onupdate=func.now())
+    # Распределение себестоимости в Projects Cost (только админ): проект из «Проекты» + статья (design|dev|other|seo)
+    allocated_payment_id = Column(Integer, ForeignKey("payments.id", ondelete="SET NULL"), nullable=True, index=True)
+    cost_category = Column(String(20), nullable=True)
 
     user = relationship("User", back_populates="employee_tasks")
+    allocated_payment = relationship("Payment", foreign_keys=[allocated_payment_id])

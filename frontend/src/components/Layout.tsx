@@ -1,9 +1,10 @@
-import { ReactNode, useEffect, useCallback, type ChangeEvent } from 'react'
+import { ReactNode, useEffect, useCallback, useState, type ChangeEvent } from 'react'
 import type { CSSProperties } from 'react'
 import { useRouter } from 'next/router'
 import Link from 'next/link'
 import { useAuth } from '@/context/AuthContext'
 import { NotificationBell } from '@/components/NotificationDrawer'
+import { EmployeeQaDrawer } from '@/components/EmployeeSidebarGuide'
 import { companyDisplayName } from '@/lib/company'
 
 type NavItem = {
@@ -167,6 +168,7 @@ function CompanyWorkspaceSelect({ readOnly }: { readOnly?: boolean }) {
 export default function Layout({ children }: { children: ReactNode }) {
   const { user, loading, logout } = useAuth()
   const router = useRouter()
+  const [employeeQaOpen, setEmployeeQaOpen] = useState(false)
 
   useEffect(() => {
     if (!loading && !user) router.push('/login')
@@ -215,7 +217,7 @@ export default function Layout({ children }: { children: ReactNode }) {
     const activeProfile = router.pathname === '/profile'
     return (
       <div style={{ display: 'flex', height: '100vh', overflow: 'hidden', background: '#f5f6fa' }}>
-        <aside style={{ width: 220, background: '#fff', borderRight: '1px solid #e8e9ef', display: 'flex', flexDirection: 'column', flexShrink: 0 }}>
+        <aside style={{ width: 268, background: '#fff', borderRight: '1px solid #e8e9ef', display: 'flex', flexDirection: 'column', flexShrink: 0 }}>
           <div style={{ padding: '20px 16px 16px', borderBottom: '1px solid #e8e9ef' }}>
             <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
               <img src="/kelyanmedia-logo.png" alt="" style={{ height: 28, width: 'auto', maxWidth: 56, objectFit: 'contain' }} />
@@ -225,7 +227,7 @@ export default function Layout({ children }: { children: ReactNode }) {
               <CompanyWorkspaceSelect readOnly={user.multi_company_access !== true} />
             </div>
           </div>
-          <nav style={{ padding: 14, flex: 1 }}>
+          <nav style={{ padding: 14, flex: 1, minHeight: 0, overflowY: 'auto', display: 'flex', flexDirection: 'column' }}>
             <Link href="/my-work" style={{ textDecoration: 'none' }}>
               <div
                 style={{
@@ -275,6 +277,27 @@ export default function Layout({ children }: { children: ReactNode }) {
               Задачи и история выплат — разные разделы. В профиле — пароль и реквизиты. Компания сверху совпадает с
               выбранной при входе. Остальной модуль недоступен.
             </div>
+            <button
+              type="button"
+              onClick={() => setEmployeeQaOpen(true)}
+              style={{
+                marginTop: 12,
+                width: '100%',
+                padding: '10px 12px',
+                borderRadius: 9,
+                border: '1px solid #e8e9ef',
+                background: '#fff',
+                color: '#1a6b3c',
+                fontSize: 13,
+                fontWeight: 700,
+                cursor: 'pointer',
+                fontFamily: 'inherit',
+                letterSpacing: '0.04em',
+              }}
+              title="Справка: задачи, выплаты, кнопки в таблице, реквизиты"
+            >
+              Q&amp;A
+            </button>
           </nav>
           <div style={{ padding: '14px 10px', borderTop: '1px solid #e8e9ef' }}>
             <div style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '10px 12px', background: '#f5f6fa', borderRadius: 9 }}>
@@ -288,6 +311,7 @@ export default function Layout({ children }: { children: ReactNode }) {
           </div>
         </aside>
         <div style={{ flex: 1, display: 'flex', flexDirection: 'column', overflow: 'hidden', minWidth: 0 }}>{children}</div>
+        <EmployeeQaDrawer open={employeeQaOpen} onClose={() => setEmployeeQaOpen(false)} />
       </div>
     )
   }

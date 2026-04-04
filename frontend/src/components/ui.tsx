@@ -1037,6 +1037,20 @@ export function formatAmount(n: number | string) {
   return `${formatMoneyNumber(n)} Uzs`
 }
 
+/** Дебиторка на карточках дашборда: округление до целых сум, без дробной части */
+export function formatReceivableCardAmount(n: number | string) {
+  const num = Number(n)
+  if (!Number.isFinite(num)) return '—'
+  const rounded = Math.round(num)
+  const s = new Intl.NumberFormat('ru-RU', {
+    minimumFractionDigits: 0,
+    maximumFractionDigits: 0,
+  })
+    .format(rounded)
+    .replace(/[\u00A0\u202F]/g, ' ')
+  return `${s} Uzs`
+}
+
 export function formatDate(d?: string | null) {
   if (!d) return '—'
   return new Date(d).toLocaleDateString('ru-RU', { day: '2-digit', month: 'short', year: 'numeric' })

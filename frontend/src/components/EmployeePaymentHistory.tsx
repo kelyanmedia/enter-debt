@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useState } from 'react'
 import api from '@/lib/api'
+import { useAuth } from '@/context/AuthContext'
 import {
   BtnOutline,
   BtnPrimary,
@@ -65,6 +66,8 @@ export function EmployeePaymentHistory({
   userId?: number
   startWithAddForm?: boolean
 }) {
+  const { user: authUser } = useAuth()
+  const showBudgetSplit = mode === 'admin' || !!authUser?.is_ad_budget_employee
   const [rows, setRows] = useState<PaymentRow[]>([])
   const [loading, setLoading] = useState(false)
   const [addOpen, setAddOpen] = useState(false)
@@ -111,7 +114,7 @@ export function EmployeePaymentHistory({
       setError('Укажите сумму')
       return
     }
-    if (mode === 'admin' && form.include_budget) {
+    if (showBudgetSplit && form.include_budget) {
       const at = Number(String(form.amount).replace(/\s/g, '').replace(',', '.'))
       const bt = Number(String(form.budget_amount).replace(/\s/g, '').replace(',', '.'))
       if (!form.budget_amount.trim() || !Number.isFinite(bt) || bt <= 0) {
@@ -136,7 +139,7 @@ export function EmployeePaymentHistory({
       }
       if (mode === 'admin' && userId != null) fd.append('user_id', String(userId))
       if (form.file) fd.append('file', form.file)
-      if (mode === 'admin' && form.include_budget && form.budget_amount.trim()) {
+      if (showBudgetSplit && form.include_budget && form.budget_amount.trim()) {
         fd.append('budget_amount', form.budget_amount.replace(',', '.'))
       }
       await api.post('employee-payment-records', fd)
@@ -312,7 +315,7 @@ export function EmployeePaymentHistory({
             </Select>
           </Field>
         </div>
-        {mode === 'admin' && (
+        {showBudgetSplit && (
           <>
             <label
               style={{
@@ -336,10 +339,14 @@ export function EmployeePaymentHistory({
                   }))
                 }
               />
-              <span>В переводе есть бюджет клиента (не учитывать в P&L и «Расходах»)</span>
+              <span>
+                {mode === 'employee'
+                  ? 'Указать долю рекламного бюджета в переводе (остальное — услуга, попадёт в P&L). Без галочки вся сумма считается бюджетом клиента.'
+                  : 'В переводе есть бюджет клиента (не учитывать в P&L и «Расходах»)'}
+              </span>
             </label>
             {form.include_budget && (
-              <Field label="Сумма бюджета в этой выплате">
+              <Field label="Сумма бюджета (реклама) в этой выплате">
                 <MoneyInput
                   value={form.budget_amount}
                   onChange={(v) => setForm((f) => ({ ...f, budget_amount: v }))}

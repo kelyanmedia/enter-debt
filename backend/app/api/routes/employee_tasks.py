@@ -4,12 +4,13 @@ from decimal import Decimal
 from typing import List, Optional, Union
 
 from fastapi import APIRouter, Depends, HTTPException, Query
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import Session, joinedload
 from sqlalchemy import extract, func
 
 from app.db.database import get_db
 from app.models.user import User
 from app.models.employee_task import EmployeeTask
+from app.models.payment import Payment
 from app.schemas.schemas import (
     EmployeeTaskCreate,
     EmployeeTaskUpdate,
@@ -75,6 +76,55 @@ def _validate_payload(data: Union[EmployeeTaskCreate, EmployeeTaskUpdate], parti
         _normalize_task_budget(data.budget_amount)
 
 
+def _validate_task_cost_allocation(
+    db: Session,
+    payment_id: Optional[int],
+    category: Optional[str],
+) -> tuple[Optional[int], Optional[str]]:
+    """Пара проект + категория: оба заданы или оба сняты."""
+    cat_raw = str(category).strip().lower() if category is not None else ""
+    if category is not None and not str(category).strip():
+        cat_raw = ""
+    pid: Optional[int] = int(payment_id) if payment_id is not None else None
+    if pid is None and not cat_raw:
+        return None, None
+    if pid is None or not cat_raw:
+        raise HTTPException(
+            status_code=400,
+            detail="Укажите и проект из «Проекты», и категорию себестоимости, либо снимите оба поля.",
+        )
+    if cat_raw not in ("design", "dev", "other", "seo"):
+        raise HTTPException(status_code=400, detail="Категория: design, dev, other или seo.")
+    p = (
+        db.query(Payment)
+        .filter(Payment.id == pid, Payment.is_archived == False, Payment.trashed_at.is_(None))
+        .first()
+    )
+    if not p:
+        raise HTTPException(status_code=400, detail="Проект не найден или в архиве.")
+    return pid, cat_raw
+
+
+def _allocated_payment_label(t: EmployeeTask) -> Optional[str]:
+    ap = getattr(t, "allocated_payment", None)
+    if ap is None or not getattr(t, "allocated_payment_id", None):
+        return None
+    desc = (ap.description or "").strip() or f"#{ap.id}"
+    pn = ""
+    if getattr(ap, "partner", None):
+        pn = (ap.partner.name or "").strip()
+    base = desc + (f" · {pn}" if pn else "")
+    cat = (t.cost_category or "").strip().lower()
+    cats = {"design": "дизайн", "dev": "разработка", "other": "прочее", "seo": "SEO"}
+    tail = f" → {cats.get(cat, cat)}" if cat else ""
+    return base + tail
+
+
+def _task_to_out(t: EmployeeTask) -> EmployeeTaskOut:
+    base = EmployeeTaskOut.model_validate(t)
+    return base.model_copy(update={"allocated_payment_label": _allocated_payment_label(t)})
+
+
 def _task_query_for_user(db: Session, uid: int, year: Optional[int], month: Optional[int]):
     q = db.query(EmployeeTask).filter(EmployeeTask.user_id == uid)
     if year is not None:
@@ -118,6 +168,7 @@ def list_staff_employees(
                 payment_details=u.payment_details,
                 payment_details_updated_at=u.payment_details_updated_at,
                 task_count=int(cnt),
+                is_ad_budget_employee=bool(getattr(u, "is_ad_budget_employee", False)),
             )
         )
     return out
@@ -131,8 +182,8 @@ def staff_month_totals(
     db: Session = Depends(get_db),
     _: User = Depends(require_admin),
 ):
-    u = db.query(User).filter(User.id == user_id, User.role == "employee").first()
-    if not u:
+    owner = db.query(User).filter(User.id == user_id, User.role == "employee").first()
+    if not owner:
         raise HTTPException(status_code=404, detail="Сотрудник не найден")
     rows = (
         db.query(EmployeeTask)
@@ -262,8 +313,12 @@ def list_tasks(
             raise HTTPException(status_code=404, detail="Сотрудник не найден")
         uid = user_id
 
-    q = _task_query_for_user(db, uid, year, month)
-    return [EmployeeTaskOut.model_validate(t) for t in q.all()]
+    q = (
+        _task_query_for_user(db, uid, year, month).options(
+            joinedload(EmployeeTask.allocated_payment).joinedload(Payment.partner),
+        )
+    )
+    return [_task_to_out(t) for t in q.all()]
 
 
 @router.get("/months-with-tasks", response_model=List[int])
@@ -316,6 +371,22 @@ def create_task(
     st = data.status or "not_started"
     now = datetime.now(timezone.utc)
     b_norm = _normalize_task_budget(data.budget_amount)
+    owner = db.query(User).filter(User.id == target_uid).first()
+    if (
+        owner
+        and bool(getattr(owner, "is_ad_budget_employee", False))
+        and data.amount is not None
+        and b_norm is None
+    ):
+        b_norm = Decimal(str(data.amount))
+    apid: Optional[int] = None
+    ccat: Optional[str] = None
+    if current_user.role == "admin":
+        apid, ccat = _validate_task_cost_allocation(
+            db,
+            getattr(data, "allocated_payment_id", None),
+            getattr(data, "cost_category", None),
+        )
     t = EmployeeTask(
         user_id=target_uid,
         work_date=data.work_date,
@@ -330,11 +401,19 @@ def create_task(
         paid=paid_flag,
         done_at=now if st == "done" else None,
         paid_at=now if paid_flag else None,
+        allocated_payment_id=apid,
+        cost_category=ccat,
     )
     db.add(t)
     db.commit()
     db.refresh(t)
-    return EmployeeTaskOut.model_validate(t)
+    t = (
+        db.query(EmployeeTask)
+        .options(joinedload(EmployeeTask.allocated_payment).joinedload(Payment.partner))
+        .filter(EmployeeTask.id == t.id)
+        .first()
+    )
+    return _task_to_out(t)
 
 
 @router.patch("/{task_id}", response_model=EmployeeTaskOut)
@@ -351,7 +430,8 @@ def update_task(
         raise HTTPException(status_code=403, detail="Нет доступа")
 
     _validate_payload(data, partial=True)
-    upd = data.model_dump(exclude_unset=True)
+    dump = data.model_dump(exclude_unset=True)
+    upd = {k: v for k, v in dump.items() if k not in ("allocated_payment_id", "cost_category")}
     old_status = t.status
     old_paid = t.paid
 
@@ -364,6 +444,14 @@ def update_task(
                 )
             if t.paid:
                 upd.pop("paid", None)
+
+    if current_user.role == "admin":
+        if "allocated_payment_id" in dump or "cost_category" in dump:
+            pid = dump["allocated_payment_id"] if "allocated_payment_id" in dump else t.allocated_payment_id
+            cat = dump["cost_category"] if "cost_category" in dump else t.cost_category
+            npid, ncat = _validate_task_cost_allocation(db, pid, cat)
+            t.allocated_payment_id = npid
+            t.cost_category = ncat
 
     next_status = upd["status"] if "status" in upd else t.status
     next_paid = upd["paid"] if "paid" in upd else t.paid
@@ -403,37 +491,60 @@ def update_task(
     elif not t.paid:
         t.paid_at = None
 
+    owner = db.query(User).filter(User.id == t.user_id).first()
+    if (
+        owner
+        and bool(getattr(owner, "is_ad_budget_employee", False))
+        and t.amount is not None
+        and t.budget_amount is None
+    ):
+        t.budget_amount = Decimal(str(t.amount))
+
     db.commit()
-    db.refresh(t)
-    return EmployeeTaskOut.model_validate(t)
+    t = (
+        db.query(EmployeeTask)
+        .options(joinedload(EmployeeTask.allocated_payment).joinedload(Payment.partner))
+        .filter(EmployeeTask.id == t.id)
+        .first()
+    )
+    return _task_to_out(t)
 
 
 @router.post("/{task_id}/move-next-month", response_model=EmployeeTaskOut)
 def move_task_next_month(
     task_id: int,
     db: Session = Depends(get_db),
-    _: User = Depends(require_admin),
+    current_user: User = Depends(_require_employee_or_admin),
 ):
-    """Переносит задачу на следующий календарный месяц (та же строка)."""
+    """Переносит задачу на следующий календарный месяц (та же строка). Сотрудник — только свои задачи."""
     t = db.query(EmployeeTask).filter(EmployeeTask.id == task_id).first()
     if not t:
         raise HTTPException(status_code=404, detail="Задача не найдена")
+    if current_user.role == "employee" and t.user_id != current_user.id:
+        raise HTTPException(status_code=403, detail="Нет доступа")
     t.work_date = _add_one_calendar_month(t.work_date)
     db.commit()
-    db.refresh(t)
-    return EmployeeTaskOut.model_validate(t)
+    t = (
+        db.query(EmployeeTask)
+        .options(joinedload(EmployeeTask.allocated_payment).joinedload(Payment.partner))
+        .filter(EmployeeTask.id == t.id)
+        .first()
+    )
+    return _task_to_out(t)
 
 
 @router.post("/{task_id}/duplicate-next-month", response_model=EmployeeTaskOut)
 def duplicate_task_next_month(
     task_id: int,
     db: Session = Depends(get_db),
-    _: User = Depends(require_admin),
+    current_user: User = Depends(_require_employee_or_admin),
 ):
-    """Копия строки в следующем месяце; исходная остаётся."""
+    """Копия строки в следующем месяце; исходная остаётся. Сотрудник — только свои задачи."""
     src = db.query(EmployeeTask).filter(EmployeeTask.id == task_id).first()
     if not src:
         raise HTTPException(status_code=404, detail="Задача не найдена")
+    if current_user.role == "employee" and src.user_id != current_user.id:
+        raise HTTPException(status_code=403, detail="Нет доступа")
     new_d = _add_one_calendar_month(src.work_date)
     clone = EmployeeTask(
         user_id=src.user_id,
@@ -447,11 +558,18 @@ def duplicate_task_next_month(
         currency=(src.currency or "USD").upper(),
         status="not_started",
         paid=False,
+        allocated_payment_id=src.allocated_payment_id,
+        cost_category=src.cost_category,
     )
     db.add(clone)
     db.commit()
-    db.refresh(clone)
-    return EmployeeTaskOut.model_validate(clone)
+    t = (
+        db.query(EmployeeTask)
+        .options(joinedload(EmployeeTask.allocated_payment).joinedload(Payment.partner))
+        .filter(EmployeeTask.id == clone.id)
+        .first()
+    )
+    return _task_to_out(t)
 
 
 @router.delete("/{task_id}")

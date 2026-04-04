@@ -1,9 +1,13 @@
-import { useEffect, useState } from 'react'
+import { Fragment, useEffect, useMemo, useState } from 'react'
 import { useRouter } from 'next/router'
 import Layout from '@/components/Layout'
 import { PageHeader, Card, Th, Td, statusBadge, BtnPrimary, BtnOutline, BtnIconEdit, Modal, ConfirmModal, Field, Input, Select, Empty, Badge, IntegerGroupedInput, formatMoneyNumber } from '@/components/ui'
 import { useAuth } from '@/context/AuthContext'
 import api from '@/lib/api'
+import {
+  PAYMENT_DETAILS_HOVER_WHY,
+  PAYMENT_DETAILS_PLACEHOLDER,
+} from '@/lib/paymentRequisitesCopy'
 
 interface User {
   id: number; name: string; email: string; role: string
@@ -18,6 +22,7 @@ interface User {
   admin_telegram_notify_manager_ids?: number[]
   payment_details?: string | null
   multi_company_access?: boolean
+  is_ad_budget_employee?: boolean
   last_login_at?: string | null
 }
 interface PartnerRow { id: number; name: string }
@@ -31,9 +36,22 @@ interface TelegramJoinRequest {
   created_at: string
 }
 
+/** Порядок блоков на странице «Пользователи» (каждая роль — отдельная секция). */
+const ROLE_SECTIONS: { role: string; title: string }[] = [
+  { role: 'admin', title: 'Администраторы' },
+  { role: 'manager', title: 'Менеджеры' },
+  { role: 'accountant', title: 'Бухгалтерия' },
+  { role: 'financier', title: 'Финансисты' },
+  { role: 'administration', title: 'Администрация' },
+  { role: 'employee', title: 'Сотрудники (freelance)' },
+]
+
+type UserRoleFilter = 'all' | 'manager' | 'employee'
+
 const EMPTY = {
   name: '', email: '', password: '', role: 'manager', telegram_chat_id: '', telegram_username: '', is_active: 'true',
   see_all_partners: 'false', new_password: '', payment_details: '', multi_company_access: 'false',
+  is_ad_budget_employee: 'false',
   can_view_subscriptions: 'false', can_view_accesses: 'false',
   can_enter_cash_flow: 'false',
   admin_telegram_notify_all: 'false',
@@ -66,6 +84,7 @@ export default function UsersPage() {
   const [visibleManagerIds, setVisibleManagerIds] = useState<number[]>([])
   const [adminNotifyManagerIds, setAdminNotifyManagerIds] = useState<number[]>([])
   const [managerOptions, setManagerOptions] = useState<User[]>([])
+  const [userRoleFilter, setUserRoleFilter] = useState<UserRoleFilter>('all')
 
   const loadAll = () => {
     api.get('users').then(r => setUsers(r.data)).catch(() => setUsers([]))
@@ -104,6 +123,7 @@ export default function UsersPage() {
       new_password: '',
       payment_details: u.payment_details || '',
       multi_company_access: u.multi_company_access ? 'true' : 'false',
+      is_ad_budget_employee: u.is_ad_budget_employee ? 'true' : 'false',
     })
     setError('')
     setAssignedPartnerIds([])
@@ -172,6 +192,7 @@ export default function UsersPage() {
         if (form.role === 'employee') {
           payload.payment_details = form.payment_details.trim() || null
           payload.multi_company_access = form.multi_company_access === 'true'
+          payload.is_ad_budget_employee = form.is_ad_budget_employee === 'true'
         }
         if (form.new_password.trim()) payload.password = form.new_password.trim()
         await api.patch(`users/${editing.id}`, payload)
@@ -196,6 +217,7 @@ export default function UsersPage() {
           can_enter_cash_flow: form.role === 'administration' ? form.can_enter_cash_flow === 'true' : undefined,
           payment_details: form.role === 'employee' ? (form.payment_details.trim() || null) : undefined,
           multi_company_access: form.role === 'employee' ? form.multi_company_access === 'true' : false,
+          is_ad_budget_employee: form.role === 'employee' ? form.is_ad_budget_employee === 'true' : false,
           admin_telegram_notify_all: form.role === 'admin' ? form.admin_telegram_notify_all === 'true' : undefined,
           admin_telegram_notify_manager_ids: form.role === 'admin' ? adminNotifyManagerIds : undefined,
         })
@@ -296,6 +318,27 @@ export default function UsersPage() {
 
   const deleteUserTarget = deleteUserId != null ? users.find(x => x.id === deleteUserId) : null
 
+  const filteredUsers = useMemo(() => {
+    if (userRoleFilter === 'manager') return users.filter((u) => u.role === 'manager')
+    if (userRoleFilter === 'employee') return users.filter((u) => u.role === 'employee')
+    return users
+  }, [users, userRoleFilter])
+
+  const userSections = useMemo(() => {
+    const template =
+      userRoleFilter === 'manager'
+        ? ROLE_SECTIONS.filter((s) => s.role === 'manager')
+        : userRoleFilter === 'employee'
+          ? ROLE_SECTIONS.filter((s) => s.role === 'employee')
+          : ROLE_SECTIONS
+    return template
+      .map((section) => ({
+        ...section,
+        items: filteredUsers.filter((u) => u.role === section.role),
+      }))
+      .filter((s) => s.items.length > 0)
+  }, [filteredUsers, userRoleFilter])
+
   const formatLastLogin = (iso?: string | null) => {
     if (!iso) return '—'
     return new Date(iso).toLocaleString('ru-RU', {
@@ -344,75 +387,127 @@ export default function UsersPage() {
             </div>
           </Card>
         )}
-        <Card>
-          <table style={{ width: '100%', borderCollapse: 'collapse' }}>
-            <thead>
-              <tr>
-                <Th>Пользователь</Th>
-                <Th>Роль</Th>
-                <Th>Telegram</Th>
-                <Th>Получает пуши</Th>
-                <Th>Доступ к данным</Th>
-                <Th>Последний вход (веб)</Th>
-                <Th>Активен</Th>
-                <Th></Th>
-              </tr>
-            </thead>
-            <tbody>
-              {users.map(u => (
-                <tr key={u.id} style={{ borderBottom: '1px solid #e8e9ef' }}>
-                  <Td>
-                    <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
-                      <div style={{ width: 32, height: 32, borderRadius: '50%', background: '#e8f5ee', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 12, fontWeight: 700, color: '#1a6b3c' }}>
-                        {u.name.split(' ').map(w => w[0]).join('').slice(0, 2).toUpperCase()}
-                      </div>
-                      <div>
-                        <div style={{ fontWeight: 600 }}>{u.name}</div>
-                        <div style={{ fontSize: 11, color: '#8a8fa8' }}>{u.email}</div>
-                      </div>
-                    </div>
-                  </Td>
-                  <Td>{statusBadge(u.role)}</Td>
-                  <Td>
-                    {u.telegram_username ? <span style={{ fontFamily: 'monospace', fontSize: 12 }}>@{u.telegram_username}</span> : '—'}
-                    {u.telegram_chat_id != null && u.telegram_chat_id !== 0 && (
-                      <div style={{ fontSize: 11, color: '#8a8fa8' }}>ID: {formatMoneyNumber(u.telegram_chat_id)}</div>
-                    )}
-                  </Td>
-                  <Td style={{ fontSize: 12, color: '#8a8fa8' }}>
-                    {u.web_access === false ? 'Только Telegram' : roleNotifLabel[u.role]}
-                  </Td>
-                  <Td style={{ fontSize: 11, color: '#8a8fa8' }}>
-                    {u.role === 'manager'
-                      ? (u.see_all_partners ? 'Все партнёры' : 'Только назначенные')
-                      : u.role === 'administration'
-                        ? `${(u.visible_manager_ids || []).length} менеджер(ов) · Подписки: ${u.can_view_subscriptions ? 'да' : 'нет'} · Доступы: ${u.can_view_accesses ? 'да' : 'нет'}`
-                        : u.role === 'employee'
-                          ? 'Только «Мои задачи»'
-                          : u.role === 'financier'
-                            ? 'CEO, P&L, ДДС, оплаты, расходы'
-                            : '—'}
-                  </Td>
-                  <Td style={{ fontSize: 12, color: '#6b7280', whiteSpace: 'nowrap' }}>{formatLastLogin(u.last_login_at)}</Td>
-                  <Td><Badge variant={u.is_active ? 'green' : 'gray'}>{u.is_active ? 'Да' : 'Нет'}</Badge></Td>
-                  <Td>
-                    <div style={{ display: 'flex', gap: 6, justifyContent: 'flex-end', alignItems: 'center' }}>
-                      <BtnIconEdit onClick={() => openEdit(u)} />
-                      {user?.role === 'admin' && user.id !== u.id && u.is_active && (
-                        <BtnOutline
-                          onClick={() => setDeleteUserId(u.id)}
-                          style={{ padding: '5px 10px', fontSize: 12, color: '#e84040' }}
-                        >
-                          ✕
-                        </BtnOutline>
-                      )}
-                    </div>
-                  </Td>
+        <Card style={{ overflow: 'hidden' }}>
+          <div
+            style={{
+              display: 'flex',
+              alignItems: 'center',
+              gap: 12,
+              padding: '14px 18px',
+              borderBottom: '1px solid #e8e9ef',
+              flexWrap: 'wrap',
+              background: '#fafbfc',
+            }}
+          >
+            <span style={{ fontSize: 12, fontWeight: 700, color: '#64748b', textTransform: 'uppercase', letterSpacing: '0.04em' }}>
+              Кто в списке
+            </span>
+            <Select
+              value={userRoleFilter}
+              onChange={(e) => setUserRoleFilter(e.target.value as UserRoleFilter)}
+              style={{ minWidth: 220, fontSize: 14 }}
+            >
+              <option value="all">Все роли по группам</option>
+              <option value="manager">Только менеджеры</option>
+              <option value="employee">Только сотрудники (freelance)</option>
+            </Select>
+            <span style={{ fontSize: 12, color: '#94a3b8' }}>
+              Секции ниже — по ролям подряд; фильтр сужает таблицу.
+            </span>
+          </div>
+          <div style={{ overflowX: 'auto' }}>
+            <table style={{ width: '100%', borderCollapse: 'collapse' }}>
+              <thead>
+                <tr>
+                  <Th>Пользователь</Th>
+                  <Th>Роль</Th>
+                  <Th>Telegram</Th>
+                  <Th>Получает пуши</Th>
+                  <Th>Доступ к данным</Th>
+                  <Th>Последний вход (веб)</Th>
+                  <Th>Активен</Th>
+                  <Th></Th>
                 </tr>
-              ))}
-            </tbody>
-          </table>
+              </thead>
+              <tbody>
+                {userSections.map((section) => (
+                  <Fragment key={section.role}>
+                    <tr style={{ background: '#f1f5f9' }}>
+                      <td
+                        colSpan={8}
+                        style={{
+                          padding: '10px 18px',
+                          fontSize: 13,
+                          fontWeight: 700,
+                          color: '#334155',
+                          borderBottom: '1px solid #e2e8f0',
+                          borderTop: '1px solid #e2e8f0',
+                        }}
+                      >
+                        {section.title}
+                        <span style={{ fontWeight: 600, color: '#94a3b8', marginLeft: 8 }}>· {section.items.length}</span>
+                      </td>
+                    </tr>
+                    {section.items.map((u) => (
+                      <tr key={u.id} style={{ borderBottom: '1px solid #e8e9ef' }}>
+                        <Td>
+                          <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+                            <div style={{ width: 32, height: 32, borderRadius: '50%', background: '#e8f5ee', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 12, fontWeight: 700, color: '#1a6b3c' }}>
+                              {u.name.split(' ').map(w => w[0]).join('').slice(0, 2).toUpperCase()}
+                            </div>
+                            <div>
+                              <div style={{ fontWeight: 600 }}>{u.name}</div>
+                              <div style={{ fontSize: 11, color: '#8a8fa8' }}>{u.email}</div>
+                            </div>
+                          </div>
+                        </Td>
+                        <Td>{statusBadge(u.role)}</Td>
+                        <Td>
+                          {u.telegram_username ? <span style={{ fontFamily: 'monospace', fontSize: 12 }}>@{u.telegram_username}</span> : '—'}
+                          {u.telegram_chat_id != null && u.telegram_chat_id !== 0 && (
+                            <div style={{ fontSize: 11, color: '#8a8fa8' }}>ID: {formatMoneyNumber(u.telegram_chat_id)}</div>
+                          )}
+                        </Td>
+                        <Td style={{ fontSize: 12, color: '#8a8fa8' }}>
+                          {u.web_access === false ? 'Только Telegram' : roleNotifLabel[u.role]}
+                        </Td>
+                        <Td style={{ fontSize: 11, color: '#8a8fa8' }}>
+                          {u.role === 'manager'
+                            ? (u.see_all_partners ? 'Все партнёры' : 'Только назначенные')
+                            : u.role === 'administration'
+                              ? `${(u.visible_manager_ids || []).length} менеджер(ов) · Подписки: ${u.can_view_subscriptions ? 'да' : 'нет'} · Доступы: ${u.can_view_accesses ? 'да' : 'нет'}`
+                              : u.role === 'employee'
+                                ? 'Только «Мои задачи»'
+                                : u.role === 'financier'
+                                  ? 'CEO, P&L, ДДС, оплаты, расходы'
+                                  : '—'}
+                        </Td>
+                        <Td style={{ fontSize: 12, color: '#6b7280', whiteSpace: 'nowrap' }}>{formatLastLogin(u.last_login_at)}</Td>
+                        <Td><Badge variant={u.is_active ? 'green' : 'gray'}>{u.is_active ? 'Да' : 'Нет'}</Badge></Td>
+                        <Td>
+                          <div style={{ display: 'flex', gap: 6, justifyContent: 'flex-end', alignItems: 'center' }}>
+                            <BtnIconEdit onClick={() => openEdit(u)} />
+                            {user?.role === 'admin' && user.id !== u.id && u.is_active && (
+                              <BtnOutline
+                                onClick={() => setDeleteUserId(u.id)}
+                                style={{ padding: '5px 10px', fontSize: 12, color: '#e84040' }}
+                              >
+                                ✕
+                              </BtnOutline>
+                            )}
+                          </div>
+                        </Td>
+                      </tr>
+                    ))}
+                  </Fragment>
+                ))}
+              </tbody>
+            </table>
+          </div>
           {users.length === 0 && <Empty text="Пользователей нет" />}
+          {users.length > 0 && userSections.length === 0 && (
+            <Empty text="Нет пользователей в выбранном фильтре" />
+          )}
         </Card>
       </div>
 
@@ -572,14 +667,32 @@ export default function UsersPage() {
         {form.role === 'employee' && (
           <>
             <Field label="Реквизиты для выплат (Visa, Uzcard, карта, IBAN…)">
+              <div
+                style={{
+                  fontSize: 11,
+                  color: '#64748b',
+                  marginBottom: 8,
+                  lineHeight: 1.45,
+                  padding: '8px 10px',
+                  background: '#f8fafc',
+                  borderRadius: 8,
+                  border: '1px solid #e8e9ef',
+                }}
+                title={PAYMENT_DETAILS_HOVER_WHY}
+              >
+                Попросите сотрудника указать <strong>номер карты/счёта</strong> и <strong>ФИО</strong> как в банке; при оплате
+                криптой — <strong>сеть</strong> (TRC20 и т.д.) и <strong>полный адрес кошелька</strong>. Наведите на поле
+                ниже — зачем единый формат.
+              </div>
               <textarea
                 value={form.payment_details}
                 onChange={e => setForm(f => ({ ...f, payment_details: e.target.value }))}
-                placeholder="Всё в одном поле — как вам удобно копировать раз в месяц"
-                rows={4}
+                placeholder={PAYMENT_DETAILS_PLACEHOLDER}
+                title={PAYMENT_DETAILS_HOVER_WHY}
+                rows={5}
                 style={{
                   width: '100%',
-                  border: '1px solid #e8e9ef',
+                  border: '1px solid #cbd5e1',
                   borderRadius: 9,
                   padding: '10px 12px',
                   fontSize: 13,
@@ -597,6 +710,31 @@ export default function UsersPage() {
                 <option value="true">Да — переключатель компаний в боковой панели (у каждой компании свои задачи и выплаты)</option>
               </Select>
             </Field>
+            <label
+              style={{
+                display: 'flex',
+                alignItems: 'flex-start',
+                gap: 10,
+                cursor: 'pointer',
+                fontSize: 13,
+                color: '#334155',
+                marginBottom: 14,
+                lineHeight: 1.45,
+              }}
+            >
+              <input
+                type="checkbox"
+                checked={form.is_ad_budget_employee === 'true'}
+                onChange={(e) => setForm((f) => ({ ...f, is_ad_budget_employee: e.target.checked ? 'true' : 'false' }))}
+                style={{ marginTop: 3 }}
+              />
+              <span>
+                <strong>Бюджет</strong> — ведёт рекламный бюджет клиента (проходные деньги). Переводы и задачи{' '}
+                <strong>без указания доли «бюджет»</strong> целиком не попадают в P&L и строку «Зарплатный фонд»; в расходах остаётся только сумма
+                «услуга» (общая сумма минус бюджет). Чтобы отметить долю бюджета или услуги — галочка «В переводе есть бюджет клиента» при записи выплаты
+                или при задаче.
+              </span>
+            </label>
           </>
         )}
         {form.role === 'manager' && (

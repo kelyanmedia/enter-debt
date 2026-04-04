@@ -3,6 +3,11 @@ import Layout from '@/components/Layout'
 import { PageHeader, Card, Field, Input, BtnPrimary, BtnOutline, Modal } from '@/components/ui'
 import { useAuth } from '@/context/AuthContext'
 import api from '@/lib/api'
+import {
+  PAYMENT_DETAILS_EXAMPLE_LINES,
+  PAYMENT_DETAILS_HOVER_WHY,
+  PAYMENT_DETAILS_PLACEHOLDER,
+} from '@/lib/paymentRequisitesCopy'
 
 const roleLabel: Record<string, string> = {
   admin: 'Администратор',
@@ -222,8 +227,13 @@ export default function ProfilePage() {
 
             {user.role === 'employee' && (
               <div style={{ marginBottom: 18 }}>
-                <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 6 }}>
-                  <span style={{ fontSize: 13, fontWeight: 600, color: '#1a1d23' }}>Реквизиты для выплат</span>
+                <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 6, flexWrap: 'wrap' }}>
+                  <span
+                    style={{ fontSize: 13, fontWeight: 600, color: '#1a1d23' }}
+                    title={PAYMENT_DETAILS_HOVER_WHY}
+                  >
+                    Реквизиты для выплат (Visa, Uzcard, карта, IBAN…)
+                  </span>
                   <button
                     type="button"
                     onClick={() => setRequisitesHintOpen(true)}
@@ -239,26 +249,44 @@ export default function ProfilePage() {
                       cursor: 'pointer',
                       lineHeight: 1,
                     }}
-                    title="Справка"
+                    title="Открыть пример заполнения"
                   >
                     ?
                   </button>
                 </div>
+                <div
+                  style={{
+                    fontSize: 11,
+                    color: '#64748b',
+                    marginBottom: 8,
+                    lineHeight: 1.45,
+                    padding: '8px 10px',
+                    background: '#f1f5f9',
+                    borderRadius: 8,
+                    border: '1px solid #e2e8f0',
+                  }}
+                >
+                  <strong style={{ color: '#475569' }}>Как писать:</strong> укажите{' '}
+                  <strong>номер карты или счёта</strong> и <strong>фамилию, имя</strong> (как в банке); для крипты —{' '}
+                  <strong>сеть</strong> (например USDT TRC20) и <strong>полный адрес кошелька</strong>. Наведите на поле
+                  ниже — кратко, <strong>зачем</strong> такой формат.
+                </div>
                 <textarea
                   value={paymentDetails}
                   onChange={e => setPaymentDetails(e.target.value)}
-                  placeholder="Карта, Uzcard, счёт, ФИО получателя…"
-                  rows={5}
+                  placeholder={PAYMENT_DETAILS_PLACEHOLDER}
+                  title={PAYMENT_DETAILS_HOVER_WHY}
+                  rows={6}
                   style={{
                     width: '100%',
                     boxSizing: 'border-box',
                     padding: '10px 12px',
                     borderRadius: 10,
-                    border: '1px solid #e8e9ef',
+                    border: '1px solid #cbd5e1',
                     fontSize: 14,
                     fontFamily: 'inherit',
                     resize: 'vertical',
-                    minHeight: 100,
+                    minHeight: 120,
                   }}
                 />
                 <div style={{ fontSize: 12, color: '#8a8fa8', marginTop: 6, lineHeight: 1.45 }}>
@@ -351,12 +379,31 @@ export default function ProfilePage() {
       <Modal
         open={requisitesHintOpen}
         onClose={() => setRequisitesHintOpen(false)}
-        title="Реквизиты"
+        title="Как заполнить реквизиты"
         footer={<BtnPrimary onClick={() => setRequisitesHintOpen(false)}>Понятно</BtnPrimary>}
       >
-        <p style={{ margin: 0, fontSize: 14, color: '#475569', lineHeight: 1.55 }}>
-          Укажите данные для перевода выплаты (карта, банк, телефон и т.д.). Изменения видит администратор в разделе «Команда»;
-          при обновлении текст подсвечивается жёлтым один месяц, чтобы бухгалтерия заметила правку.
+        <p style={{ margin: '0 0 12px', fontSize: 14, color: '#475569', lineHeight: 1.55 }}>
+          <strong>Зачем так:</strong> бухгалтерия копирует ваш текст в банк или криптоплатёж. Если сразу видно номер, ФИО как в
+          договоре с банком и (при крипте) сеть + полный адрес — не нужно отдельно писать вам в личку, реже ошибки и возвраты,
+          выплата уходит быстрее. Данные доступны только админам вашей организации.
+        </p>
+        <div
+          style={{
+            fontSize: 13,
+            fontFamily: 'ui-monospace, SFMono-Regular, Menlo, monospace',
+            color: '#334155',
+            lineHeight: 1.5,
+            padding: '12px 14px',
+            background: '#f8fafc',
+            borderRadius: 8,
+            border: '1px solid #e2e8f0',
+            whiteSpace: 'pre-wrap',
+          }}
+        >
+          {PAYMENT_DETAILS_EXAMPLE_LINES.join('\n')}
+        </div>
+        <p style={{ margin: '12px 0 0', fontSize: 13, color: '#64748b', lineHeight: 1.5 }}>
+          Можете скопировать пример, заменить на свои данные и сохранить. Одно поле — удобно вставлять в платёжку раз в месяц целиком.
         </p>
       </Modal>
     </Layout>

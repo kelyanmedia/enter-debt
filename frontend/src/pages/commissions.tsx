@@ -1,4 +1,4 @@
-import { useEffect, useState, useCallback } from 'react'
+import { useEffect, useState, useCallback, useMemo } from 'react'
 import { useRouter } from 'next/router'
 import { useAuth } from '@/context/AuthContext'
 import Layout from '@/components/Layout'
@@ -11,7 +11,12 @@ import api from '@/lib/api'
 // ── Types ─────────────────────────────────────────────────────────────────────
 interface Manager { id: number; name: string }
 
-interface LinkablePayment { id: number; description: string; partner_name: string }
+interface LinkablePayment {
+  id: number
+  description: string
+  partner_name: string
+  partner_manager_name?: string | null
+}
 
 interface Commission {
   id: number
@@ -23,6 +28,8 @@ interface Commission {
   actual_payment: number | null
   received_amount_1: number | null
   received_amount_2: number | null
+  received_amount_1_on?: string | null
+  received_amount_2_on?: string | null
   commission_paid_full: boolean
   project_date: string
   note: string | null
@@ -73,6 +80,8 @@ const EMPTY_FORM = {
   manager_id: '',
   payment_id: '',
   duplicate_months: '0',
+  received_amount_1_on: '',
+  received_amount_2_on: '',
 }
 
 function typeBadge(t: string) {
@@ -193,12 +202,19 @@ export default function CommissionsPage() {
 
   const [deleteId, setDeleteId] = useState<number | null>(null)
   const [linkablePayments, setLinkablePayments] = useState<LinkablePayment[]>([])
+  const [paymentLinkSearch, setPaymentLinkSearch] = useState('')
 
-  const effectiveManagerIdForLink = (): number | null => {
-    if (user?.role === 'manager') return user.id
-    if (showManagerScope && form.manager_id) return parseInt(form.manager_id, 10)
-    return null
-  }
+  const filteredLinkablePayments = useMemo(() => {
+    const q = paymentLinkSearch.trim().toLowerCase()
+    if (!q) return linkablePayments
+    return linkablePayments.filter((p) => {
+      const desc = (p.description || '').toLowerCase()
+      const pn = (p.partner_name || '').toLowerCase()
+      const pm = (p.partner_manager_name || '').toLowerCase()
+      const idStr = String(p.id)
+      return desc.includes(q) || pn.includes(q) || pm.includes(q) || idStr.includes(q)
+    })
+  }, [linkablePayments, paymentLinkSearch])
 
   // ── Fetch ──────────────────────────────────────────────────────────────────
   const load = useCallback(async () => {
@@ -244,17 +260,13 @@ export default function CommissionsPage() {
 
   useEffect(() => {
     if (!modalOpen) return
-    const mid = effectiveManagerIdForLink()
-    if (mid == null || !Number.isFinite(mid)) {
-      setLinkablePayments([])
-      return
-    }
-    const params = user?.role === 'manager' ? {} : { manager_id: mid }
     api
-      .get<LinkablePayment[]>('commissions/linkable-payments', { params })
+      .get<LinkablePayment[]>('commissions/linkable-payments', {
+        params: { for_commission: true },
+      })
       .then((r) => setLinkablePayments(r.data || []))
       .catch(() => setLinkablePayments([]))
-  }, [modalOpen, form.manager_id, user?.role, user?.id])
+  }, [modalOpen])
 
   // ── Modal helpers ──────────────────────────────────────────────────────────
   function openAdd() {
@@ -262,6 +274,7 @@ export default function CommissionsPage() {
     const defaultMgr = user?.role === 'manager' ? String(user.id) : ''
     setForm({ ...EMPTY_FORM, manager_id: defaultMgr })
     setFormError('')
+    setPaymentLinkSearch('')
     setModalOpen(true)
   }
 
@@ -277,6 +290,8 @@ export default function CommissionsPage() {
       actual_payment: c.actual_payment != null ? pf(c.actual_payment) : '',
       received_amount_1: c.received_amount_1 != null ? pf(c.received_amount_1) : '',
       received_amount_2: c.received_amount_2 != null ? pf(c.received_amount_2) : '',
+      received_amount_1_on: c.received_amount_1_on ? String(c.received_amount_1_on).slice(0, 10) : '',
+      received_amount_2_on: c.received_amount_2_on ? String(c.received_amount_2_on).slice(0, 10) : '',
       commission_paid_full: c.commission_paid_full,
       project_date: c.project_date,
       note: c.note || '',
@@ -285,7 +300,13 @@ export default function CommissionsPage() {
       duplicate_months: '0',
     })
     setFormError('')
+    setPaymentLinkSearch('')
     setModalOpen(true)
+  }
+
+  function closeModal() {
+    setModalOpen(false)
+    setPaymentLinkSearch('')
   }
 
   function f(k: keyof typeof EMPTY_FORM, v: string | boolean) {
@@ -309,6 +330,12 @@ export default function CommissionsPage() {
         actual_payment: form.actual_payment ? parseFloat(form.actual_payment) : null,
         received_amount_1: form.received_amount_1 ? parseFloat(form.received_amount_1) : null,
         received_amount_2: form.received_amount_2 ? parseFloat(form.received_amount_2) : null,
+        received_amount_1_on: form.received_amount_1.trim()
+          ? (form.received_amount_1_on.trim() ? form.received_amount_1_on : null)
+          : null,
+        received_amount_2_on: form.received_amount_2.trim()
+          ? (form.received_amount_2_on.trim() ? form.received_amount_2_on : null)
+          : null,
         commission_paid_full: form.commission_paid_full,
         project_date: form.project_date,
         note: form.note || null,
@@ -323,7 +350,7 @@ export default function CommissionsPage() {
         body.duplicate_months = dup
         await api.post('commissions', body)
       }
-      setModalOpen(false)
+      closeModal()
       await load()
     } catch (e) {
       setFormError(formatApiError(e))
@@ -357,7 +384,7 @@ export default function CommissionsPage() {
     <Layout>
       <PageHeader
         title="Комиссия"
-        subtitle="Учёт комиссий менеджеров. Можно привязать строку к проекту из раздела «Проекты» — тогда % комиссии виден в Projects Cost. При добавлении задайте «Дубли на месяцы вперёд» для ежемесячного повторения той же карточки."
+        subtitle="Учёт комиссий: привязка к любому проекту из «Проекты» (включая проекты с другим ПМ). В P&L строка «Процент менеджера» заполняется суммами «Получено» в месяц даты получения (или даты проекта, если дату не указали). В Projects Cost из маржи вычитается резерв под %. Рекуррент: «Дублей на месяцы вперёд» при создании или кнопки «+1 мес» у строки."
         action={<BtnPrimary onClick={openAdd}>+ Добавить проект</BtnPrimary>}
       />
 
@@ -488,7 +515,29 @@ export default function CommissionsPage() {
                   </Td>
                   <Td style={{ textAlign: 'center' }}>{pctBadge(c.commission_paid_full)}</Td>
                   <Td>
-                    <div style={{ display: 'flex', gap: 6, justifyContent: 'flex-end' }}>
+                    <div style={{ display: 'flex', gap: 6, justifyContent: 'flex-end', flexWrap: 'wrap' }}>
+                      <BtnOutline
+                        type="button"
+                        title="Копия на следующий месяц (без полученных сумм)"
+                        onClick={async () => {
+                          await api.post(`commissions/${c.id}/duplicate-next-month`)
+                          await load()
+                        }}
+                        style={{ padding: '4px 8px', fontSize: 11 }}
+                      >
+                        +1 мес
+                      </BtnOutline>
+                      <BtnOutline
+                        type="button"
+                        title="Сдвинуть дату этой строки на следующий месяц"
+                        onClick={async () => {
+                          await api.post(`commissions/${c.id}/shift-next-month`)
+                          await load()
+                        }}
+                        style={{ padding: '4px 8px', fontSize: 11 }}
+                      >
+                        ⟳ дата
+                      </BtnOutline>
                       <BtnIconEdit onClick={() => openEdit(c)} />
                       <button
                         onClick={() => setDeleteId(c.id)}
@@ -540,12 +589,12 @@ export default function CommissionsPage() {
       {/* Add / Edit modal */}
       <Modal
         open={modalOpen}
-        onClose={() => setModalOpen(false)}
+        onClose={closeModal}
         title={editItem ? 'Редактировать проект' : 'Добавить проект'}
         width={600}
         footer={
           <>
-            <BtnOutline onClick={() => setModalOpen(false)}>Отмена</BtnOutline>
+            <BtnOutline onClick={closeModal}>Отмена</BtnOutline>
             <BtnPrimary onClick={save} disabled={saving}>
               {saving ? 'Сохранение…' : editItem ? 'Сохранить' : 'Добавить'}
             </BtnPrimary>
@@ -591,27 +640,127 @@ export default function CommissionsPage() {
           )}
 
           <Field label="Привязка к проекту из «Проекты» (необязательно)">
-            <Select
-              value={form.payment_id}
-              onChange={(e) => {
-                const id = e.target.value
-                setForm((p) => {
-                  const next = { ...p, payment_id: id }
-                  if (id) {
-                    const row = linkablePayments.find((x) => String(x.id) === id)
-                    if (row && !p.project_name.trim()) next.project_name = row.description
-                  }
-                  return next
-                })
+            <Input
+              value={paymentLinkSearch}
+              onChange={(e) => setPaymentLinkSearch(e.target.value)}
+              placeholder="Поиск: партнёр, название, ПМ, id…"
+              autoComplete="off"
+            />
+            <div style={{ fontSize: 11, fontWeight: 700, color: '#64748b', margin: '8px 0 6px' }}>
+              Проекты (
+              {filteredLinkablePayments.length}
+              {linkablePayments.length ? ` из ${linkablePayments.length}` : ''})
+            </div>
+            <div
+              style={{
+                maxHeight: 240,
+                overflowY: 'auto',
+                border: '1px solid #e8e9ef',
+                borderRadius: 10,
+                background: '#fff',
               }}
             >
-              <option value="">— не привязано —</option>
-              {linkablePayments.map((p) => (
-                <option key={p.id} value={p.id}>
-                  {p.partner_name}: {p.description}
-                </option>
-              ))}
-            </Select>
+              <button
+                type="button"
+                onClick={() => {
+                  setForm((p) => ({ ...p, payment_id: '' }))
+                  setFormError('')
+                }}
+                style={{
+                  width: '100%',
+                  textAlign: 'left',
+                  padding: '11px 14px',
+                  border: 'none',
+                  borderBottom: '1px solid #f1f5f9',
+                  background: !form.payment_id ? '#e8f5ee' : '#fff',
+                  cursor: 'pointer',
+                  fontFamily: 'inherit',
+                  fontSize: 13,
+                  fontWeight: 600,
+                  color: !form.payment_id ? '#14532d' : '#1a1d23',
+                }}
+              >
+                — не привязано —
+              </button>
+              {filteredLinkablePayments.length === 0 ? (
+                <div style={{ padding: 18, textAlign: 'center', color: '#94a3b8', fontSize: 13 }}>
+                  {linkablePayments.length === 0
+                    ? 'Список пуст или ещё загружается.'
+                    : 'Ничего не найдено — измените поиск.'}
+                </div>
+              ) : (
+                filteredLinkablePayments.map((p) => {
+                  const active = form.payment_id === String(p.id)
+                  return (
+                    <button
+                      key={p.id}
+                      type="button"
+                      onClick={() => {
+                        const id = String(p.id)
+                        setForm((prev) => {
+                          const next = { ...prev, payment_id: id }
+                          const row = linkablePayments.find((x) => x.id === p.id)
+                          if (row && !prev.project_name.trim()) next.project_name = row.description
+                          return next
+                        })
+                        setFormError('')
+                      }}
+                      style={{
+                        width: '100%',
+                        textAlign: 'left',
+                        padding: '11px 14px',
+                        border: 'none',
+                        borderBottom: '1px solid #f1f5f9',
+                        background: active ? '#e8f5ee' : '#fff',
+                        cursor: 'pointer',
+                        fontFamily: 'inherit',
+                        display: 'block',
+                      }}
+                    >
+                      <div style={{
+                        fontWeight: 600,
+                        fontSize: 13,
+                        color: active ? '#14532d' : '#1a1d23',
+                      }}>
+                        {p.partner_name}
+                        {p.partner_manager_name ? ` (ПМ: ${p.partner_manager_name})` : ''}
+                        {': '}
+                        {p.description}
+                      </div>
+                      <div style={{ fontSize: 10, color: '#94a3b8', marginTop: 3 }}>id {p.id}</div>
+                    </button>
+                  )
+                })
+              )}
+            </div>
+            {form.payment_id &&
+              !linkablePayments.some((p) => String(p.id) === form.payment_id) && (
+              <div
+                style={{
+                  marginTop: 8,
+                  fontSize: 12,
+                  color: '#b45309',
+                  background: '#fffbeb',
+                  border: '1px solid #fde68a',
+                  borderRadius: 8,
+                  padding: '10px 12px',
+                  lineHeight: 1.45,
+                }}
+              >
+                Текущая привязка не в списке (например, хостинг/домен). Чтобы сохранить без ошибки,
+                нажмите «— не привязано —» или выберите другой проект.
+                {editItem && (editItem.linked_partner_name || editItem.linked_payment_description) && (
+                  <div style={{ marginTop: 6, fontSize: 11, color: '#92400e' }}>
+                    Сейчас: {editItem.linked_partner_name || '—'}
+                    {editItem.linked_payment_description ? `: ${editItem.linked_payment_description}` : ''}{' '}
+                    (id {form.payment_id})
+                  </div>
+                )}
+              </div>
+            )}
+            <div style={{ fontSize: 11, color: '#94a3b8', marginTop: 6 }}>
+              Проекты типа «Хостинг/домен» в списке не показываются — по ним комиссия не начисляется.
+            </div>
           </Field>
 
           <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 14 }}>
@@ -664,18 +813,35 @@ export default function CommissionsPage() {
           </div>
 
           <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 14 }}>
-            <Field label="Полученный % (1)">
+            <Field label="Получено (1), сум">
               <MoneyInput
                 placeholder="0"
                 value={form.received_amount_1}
                 onChange={v => f('received_amount_1', v)}
               />
             </Field>
-            <Field label="Полученный % (2)">
+            <Field label="Дата в P&L для (1)">
+              <Input
+                type="date"
+                title="В какой месяц P&L попадает сумма; пусто — месяц «Дата проекта»"
+                value={form.received_amount_1_on}
+                onChange={e => f('received_amount_1_on', e.target.value)}
+              />
+            </Field>
+          </div>
+          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 14 }}>
+            <Field label="Получено (2), сум">
               <MoneyInput
                 placeholder="0"
                 value={form.received_amount_2}
                 onChange={v => f('received_amount_2', v)}
+              />
+            </Field>
+            <Field label="Дата в P&L для (2)">
+              <Input
+                type="date"
+                value={form.received_amount_2_on}
+                onChange={e => f('received_amount_2_on', e.target.value)}
               />
             </Field>
           </div>

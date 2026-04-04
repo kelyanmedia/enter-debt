@@ -27,6 +27,8 @@ interface User {
   payment_details_updated_at?: string | null
   /** Только сотрудник: переключение компаний в кабинете (иначе закреплена компания входа). */
   multi_company_access?: boolean
+  /** Только сотрудник: рекламный бюджет клиента — в P&L учитывается только доля «услуга». */
+  is_ad_budget_employee?: boolean
 }
 
 export interface CompanyOption {

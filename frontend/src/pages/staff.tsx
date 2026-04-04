@@ -28,6 +28,7 @@ interface StaffEmployee {
   payment_details?: string | null
   payment_details_updated_at?: string | null
   task_count: number
+  is_ad_budget_employee?: boolean
 }
 
 function requisitesRecentlyUpdated(iso?: string | null) {
@@ -51,6 +52,16 @@ interface TaskRow {
   status: string
   paid?: boolean
   created_at: string
+  allocated_payment_id?: number | null
+  cost_category?: string | null
+  allocated_payment_label?: string | null
+}
+
+interface AllocatablePayment {
+  id: number
+  description: string
+  partner_name: string
+  partner_manager_name?: string | null
 }
 
 interface MonthTotals {
@@ -88,6 +99,22 @@ function num(v: string | null | undefined) {
   return Number.isFinite(n) ? n : null
 }
 
+function projectsCostAllocationPayload(form: { allocated_payment_id: string; cost_category: string }):
+  | { ok: true; allocated_payment_id: number | null; cost_category: string | null }
+  | { ok: false; message: string } {
+  const payIdStr = form.allocated_payment_id.trim()
+  const cat = form.cost_category.trim().toLowerCase()
+  if (!payIdStr && !cat) return { ok: true as const, allocated_payment_id: null, cost_category: null }
+  if (!payIdStr || !cat) {
+    return {
+      ok: false as const,
+      message:
+        'Для учёта в Projects Cost выберите проект из «Проекты» и статью (дизайн / разработка / прочее / SEO), либо очистите оба поля.',
+    }
+  }
+  return { ok: true as const, allocated_payment_id: Number(payIdStr), cost_category: cat }
+}
+
 const STAFF_TASK_HINTS = {
   move:
     'Перенос в следующий месяц: дата задачи сдвигается на следующий календарный месяц, строка пропадает из текущего месяца. Подходит, если работа ещё не закрыта и переносится.',
@@ -97,6 +124,8 @@ const STAFF_TASK_HINTS = {
     'Дубль: создаётся новая строка в следующем месяце с тем же проектом и суммой; текущая строка не меняется. Удобно для повторяющихся оплат каждый месяц.',
   edit: 'Редактирование: открыть форму и изменить дату, проект, сумму, статус и другие поля.',
   delete: 'Удаление: строка удаляется без восстановления.',
+  linkPc:
+    'Проекты (Projects Cost): попап со списком проектов из «Проекты» и поиском по названию, партнёру и id. Выберите проект, статью себестоимости (дизайн / разработка / прочее / SEO) и сохраните — без открытия полной формы задачи.',
 } as const
 
 /** Тултип только при наведении на строку и на конкретную кнопку (состояние staffTipRow / staffTipKey на tr). */
@@ -207,9 +236,18 @@ export default function StaffPage() {
     include_budget: false,
     currency: 'USD',
     status: 'in_progress',
+    allocated_payment_id: '',
+    cost_category: '',
   })
   const [staffSection, setStaffSection] = useState<'tasks' | 'payments' | 'pending'>('tasks')
   const [pendingMonths, setPendingMonths] = useState<PendingPaymentMonth[]>([])
+  const [allocatablePayments, setAllocatablePayments] = useState<AllocatablePayment[]>([])
+  const [allocateModalTask, setAllocateModalTask] = useState<TaskRow | null>(null)
+  const [allocateSearch, setAllocateSearch] = useState('')
+  const [allocateSelectedId, setAllocateSelectedId] = useState<number | null>(null)
+  const [allocateCategory, setAllocateCategory] = useState('')
+  const [allocateSaving, setAllocateSaving] = useState(false)
+  const [allocateError, setAllocateError] = useState('')
 
   useEffect(() => {
     if (!loading && user && user.role !== 'admin') router.replace('/')
@@ -256,6 +294,96 @@ export default function StaffPage() {
   useEffect(() => {
     loadDetail()
   }, [loadDetail])
+
+  const loadAllocatablePayments = useCallback(() => {
+    api
+      .get<AllocatablePayment[]>('commissions/linkable-payments')
+      .then(r => setAllocatablePayments(r.data || []))
+      .catch(() => setAllocatablePayments([]))
+  }, [])
+
+  useEffect(() => {
+    if (!createModalOpen && !editTask) return
+    loadAllocatablePayments()
+  }, [createModalOpen, editTask, loadAllocatablePayments])
+
+  const filteredAllocatablePayments = useMemo(() => {
+    const q = allocateSearch.trim().toLowerCase()
+    if (!q) return allocatablePayments
+    return allocatablePayments.filter(p => {
+      const desc = (p.description || '').toLowerCase()
+      const pn = (p.partner_name || '').toLowerCase()
+      const pm = (p.partner_manager_name || '').toLowerCase()
+      const idStr = String(p.id)
+      return desc.includes(q) || pn.includes(q) || pm.includes(q) || idStr.includes(q)
+    })
+  }, [allocatablePayments, allocateSearch])
+
+  const openAllocateModal = (t: TaskRow) => {
+    setAllocateError('')
+    setAllocateSearch('')
+    setAllocateSelectedId(t.allocated_payment_id ?? null)
+    setAllocateCategory((t.cost_category || '').trim().toLowerCase())
+    setAllocateModalTask(t)
+    loadAllocatablePayments()
+  }
+
+  const closeAllocateModal = () => {
+    setAllocateModalTask(null)
+    setAllocateError('')
+    setAllocateSearch('')
+  }
+
+  const saveAllocate = async () => {
+    if (!allocateModalTask) return
+    if (allocateSelectedId == null || !allocateCategory.trim()) {
+      setAllocateError('Выберите проект в списке и статью себестоимости (или нажмите «Снять привязку»).')
+      return
+    }
+    const cat = allocateCategory.trim().toLowerCase()
+    if (!['design', 'dev', 'other', 'seo'].includes(cat)) {
+      setAllocateError('Статья: дизайн, разработка, прочее или SEO.')
+      return
+    }
+    setAllocateSaving(true)
+    setAllocateError('')
+    try {
+      await api.patch(`employee-tasks/${allocateModalTask.id}`, {
+        allocated_payment_id: allocateSelectedId,
+        cost_category: cat,
+      })
+      closeAllocateModal()
+      loadDetail()
+      loadEmployees()
+    } catch (e: unknown) {
+      const ax = e as { response?: { data?: { detail?: string } } }
+      const d = ax.response?.data?.detail
+      setAllocateError(typeof d === 'string' ? d : 'Не удалось сохранить')
+    } finally {
+      setAllocateSaving(false)
+    }
+  }
+
+  const clearAllocate = async () => {
+    if (!allocateModalTask) return
+    setAllocateSaving(true)
+    setAllocateError('')
+    try {
+      await api.patch(`employee-tasks/${allocateModalTask.id}`, {
+        allocated_payment_id: null,
+        cost_category: null,
+      })
+      closeAllocateModal()
+      loadDetail()
+      loadEmployees()
+    } catch (e: unknown) {
+      const ax = e as { response?: { data?: { detail?: string } } }
+      const d = ax.response?.data?.detail
+      setAllocateError(typeof d === 'string' ? d : 'Не удалось снять привязку')
+    } finally {
+      setAllocateSaving(false)
+    }
+  }
 
   const selected = useMemo(() => employees.find(e => e.id === selectedId) || null, [employees, selectedId])
 
@@ -326,6 +454,8 @@ export default function StaffPage() {
       include_budget: false,
       currency: 'UZS',
       status: 'in_progress',
+      allocated_payment_id: '',
+      cost_category: '',
     })
   }
 
@@ -344,6 +474,8 @@ export default function StaffPage() {
       include_budget: num(t.budget_amount) != null && (num(t.budget_amount) as number) > 0,
       currency: t.currency || 'USD',
       status: t.status,
+      allocated_payment_id: t.allocated_payment_id != null && t.allocated_payment_id !== undefined ? String(t.allocated_payment_id) : '',
+      cost_category: t.cost_category?.trim() ? t.cost_category.trim().toLowerCase() : '',
     })
   }
 
@@ -353,6 +485,11 @@ export default function StaffPage() {
     const b = form.include_budget ? parseNum(form.budget_amount) : null
     if (form.include_budget && (b == null || b <= 0)) {
       setTaskFormError('Укажите сумму бюджета больше нуля или снимите галочку «Бюджет»')
+      return
+    }
+    const alloc = projectsCostAllocationPayload(form)
+    if (alloc.ok === false) {
+      setTaskFormError(alloc.message)
       return
     }
     setSaving(true)
@@ -367,7 +504,9 @@ export default function StaffPage() {
         budget_amount: form.include_budget ? b : null,
         currency: form.currency,
         status: form.status,
-      })
+        allocated_payment_id: alloc.allocated_payment_id,
+        cost_category: alloc.cost_category,
+})
       setEditTask(null)
       loadDetail()
       loadEmployees()
@@ -392,6 +531,11 @@ export default function StaffPage() {
       setTaskFormError('Укажите сумму бюджета больше нуля или снимите галочку «Бюджет»')
       return
     }
+    const alloc = projectsCostAllocationPayload(form)
+    if (alloc.ok === false) {
+      setTaskFormError(alloc.message)
+      return
+    }
     setSaving(true)
     try {
       await api.post('employee-tasks', {
@@ -405,6 +549,8 @@ export default function StaffPage() {
         budget_amount: form.include_budget ? b : null,
         currency: form.currency,
         status: form.status,
+        allocated_payment_id: alloc.allocated_payment_id,
+        cost_category: alloc.cost_category,
       })
       setCreateModalOpen(false)
       loadDetail()
@@ -582,7 +728,7 @@ export default function StaffPage() {
     <Layout>
       <PageHeader
         title="Команда"
-        subtitle="Задачи и выплаты. Поле «бюджет» — деньги, которые вы переводите, но не учитываются в P&L и в «Расходах» (укажите ту же долю при записи выплаты в истории)."
+        subtitle="Задачи и выплаты. Привязка к Projects Cost — в форме задачи или кнопкой 🔗 в строке (поиск по проектам). Поле «бюджет» — проходные средства клиента (укажите ту же долю при записи выплаты в истории)."
       />
       <div style={{ padding: '22px 24px', overflow: 'auto', flex: 1, display: 'flex', flexDirection: 'column', gap: 0, minHeight: 0 }}>
         <div
@@ -630,7 +776,12 @@ export default function StaffPage() {
                     {e.name.split(' ').map(w => w[0]).join('').slice(0, 2).toUpperCase()}
                   </div>
                   <div style={{ minWidth: 0, overflow: 'hidden' }}>
-                    <div style={{ fontWeight: 700, fontSize: 13, color: '#1a1d23', whiteSpace: 'nowrap', textOverflow: 'ellipsis', overflow: 'hidden' }}>{e.name}</div>
+                    <div style={{ fontWeight: 700, fontSize: 13, color: '#1a1d23', whiteSpace: 'nowrap', textOverflow: 'ellipsis', overflow: 'hidden', display: 'flex', alignItems: 'center', gap: 6 }}>
+                      <span style={{ overflow: 'hidden', textOverflow: 'ellipsis' }}>{e.name}</span>
+                      {e.is_ad_budget_employee && (
+                        <span style={{ flexShrink: 0, fontSize: 9, fontWeight: 700, textTransform: 'uppercase', letterSpacing: '.04em', color: '#b45309', background: '#fef3c7', padding: '2px 6px', borderRadius: 6 }}>Бюджет</span>
+                      )}
+                    </div>
                     <div style={{ fontSize: 11, color: '#8a8fa8' }}>{e.task_count} задач всего</div>
                   </div>
                 </div>
@@ -924,7 +1075,13 @@ export default function StaffPage() {
                       <Th>Задача</Th>
                       <Th>Часы</Th>
                       <Th>Сумма</Th>
-                      <Th style={{ minWidth: 320 }}>Статус и действия</Th>
+                      <Th
+                        title="Распределение в Projects Cost: проект из «Проекты» и статья (видно только администратору)."
+                        style={{ maxWidth: 168 }}
+                      >
+                        Учёт ПС
+                      </Th>
+                      <Th style={{ minWidth: 380 }}>Статус и действия</Th>
                     </tr>
                   </thead>
                   <tbody>
@@ -1000,6 +1157,19 @@ export default function StaffPage() {
                                 </span>
                               )
                             })()}
+                          </Td>
+                          <Td
+                            style={{
+                              fontSize: 11,
+                              color: '#64748b',
+                              maxWidth: 180,
+                              lineHeight: 1.35,
+                              verticalAlign: 'middle',
+                              wordBreak: 'break-word',
+                              ...cellStrike,
+                            }}
+                          >
+                            {t.allocated_payment_label?.trim() ? t.allocated_payment_label : '—'}
                           </Td>
                           <Td style={{ verticalAlign: 'middle' }}>
                             <div
@@ -1081,6 +1251,28 @@ export default function StaffPage() {
                                   </button>
                                 </StaffActionWithTip>
                                 <StaffActionWithTip
+                                  hint={STAFF_TASK_HINTS.linkPc}
+                                  tipKey="link"
+                                  rowId={t.id}
+                                  tipRowId={staffTipRow}
+                                  tipKeyActive={staffTipKey}
+                                  onTipKey={setStaffTipKey}
+                                >
+                                  <button
+                                    type="button"
+                                    aria-label={STAFF_TASK_HINTS.linkPc}
+                                    style={{
+                                      ...iconBtn,
+                                      border: t.allocated_payment_id ? '1px solid #86efac' : '1px solid #e8e9ef',
+                                      background: t.allocated_payment_id ? '#f0fdf4' : '#fff',
+                                    }}
+                                    disabled={busy}
+                                    onClick={() => openAllocateModal(t)}
+                                  >
+                                    🔗
+                                  </button>
+                                </StaffActionWithTip>
+                                <StaffActionWithTip
                                   hint={STAFF_TASK_HINTS.edit}
                                   tipKey="edit"
                                   rowId={t.id}
@@ -1156,6 +1348,7 @@ export default function StaffPage() {
                             '—'
                           )}
                         </Td>
+                        <Td style={{ borderBottom: 'none', borderTop: '2px solid #e2e8f0' }} />
                         <Td style={{ borderBottom: 'none', borderTop: '2px solid #e2e8f0' }} />
                       </tr>
                     </tfoot>
@@ -1289,6 +1482,11 @@ export default function StaffPage() {
             {taskFormError}
           </div>
         )}
+        {selected?.is_ad_budget_employee && (
+          <div style={{ fontSize: 12, color: '#92400e', background: '#fffbeb', borderRadius: 8, padding: '10px 12px', marginBottom: 12, lineHeight: 1.45 }}>
+            Режим <strong>«Бюджет»</strong>: без галочки ниже вся сумма строки считается рекламным бюджетом клиента и не попадает в P&L. Отметьте галочку и введите сумму бюджета, если часть — ваша услуга.
+          </div>
+        )}
         <Field label="Дата">
           <Input type="date" value={form.work_date} onChange={e => setForm(f => ({ ...f, work_date: e.target.value }))} />
         </Field>
@@ -1348,6 +1546,47 @@ export default function StaffPage() {
             />
           </Field>
         )}
+        <div
+          style={{
+            marginBottom: 14,
+            padding: '12px 14px',
+            background: '#f1f5f9',
+            borderRadius: 8,
+            border: '1px solid #e2e8f0',
+          }}
+        >
+          <div style={{ fontSize: 12, fontWeight: 700, color: '#475569', marginBottom: 8 }}>
+            Учёт в Projects Cost
+          </div>
+          <p style={{ fontSize: 11, color: '#64748b', margin: '0 0 10px', lineHeight: 1.45 }}>
+            В отчёт попадает сумма работы минус «бюджет клиента». UZS — как есть; USD — по курсу месяца даты задачи из «Доступные средства» (без курса строка в Projects Cost не учитывается).
+          </p>
+          <Field label="Проект («Проекты»)">
+            <Select
+              value={form.allocated_payment_id}
+              onChange={e => setForm(f => ({ ...f, allocated_payment_id: e.target.value }))}
+            >
+              <option value="">— не распределять —</option>
+              {allocatablePayments.map(p => (
+                <option key={p.id} value={String(p.id)}>
+                  {(p.description || '').trim() || `Проект #${p.id}`} · {p.partner_name || '—'}
+                </option>
+              ))}
+            </Select>
+          </Field>
+          <Field label="Статья себестоимости">
+            <Select
+              value={form.cost_category}
+              onChange={e => setForm(f => ({ ...f, cost_category: e.target.value }))}
+            >
+              <option value="">—</option>
+              <option value="design">Дизайн</option>
+              <option value="dev">Разработка</option>
+              <option value="other">Прочее</option>
+              <option value="seo">SEO</option>
+            </Select>
+          </Field>
+        </div>
         <Field label="Статус">
           <Select value={form.status} onChange={e => setForm(f => ({ ...f, status: e.target.value }))}>
             <option value="not_started">Не начато</option>
@@ -1356,6 +1595,141 @@ export default function StaffPage() {
             <option value="done">Готово</option>
           </Select>
         </Field>
+      </Modal>
+
+      <Modal
+        open={allocateModalTask !== null}
+        onClose={closeAllocateModal}
+        title="Привязка к проекту (Projects Cost)"
+        footer={(
+          <>
+            <BtnOutline type="button" onClick={closeAllocateModal} disabled={allocateSaving}>
+              Отмена
+            </BtnOutline>
+            <BtnOutline
+              type="button"
+              onClick={() => void clearAllocate()}
+              disabled={
+                allocateSaving ||
+                !allocateModalTask ||
+                (allocateModalTask.allocated_payment_id == null &&
+                  !(allocateModalTask.cost_category && allocateModalTask.cost_category.trim()))
+              }
+            >
+              Снять привязку
+            </BtnOutline>
+            <BtnPrimary type="button" onClick={() => void saveAllocate()} disabled={allocateSaving}>
+              {allocateSaving ? 'Сохранение…' : 'Сохранить'}
+            </BtnPrimary>
+          </>
+        )}
+      >
+        {allocateModalTask && (
+          <>
+            <div style={{ fontSize: 13, color: '#475569', marginBottom: 14, lineHeight: 1.5 }}>
+              <div style={{ fontWeight: 600, color: '#1a1d23' }}>{allocateModalTask.project_name}</div>
+              <div style={{ fontSize: 12, color: '#64748b', marginTop: 4 }}>
+                {allocateModalTask.task_description.length > 120
+                  ? `${allocateModalTask.task_description.slice(0, 120)}…`
+                  : allocateModalTask.task_description}
+              </div>
+            </div>
+            <Field label="Поиск (название проекта, партнёр, id)">
+              <Input
+                value={allocateSearch}
+                onChange={e => setAllocateSearch(e.target.value)}
+                placeholder="Начните вводить — список отфильтруется"
+                autoComplete="off"
+              />
+            </Field>
+            <div style={{ fontSize: 11, fontWeight: 700, color: '#64748b', marginBottom: 6, marginTop: 4 }}>
+              Проекты ({filteredAllocatablePayments.length}{allocatablePayments.length ? ` из ${allocatablePayments.length}` : ''})
+            </div>
+            <div
+              style={{
+                maxHeight: 280,
+                overflowY: 'auto',
+                border: '1px solid #e8e9ef',
+                borderRadius: 10,
+                background: '#fff',
+              }}
+            >
+              {filteredAllocatablePayments.length === 0 ? (
+                <div style={{ padding: 18, textAlign: 'center', color: '#94a3b8', fontSize: 13 }}>
+                  {allocatablePayments.length === 0
+                    ? 'Список проектов не загрузился или пуст. Проверьте раздел «Проекты» и доступ к API.'
+                    : 'Ничего не найдено — измените поиск.'}
+                </div>
+              ) : (
+                filteredAllocatablePayments.map(p => {
+                  const active = allocateSelectedId === p.id
+                  return (
+                    <button
+                      key={p.id}
+                      type="button"
+                      onClick={() => {
+                        setAllocateSelectedId(p.id)
+                        setAllocateError('')
+                      }}
+                      style={{
+                        width: '100%',
+                        textAlign: 'left',
+                        padding: '11px 14px',
+                        border: 'none',
+                        borderBottom: '1px solid #f1f5f9',
+                        background: active ? '#e8f5ee' : '#fff',
+                        cursor: 'pointer',
+                        fontFamily: 'inherit',
+                        display: 'block',
+                      }}
+                    >
+                      <div style={{ fontWeight: 600, fontSize: 13, color: active ? '#14532d' : '#1a1d23' }}>
+                        {(p.description || '').trim() || `Проект #${p.id}`}
+                      </div>
+                      <div style={{ fontSize: 11, color: '#64748b', marginTop: 3 }}>
+                        {p.partner_name || '—'}
+                        {p.partner_manager_name ? ` · ПМ: ${p.partner_manager_name}` : ''}
+                      </div>
+                      <div style={{ fontSize: 10, color: '#94a3b8', marginTop: 2 }}>id {p.id}</div>
+                    </button>
+                  )
+                })
+              )}
+            </div>
+            <Field label="Статья себестоимости">
+              <Select
+                value={allocateCategory}
+                onChange={e => {
+                  setAllocateCategory(e.target.value)
+                  setAllocateError('')
+                }}
+              >
+                <option value="">— выберите статью —</option>
+                <option value="design">Дизайн</option>
+                <option value="dev">Разработка</option>
+                <option value="other">Прочее</option>
+                <option value="seo">SEO</option>
+              </Select>
+            </Field>
+            <p style={{ fontSize: 11, color: '#64748b', margin: 0, lineHeight: 1.45 }}>
+              Нужны и проект, и статья — иначе сохранение не пройдёт. То же правило, что в полной форме задачи.
+            </p>
+          </>
+        )}
+        {allocateError && (
+          <div
+            style={{
+              marginTop: 12,
+              background: '#fef0f0',
+              color: '#e84040',
+              borderRadius: 8,
+              padding: '9px 12px',
+              fontSize: 13,
+            }}
+          >
+            {allocateError}
+          </div>
+        )}
       </Modal>
 
       <ConfirmModal

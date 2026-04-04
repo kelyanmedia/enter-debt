@@ -12,6 +12,7 @@ import {
   formatDate,
   daysLeft,
   formatAmount,
+  formatReceivableCardAmount,
   formatMoneyNumber,
   Empty,
   Select,
@@ -593,7 +594,7 @@ export default function DebitorPage() {
           <StatCard
             featured
             label="Дебиторка за период"
-            value={formatAmount(debitorReceivableStats.total_receivable)}
+            value={formatReceivableCardAmount(debitorReceivableStats.total_receivable)}
             sub={`${debitorReceivableStats.partners_count} партнёров в списке`}
             infoText={DEBITOR_STAT_HINT.receivable}
           />

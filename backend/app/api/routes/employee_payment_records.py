@@ -199,11 +199,7 @@ async def create_payment_record(
 
     d = _parse_date(paid_on)
     amt = _parse_amount(amount)
-    bud_amt = (
-        _parse_budget_part(budget_amount, amt)
-        if current_user.role == "admin"
-        else Decimal(0)
-    )
+    bud_amt = Decimal(0)
 
     py: Optional[int] = None
     pm: Optional[int] = None
@@ -246,6 +242,19 @@ async def create_payment_record(
     target = db.query(User).filter(User.id == target_uid, User.role == "employee", User.is_active == True).first()
     if not target:
         raise HTTPException(status_code=404, detail="Сотрудник не найден")
+
+    ad_bud = bool(getattr(target, "is_ad_budget_employee", False))
+    raw_budget = (budget_amount or "").strip()
+    if current_user.role == "admin":
+        if ad_bud and not raw_budget:
+            bud_amt = amt
+        else:
+            bud_amt = _parse_budget_part(budget_amount, amt)
+    elif current_user.role == "employee":
+        if ad_bud:
+            bud_amt = _parse_budget_part(budget_amount, amt) if raw_budget else amt
+        else:
+            bud_amt = Decimal(0)
 
     receipt_name: Optional[str] = None
     if file is not None and file.filename:

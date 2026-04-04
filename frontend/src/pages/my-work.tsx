@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties } from 'react'
 import { useRouter } from 'next/router'
 import { useAuth } from '@/context/AuthContext'
 import Layout from '@/components/Layout'
@@ -54,6 +54,17 @@ function num(v: string | null | undefined) {
   return Number.isFinite(n) ? n : null
 }
 
+const ACTION_HINTS = {
+  move:
+    'Перенос в следующий месяц: дата задачи сдвигается на следующий календарный месяц, строка пропадает из текущего месяца. Подходит, если работа переносится.',
+  paid:
+    'Оплачено по учёту задачи: строка считается закрытой, сумма не входит в итог «к выплате» за месяц. Факт перевода деньгами фиксируйте в «История выплат». Снять отметку может только администратор.',
+  duplicate:
+    'Дубль: новая строка в следующем месяце с тем же проектом и суммой; текущая не меняется.',
+  edit: 'Редактировать дату, проект, сумму, статус и др.',
+  delete: 'Удалить строку без восстановления.',
+} as const
+
 export default function MyWorkPage() {
   const router = useRouter()
   const { user, loading } = useAuth()
@@ -75,6 +86,7 @@ export default function MyWorkPage() {
   const [monthsWithTasks, setMonthsWithTasks] = useState<Set<number>>(() => new Set())
   const [monthMenuOpen, setMonthMenuOpen] = useState(false)
   const monthMenuRef = useRef<HTMLDivElement>(null)
+  const [actionBusyId, setActionBusyId] = useState<number | null>(null)
 
   const fetchMonthsWithTasks = useCallback(() => {
     return api
@@ -221,14 +233,38 @@ export default function MyWorkPage() {
   }
 
   const patchTaskPaid = async (taskId: number) => {
-    setStatusSavingId(taskId)
+    setActionBusyId(taskId)
     try {
       await api.patch(`employee-tasks/${taskId}`, { paid: true })
       await load()
     } catch {
       load()
     } finally {
-      setStatusSavingId(null)
+      setActionBusyId(null)
+    }
+  }
+
+  const postMoveNextMonth = async (taskId: number) => {
+    setActionBusyId(taskId)
+    try {
+      await api.post(`employee-tasks/${taskId}/move-next-month`)
+      load()
+    } catch {
+      load()
+    } finally {
+      setActionBusyId(null)
+    }
+  }
+
+  const postDuplicateNextMonth = async (taskId: number) => {
+    setActionBusyId(taskId)
+    try {
+      await api.post(`employee-tasks/${taskId}/duplicate-next-month`)
+      load()
+    } catch {
+      load()
+    } finally {
+      setActionBusyId(null)
     }
   }
 
@@ -236,6 +272,7 @@ export default function MyWorkPage() {
     () =>
       tasks.reduce(
         (acc, t) => {
+          if (t.paid) return acc
           const h = num(t.hours)
           const a = num(t.amount)
           const bud = num(t.budget_amount)
@@ -261,7 +298,11 @@ export default function MyWorkPage() {
     <Layout>
       <PageHeader
         title="Мои задачи"
-        subtitle="Учёт работ по проектам — видите только этот раздел"
+        subtitle={
+          user.is_ad_budget_employee
+            ? 'Учёт работ. Режим «Бюджет»: строка без поля «бюджет клиента» целиком не попадает в P&L; отметьте галочку и сумму бюджета, если часть перевода — ваша услуга. Справка — кнопка «Q&A» слева в меню.'
+            : 'Учёт работ по проектам. После фактической выплаты внесите запись в «История выплат». Подробная инструкция — кнопка «Q&A» слева в меню.'
+        }
         action={<BtnPrimary onClick={openAdd}>+ Добавить задачу</BtnPrimary>}
       />
       <div style={{ padding: '22px 24px', overflow: 'auto', flex: 1 }}>
@@ -390,6 +431,9 @@ export default function MyWorkPage() {
             <div style={{ fontSize: 10, fontWeight: 700, color: '#8a8fa8', textTransform: 'uppercase' }}>
               Итого · {summaryCurrency}
             </div>
+            <div style={{ fontSize: 10, color: '#94a3b8', marginTop: 3, lineHeight: 1.3 }}>
+              только строки без отметки «оплачено» ($)
+            </div>
             <div
               style={{
                 fontSize: 20,
@@ -428,87 +472,157 @@ export default function MyWorkPage() {
                 <Th>Тип задачи</Th>
                 <Th>Часы</Th>
                 <Th>Сумма</Th>
-                <Th>Статус</Th>
-                <Th>Оплата</Th>
-                <Th style={{ width: 88 }} />
+                <Th style={{ minWidth: 300 }}>Статус и действия</Th>
               </tr>
             </thead>
             <tbody>
-              {tasks.map(t => (
-                <tr key={t.id} style={{ borderBottom: '1px solid #f1f5f9' }}>
-                  <Td style={{ whiteSpace: 'nowrap' }}>{formatDate(t.work_date)}</Td>
-                  <Td style={{ fontWeight: 600 }}>{t.project_name}</Td>
-                  <Td style={{ color: '#64748b', maxWidth: 300 }}>
-                    {t.task_url ? (
-                      <a href={t.task_url} target="_blank" rel="noreferrer" style={{ color: '#2563eb' }}>{t.task_description}</a>
-                    ) : (
-                      t.task_description
-                    )}
-                  </Td>
-                  <Td>{num(t.hours) ?? '—'}</Td>
-                  <Td style={{ fontWeight: 600, whiteSpace: 'pre-line', lineHeight: 1.35 }}>
-                    {(() => {
-                      const a = num(t.amount)
-                      const bud = num(t.budget_amount)
-                      if (a == null && !(bud != null && bud > 0)) return '—'
-                      return (
-                        <span style={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
-                          {a != null && (
-                            <span>
-                              {t.currency === 'UZS'
-                                ? `${formatMoneyNumber(a)} сум`
-                                : `$${formatMoneyNumber(a)}`}
-                            </span>
-                          )}
-                          {bud != null && bud > 0 && (
-                            <span style={{ fontSize: 12, fontWeight: 600, color: '#64748b' }}>
-                              {t.currency === 'UZS'
-                                ? `+ ${formatMoneyNumber(bud)} сум бюджет`
-                                : `+ $${formatMoneyNumber(bud)} бюджет`}
-                            </span>
-                          )}
-                        </span>
-                      )
-                    })()}
-                  </Td>
-                  <Td>
-                    <EmployeeTaskStatusSelect
-                      value={t.status}
-                      disabled={statusSavingId === t.id}
-                      onChange={(next) => {
-                        if (next === t.status) return
-                        void patchTaskStatus(t.id, next, t)
-                      }}
-                    />
-                  </Td>
-                  <Td>
-                    {t.paid ? (
-                      <span style={{ fontSize: 12, fontWeight: 600, color: '#15803d' }}>Оплачено</span>
-                    ) : (
-                      <BtnOutline
-                        type="button"
-                        disabled={statusSavingId === t.id}
-                        onClick={() => void patchTaskPaid(t.id)}
-                        style={{ padding: '4px 10px', fontSize: 11, fontWeight: 600 }}
-                      >
-                        Отметить оплачено
-                      </BtnOutline>
-                    )}
-                  </Td>
-                  <Td>
-                    <div style={{ display: 'flex', gap: 4 }}>
-                      <BtnIconEdit onClick={() => openEdit(t)} />
-                      <BtnOutline onClick={() => setDeleteId(t.id)} style={{ padding: '4px 8px', fontSize: 11, color: '#e84040' }}>✕</BtnOutline>
-                    </div>
-                  </Td>
-                </tr>
-              ))}
+              {tasks.map(t => {
+                const strike = t.paid
+                const cellStrike = strike ? { textDecoration: 'line-through' as const, color: '#94a3b8' } : {}
+                const busy = actionBusyId === t.id
+                const iconBtn: CSSProperties = {
+                  width: 36,
+                  height: 36,
+                  padding: 0,
+                  borderRadius: 8,
+                  border: '1px solid #e8e9ef',
+                  background: '#fff',
+                  cursor: busy ? 'wait' : 'pointer',
+                  fontSize: 16,
+                  lineHeight: 1,
+                  display: 'inline-flex',
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                  color: '#475569',
+                  flexShrink: 0,
+                  opacity: busy ? 0.5 : 1,
+                  boxSizing: 'border-box',
+                }
+                return (
+                  <tr key={t.id} style={{ borderBottom: '1px solid #f1f5f9', opacity: strike ? 0.88 : 1 }}>
+                    <Td style={{ whiteSpace: 'nowrap', ...cellStrike }}>{formatDate(t.work_date)}</Td>
+                    <Td style={{ fontWeight: 600, ...cellStrike }}>{t.project_name}</Td>
+                    <Td style={{ color: '#64748b', maxWidth: 300, ...cellStrike }}>
+                      {t.task_url ? (
+                        <a href={t.task_url} target="_blank" rel="noreferrer" style={{ color: strike ? '#94a3b8' : '#2563eb' }}>{t.task_description}</a>
+                      ) : (
+                        t.task_description
+                      )}
+                    </Td>
+                    <Td style={{ ...cellStrike }}>{num(t.hours) ?? '—'}</Td>
+                    <Td style={{ fontWeight: 600, whiteSpace: 'pre-line', lineHeight: 1.35, ...cellStrike }}>
+                      {(() => {
+                        const a = num(t.amount)
+                        const bud = num(t.budget_amount)
+                        if (a == null && !(bud != null && bud > 0)) return '—'
+                        return (
+                          <span style={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
+                            {a != null && (
+                              <span>
+                                {t.currency === 'UZS'
+                                  ? `${formatMoneyNumber(a)} сум`
+                                  : `$${formatMoneyNumber(a)}`}
+                              </span>
+                            )}
+                            {bud != null && bud > 0 && (
+                              <span style={{ fontSize: 12, fontWeight: 600, color: strike ? '#94a3b8' : '#64748b' }}>
+                                {t.currency === 'UZS'
+                                  ? `+ ${formatMoneyNumber(bud)} сум бюджет`
+                                  : `+ $${formatMoneyNumber(bud)} бюджет`}
+                              </span>
+                            )}
+                          </span>
+                        )
+                      })()}
+                    </Td>
+                    <Td style={{ verticalAlign: 'middle' }}>
+                      <div style={{ display: 'flex', flexWrap: 'wrap', alignItems: 'center', gap: '10px 14px' }}>
+                        <EmployeeTaskStatusSelect
+                          value={t.status}
+                          disabled={statusSavingId === t.id || busy}
+                          onChange={(next) => {
+                            if (next === t.status) return
+                            void patchTaskStatus(t.id, next, t)
+                          }}
+                        />
+                        <div style={{ display: 'flex', gap: 6, flexWrap: 'nowrap', alignItems: 'center' }}>
+                          <button
+                            type="button"
+                            title={ACTION_HINTS.move}
+                            aria-label={ACTION_HINTS.move}
+                            style={iconBtn}
+                            disabled={busy}
+                            onClick={() => void postMoveNextMonth(t.id)}
+                          >
+                            →
+                          </button>
+                          <button
+                            type="button"
+                            title={ACTION_HINTS.paid}
+                            aria-label={ACTION_HINTS.paid}
+                            style={{
+                              ...iconBtn,
+                              fontWeight: 700,
+                              fontSize: 15,
+                              borderColor: t.paid ? '#86efac' : '#e8e9ef',
+                              background: t.paid ? '#dcfce7' : '#fff',
+                              color: t.paid ? '#166534' : '#475569',
+                              cursor: t.paid || busy ? 'default' : 'pointer',
+                            }}
+                            disabled={busy || t.paid}
+                            onClick={() => !t.paid && void patchTaskPaid(t.id)}
+                          >
+                            $
+                          </button>
+                          <button
+                            type="button"
+                            title={ACTION_HINTS.duplicate}
+                            aria-label={ACTION_HINTS.duplicate}
+                            style={iconBtn}
+                            disabled={busy}
+                            onClick={() => void postDuplicateNextMonth(t.id)}
+                          >
+                            ⧉
+                          </button>
+                          <BtnIconEdit
+                            title={ACTION_HINTS.edit}
+                            disabled={busy}
+                            style={{ width: 36, height: 36 }}
+                            onClick={() => openEdit(t)}
+                          />
+                          <BtnOutline
+                            type="button"
+                            title={ACTION_HINTS.delete}
+                            aria-label={ACTION_HINTS.delete}
+                            onClick={() => setDeleteId(t.id)}
+                            disabled={busy}
+                            style={{
+                              padding: 0,
+                              width: 36,
+                              height: 36,
+                              minHeight: 36,
+                              fontSize: 14,
+                              color: '#e84040',
+                              display: 'inline-flex',
+                              alignItems: 'center',
+                              justifyContent: 'center',
+                              boxSizing: 'border-box',
+                            }}
+                          >
+                            ✕
+                          </BtnOutline>
+                        </div>
+                      </div>
+                    </Td>
+                  </tr>
+                )
+              })}
             </tbody>
             {tasks.length > 0 && (
               <tfoot>
                 <tr style={{ background: '#f1f5f9' }}>
                   <Td colSpan={3} style={{ fontWeight: 700, fontSize: 13, color: '#475569', borderBottom: 'none', borderTop: '2px solid #e2e8f0' }}>
-                    Итого по строкам
+                    Итого по строкам (без оплаченных)
                   </Td>
                   <Td style={{ fontWeight: 700, fontSize: 13, borderBottom: 'none', borderTop: '2px solid #e2e8f0' }}>
                     {totals.h > 0 ? totals.h.toLocaleString('ru-RU', { maximumFractionDigits: 1 }) : '—'}
@@ -523,8 +637,6 @@ export default function MyWorkPage() {
                       '—'
                     )}
                   </Td>
-                  <Td style={{ borderBottom: 'none', borderTop: '2px solid #e2e8f0' }} />
-                  <Td style={{ borderBottom: 'none', borderTop: '2px solid #e2e8f0' }} />
                   <Td style={{ borderBottom: 'none', borderTop: '2px solid #e2e8f0' }} />
                 </tr>
               </tfoot>

@@ -95,6 +95,7 @@ def create_user(data: UserCreate, db: Session = Depends(get_db), _=Depends(requi
     if data.role == "employee" and getattr(data, "payment_details", None):
         pd = str(data.payment_details).strip() or None
     mca = bool(getattr(data, "multi_company_access", False)) if data.role == "employee" else False
+    ad_budget = bool(getattr(data, "is_ad_budget_employee", False)) if data.role == "employee" else False
     user = User(
         name=data.name,
         email=email_norm,
@@ -111,6 +112,7 @@ def create_user(data: UserCreate, db: Session = Depends(get_db), _=Depends(requi
         visible_manager_ids=vm_json,
         payment_details=pd,
         multi_company_access=mca,
+        is_ad_budget_employee=ad_budget,
         admin_telegram_notify_all=bool(getattr(data, "admin_telegram_notify_all", False)) if data.role == "admin" else False,
         admin_telegram_notify_manager_ids=admin_notify_json if data.role == "admin" else None,
         hashed_password=get_password_hash(plain),
@@ -151,6 +153,9 @@ def _apply_update(user: User, data: UserUpdate):
         elif field == "multi_company_access":
             if user.role == "employee":
                 user.multi_company_access = bool(value)
+        elif field == "is_ad_budget_employee":
+            if user.role == "employee":
+                user.is_ad_budget_employee = bool(value)
         else:
             setattr(user, field, value)
 
@@ -176,6 +181,7 @@ def _sync_visible_managers_after_user_update(db: Session, user: User, data: User
     if data.role is not None and data.role != "employee":
         user.payment_details = None
         user.multi_company_access = False
+        user.is_ad_budget_employee = False
 
 
 def _sync_administration_cash_flow_input(db: Session, user: User, data: UserUpdate) -> None:

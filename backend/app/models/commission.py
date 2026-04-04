@@ -16,6 +16,9 @@ class Commission(Base):
     actual_payment = Column(Numeric(15, 2), nullable=True)     # Оплата фактическая
     received_amount_1 = Column(Numeric(15, 2), nullable=True)  # Полученный % (1)
     received_amount_2 = Column(Numeric(15, 2), nullable=True)  # Полученный % (2)
+    # Месяц отражения в P&L (строка «Процент менеджера»): касса по факту; без даты — project_date
+    received_amount_1_on = Column(Date, nullable=True)
+    received_amount_2_on = Column(Date, nullable=True)
     commission_paid_full = Column(Boolean, nullable=False, default=False)
     project_date = Column(Date, nullable=False)                # Дата проекта (для фильтров)
     note = Column(String(500), nullable=True)

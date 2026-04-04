@@ -60,6 +60,8 @@ class UserBase(BaseModel):
     see_all_partners: bool = False
     payment_details: Optional[str] = None  # реквизиты выплат для сотрудников (freelance)
     multi_company_access: bool = False  # только employee: переключение компаний в кабинете
+    # только employee: работа с проходным рекламным бюджетом — в P&L только доля «услуга» (сумма − бюджет)
+    is_ad_budget_employee: bool = False
     # только role=admin: копии Telegram (менеджер ↔ бухгалтерия)
     admin_telegram_notify_all: bool = False
 
@@ -87,6 +89,7 @@ class UserUpdate(BaseModel):
     visible_manager_ids: Optional[List[int]] = None
     payment_details: Optional[str] = None
     multi_company_access: Optional[bool] = None
+    is_ad_budget_employee: Optional[bool] = None
     admin_telegram_notify_all: Optional[bool] = None
     admin_telegram_notify_manager_ids: Optional[List[int]] = None
 
@@ -134,6 +137,12 @@ class EmployeeTaskCreate(EmployeeTaskBase):
         default=None,
         description="Только админ: ID пользователя с ролью employee",
     )
+    allocated_payment_id: Optional[int] = Field(None, description="Только админ: проект из «Проекты» для учёта себестоимости")
+    cost_category: Optional[str] = Field(
+        None,
+        description="Только админ: design | dev | other | seo",
+        max_length=20,
+    )
 
 
 class EmployeeTaskUpdate(BaseModel):
@@ -147,6 +156,8 @@ class EmployeeTaskUpdate(BaseModel):
     currency: Optional[str] = Field(None, max_length=3)
     status: Optional[str] = Field(None, max_length=30)
     paid: Optional[bool] = None
+    allocated_payment_id: Optional[int] = None
+    cost_category: Optional[str] = Field(None, max_length=20)
 
 
 class EmployeeTaskOut(EmployeeTaskBase):
@@ -155,6 +166,9 @@ class EmployeeTaskOut(EmployeeTaskBase):
     created_at: datetime
     paid_at: Optional[datetime] = None
     done_at: Optional[datetime] = None
+    allocated_payment_id: Optional[int] = None
+    cost_category: Optional[str] = None
+    allocated_payment_label: Optional[str] = Field(None, description="Подпись проекта для админки")
 
     class Config:
         from_attributes = True
@@ -205,6 +219,7 @@ class StaffEmployeeOut(BaseModel):
     payment_details: Optional[str] = None
     payment_details_updated_at: Optional[datetime] = None
     task_count: int = 0
+    is_ad_budget_employee: bool = False
 
 
 class StaffMonthTotalsOut(BaseModel):
@@ -773,13 +788,25 @@ class ProjectCostRowOut(BaseModel):
     pm_name: Optional[str] = None
     project_start: date
     schedule_months: List[ProjectCostScheduleMonthOut] = []
-    cost_design_uzs: Decimal = Decimal("0")
-    cost_dev_uzs: Decimal = Decimal("0")
-    cost_other_uzs: Decimal = Decimal("0")
-    cost_seo_uzs: Decimal = Decimal("0")
+    # Отображаемые суммы (ручной ввод в Projects Cost + распределение из задач «Команда»)
+    cost_design_uzs: Decimal
+    cost_dev_uzs: Decimal
+    cost_other_uzs: Decimal
+    cost_seo_uzs: Decimal
+    # Ручной ввод (редактируемые ячейки); без задач совпадают с cost_*_uzs
+    cost_design_manual_uzs: Decimal = Decimal("0")
+    cost_dev_manual_uzs: Decimal = Decimal("0")
+    cost_other_manual_uzs: Decimal = Decimal("0")
+    cost_seo_manual_uzs: Decimal = Decimal("0")
+    tasks_cost_design_uzs: Decimal = Decimal("0")
+    tasks_cost_dev_uzs: Decimal = Decimal("0")
+    tasks_cost_other_uzs: Decimal = Decimal("0")
+    tasks_cost_seo_uzs: Decimal = Decimal("0")
     internal_cost_sum: Decimal = Decimal("0")
     profit_actual: Decimal
     manager_commission_percent: Optional[Decimal] = None  # % из привязанной записи «Комиссия»
+    manager_commission_reserved_uzs: Optional[Decimal] = None  # маржа × % / 100
+    profit_after_manager_uzs: Decimal  # маржа − резерв комиссии (если % нет — как profit_actual)
 
 
 # ── DASHBOARD ─────────────────────────────────────────────────────────────────
@@ -958,6 +985,8 @@ class CommissionBase(BaseModel):
     actual_payment: Optional[Decimal] = None
     received_amount_1: Optional[Decimal] = None
     received_amount_2: Optional[Decimal] = None
+    received_amount_1_on: Optional[date] = None  # дата для P&L (касса)
+    received_amount_2_on: Optional[date] = None
     commission_paid_full: bool = False
     project_date: date
     note: Optional[str] = None
@@ -983,6 +1012,8 @@ class CommissionUpdate(BaseModel):
     actual_payment: Optional[Decimal] = None
     received_amount_1: Optional[Decimal] = None
     received_amount_2: Optional[Decimal] = None
+    received_amount_1_on: Optional[date] = None
+    received_amount_2_on: Optional[date] = None
     commission_paid_full: Optional[bool] = None
     project_date: Optional[date] = None
     note: Optional[str] = None
@@ -1008,11 +1039,12 @@ class CommissionOut(CommissionBase):
 
 
 class CommissionLinkablePaymentOut(BaseModel):
-    """Проекты из «Проекты», доступные для привязки комиссии к менеджеру."""
+    """Проекты из «Проекты» для привязки комиссии (все компании; ПМ ведения — справочно)."""
 
     id: int
     description: str
     partner_name: str
+    partner_manager_name: Optional[str] = None
 
 
 class CommissionStatsOut(BaseModel):

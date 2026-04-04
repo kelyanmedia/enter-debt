@@ -3,7 +3,7 @@ from datetime import date
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy.orm import Session, joinedload
-from sqlalchemy import extract
+from sqlalchemy import extract, or_
 from typing import List, Optional
 from decimal import Decimal
 
@@ -46,7 +46,8 @@ def _add_calendar_months(d: date, n: int) -> date:
     return date(y, m, min(d.day, last))
 
 
-def _validate_payment_for_commission(db: Session, payment_id: int, manager_id: int) -> None:
+def _validate_payment_for_commission(db: Session, payment_id: int) -> None:
+    """Проект существует и доступен для привязки (менеджер комиссии может отличаться от ПМ в карточке)."""
     p = (
         db.query(Payment)
         .options(joinedload(Payment.partner))
@@ -61,11 +62,10 @@ def _validate_payment_for_commission(db: Session, payment_id: int, manager_id: i
         raise HTTPException(status_code=400, detail="Проект не найден или в архиве")
     if p.partner and p.partner.trashed_at is not None:
         raise HTTPException(status_code=400, detail="Партнёр проекта в корзине")
-    mid = p.partner.manager_id if p.partner else None
-    if mid != manager_id:
+    if getattr(p, "project_category", None) == "hosting_domain":
         raise HTTPException(
             status_code=400,
-            detail="Проект закреплён за другим менеджером — выберите проект этого менеджера",
+            detail="Проекты категории «Хостинг/домен» не участвуют в комиссиях менеджера.",
         )
 
 
@@ -116,40 +116,42 @@ def _base_query(db: Session, current_user: User, year: Optional[int], month: Opt
 
 @router.get("/linkable-payments", response_model=List[CommissionLinkablePaymentOut])
 def linkable_payments(
-    manager_id: Optional[int] = Query(None, description="Для админа/бухгалтерии — ID менеджера (обязательно)"),
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
+    for_commission: bool = Query(
+        False,
+        description="Если true — только проекты, по которым начисляется комиссия (исключаются хостинг/домен).",
+    ),
 ):
-    """Проекты «Проекты», у которых партнёр закреплён за выбранным менеджером."""
+    """Активные проекты «Проекты» для привязки. Для раздела «Комиссия» передавайте for_commission=true."""
     _require_commissions_role(current_user)
-    if current_user.role == "manager":
-        mid = current_user.id
-    elif current_user.role in ("admin", "accountant"):
-        if not manager_id:
-            return []
-        mid = manager_id
-    else:
-        raise HTTPException(status_code=403, detail="Нет доступа")
 
-    rows = (
+    q = (
         db.query(Payment)
-        .options(joinedload(Payment.partner))
+        .options(joinedload(Payment.partner).joinedload(Partner.manager))
         .join(Partner, Partner.id == Payment.partner_id)
         .filter(
             Payment.is_archived == False,
             Payment.trashed_at.is_(None),
             Partner.trashed_at.is_(None),
-            Partner.manager_id == mid,
         )
-        .order_by(Payment.id.desc())
-        .limit(500)
-        .all()
     )
+    if for_commission:
+        q = q.filter(
+            or_(
+                Payment.project_category.is_(None),
+                Payment.project_category != "hosting_domain",
+            )
+        )
+    rows = q.order_by(Payment.id.desc()).limit(1000).all()
     return [
         CommissionLinkablePaymentOut(
             id=p.id,
             description=(p.description or "").strip() or f"Проект #{p.id}",
             partner_name=((p.partner.name if p.partner else None) or "").strip() or "—",
+            partner_manager_name=(
+                (p.partner.manager.name if p.partner and getattr(p.partner, "manager", None) else None) or None
+            ),
         )
         for p in rows
     ]
@@ -217,7 +219,7 @@ def create_commission(
     dup_n = max(0, min(36, int(data.duplicate_months or 0)))
     pid = data.payment_id
     if pid is not None:
-        _validate_payment_for_commission(db, int(pid), mgr_id)
+        _validate_payment_for_commission(db, int(pid))
 
     first_id: Optional[int] = None
     for k in range(dup_n + 1):
@@ -229,9 +231,11 @@ def create_commission(
             production_cost=data.production_cost,
             manager_percent=data.manager_percent,
             actual_payment=data.actual_payment,
-            received_amount_1=data.received_amount_1,
-            received_amount_2=data.received_amount_2,
-            commission_paid_full=data.commission_paid_full,
+            received_amount_1=data.received_amount_1 if k == 0 else None,
+            received_amount_2=data.received_amount_2 if k == 0 else None,
+            received_amount_1_on=data.received_amount_1_on if k == 0 else None,
+            received_amount_2_on=data.received_amount_2_on if k == 0 else None,
+            commission_paid_full=data.commission_paid_full if k == 0 else False,
             project_date=pd,
             note=data.note,
             manager_id=mgr_id,
@@ -267,7 +271,70 @@ def update_commission(
     for field, val in patch.items():
         setattr(c, field, val)
     if c.payment_id is not None:
-        _validate_payment_for_commission(db, int(c.payment_id), c.manager_id)
+        _validate_payment_for_commission(db, int(c.payment_id))
+    db.commit()
+    row = (
+        _commission_load_options(db.query(Commission))
+        .filter(Commission.id == cid)
+        .first()
+    )
+    return _enrich(row)
+
+
+@router.post("/{cid}/duplicate-next-month", response_model=CommissionOut)
+def duplicate_commission_next_month(
+    cid: int,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """Копия строки комиссии на следующий календарный месяц (рекуррент). Полученные суммы сбрасываются."""
+    _require_commissions_role(current_user)
+    src = db.query(Commission).filter(Commission.id == cid).first()
+    if not src:
+        raise HTTPException(404, "Не найдено")
+    if current_user.role == "manager" and src.manager_id != current_user.id:
+        raise HTTPException(403, "Нет доступа")
+    new = Commission(
+        project_name=src.project_name,
+        project_type=src.project_type,
+        project_cost=src.project_cost,
+        production_cost=src.production_cost,
+        manager_percent=src.manager_percent,
+        actual_payment=src.actual_payment,
+        received_amount_1=None,
+        received_amount_2=None,
+        received_amount_1_on=None,
+        received_amount_2_on=None,
+        commission_paid_full=False,
+        project_date=_add_calendar_months(src.project_date, 1),
+        note=src.note,
+        manager_id=src.manager_id,
+        payment_id=src.payment_id,
+    )
+    db.add(new)
+    db.commit()
+    row = (
+        _commission_load_options(db.query(Commission))
+        .filter(Commission.id == new.id)
+        .first()
+    )
+    return _enrich(row)
+
+
+@router.post("/{cid}/shift-next-month", response_model=CommissionOut)
+def shift_commission_next_month(
+    cid: int,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """Сдвиг даты проекта на +1 месяц (та же строка)."""
+    _require_commissions_role(current_user)
+    c = db.query(Commission).filter(Commission.id == cid).first()
+    if not c:
+        raise HTTPException(404, "Не найдено")
+    if current_user.role == "manager" and c.manager_id != current_user.id:
+        raise HTTPException(403, "Нет доступа")
+    c.project_date = _add_calendar_months(c.project_date, 1)
     db.commit()
     row = (
         _commission_load_options(db.query(Commission))

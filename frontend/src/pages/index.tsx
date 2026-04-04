@@ -3,7 +3,7 @@ import Link from 'next/link'
 import { useRouter } from 'next/router'
 import Layout from '@/components/Layout'
 import { useAuth } from '@/context/AuthContext'
-import { StatCard, Card, CardHeader, CardTitle, Th, Td, PartnerAvatar, Badge, statusBadge, formatDate, daysLeft, formatAmount, formatMoneyNumber } from '@/components/ui'
+import { StatCard, Card, CardHeader, CardTitle, Th, Td, PartnerAvatar, Badge, statusBadge, formatDate, daysLeft, formatAmount, formatReceivableCardAmount, formatMoneyNumber } from '@/components/ui'
 import api from '@/lib/api'
 
 interface Stats {
@@ -234,7 +234,7 @@ export default function Dashboard() {
             <StatCard
               featured
               label="Дебиторка за период"
-              value={stats ? formatAmount(stats.total_receivable) : '—'}
+              value={stats ? formatReceivableCardAmount(stats.total_receivable) : '—'}
               sub={`${stats?.partners_count ?? 0} активных партнёров · подробнее`}
             />
           </Link>

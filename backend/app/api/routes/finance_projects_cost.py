@@ -21,6 +21,7 @@ from app.models.employee_payment_record import EmployeePaymentRecord
 from app.models.partner import Partner
 from app.models.payment import Payment, PaymentMonth
 from app.models.user import User
+from app.models.employee_task import EmployeeTask
 from app.finance.cash_flow_catalog import expense_pl_bucket
 from app.schemas.schemas import (
     PLCellOut,
@@ -160,6 +161,46 @@ def _line_amount(pm: PaymentMonth, p: Payment) -> Decimal:
     return Decimal(str(p.amount))
 
 
+_TASK_COST_CATS = frozenset({"design", "dev", "other", "seo"})
+
+
+def _task_allocated_cost_uzs_by_payment(db: Session) -> Dict[int, Dict[str, Decimal]]:
+    """(amount − budget) в UZS по payment_id и статье; USD по курсу месяца work_date из «Доступные средства»."""
+    rates = {
+        r.period_month: Decimal(str(r.usd_to_uzs_rate or 0))
+        for r in db.query(AvailableFundsManual).all()
+    }
+    out: Dict[int, Dict[str, Decimal]] = {}
+    for t in (
+        db.query(EmployeeTask)
+        .filter(EmployeeTask.allocated_payment_id.isnot(None))
+        .filter(EmployeeTask.cost_category.isnot(None))
+        .all()
+    ):
+        cat = (t.cost_category or "").strip().lower()
+        if cat not in _TASK_COST_CATS:
+            continue
+        amt = Decimal(str(t.amount or 0))
+        bud = Decimal(str(t.budget_amount or 0))
+        net = amt - bud
+        if net <= 0:
+            continue
+        ym = f"{t.work_date.year}-{str(t.work_date.month).zfill(2)}"
+        cur = (t.currency or "USD").upper()
+        if cur == "USD":
+            rfx = rates.get(ym) or Decimal(0)
+            if rfx <= 0:
+                continue
+            net_uzs = (net * rfx).quantize(Decimal("0.01"))
+        else:
+            net_uzs = net.quantize(Decimal("0.01"))
+        pid = int(t.allocated_payment_id)  # type: ignore[arg-type]
+        if pid not in out:
+            out[pid] = {k: Decimal(0) for k in _TASK_COST_CATS}
+        out[pid][cat] = out[pid][cat] + net_uzs
+    return out
+
+
 def _commission_percent_by_payment_id(db: Session) -> Dict[int, Decimal]:
     """Последняя по id комиссия с привязкой к payment_id → % менеджера для Projects Cost."""
     rows = (
@@ -178,6 +219,7 @@ def _commission_percent_by_payment_id(db: Session) -> Dict[int, Decimal]:
 def _payment_to_project_cost_row(
     p: Payment,
     manager_commission_percent: Optional[Decimal] = None,
+    task_alloc: Optional[Dict[str, Decimal]] = None,
 ) -> ProjectCostRowOut:
     """Одна строка отчёта Projects Cost из загруженного Payment (partner + months)."""
     months_sorted = _sort_payment_month_lines(p.months)
@@ -233,16 +275,32 @@ def _payment_to_project_cost_row(
         v = getattr(p, attr, None)
         return Decimal(str(v)) if v is not None else Decimal("0")
 
-    c_des = _cz("projects_cost_design_uzs")
-    c_dev = _cz("projects_cost_dev_uzs")
-    c_oth = _cz("projects_cost_other_uzs")
-    c_seo = _cz("projects_cost_seo_uzs")
+    ta = task_alloc or {}
+    td = ta.get("design", Decimal(0))
+    tv = ta.get("dev", Decimal(0))
+    to = ta.get("other", Decimal(0))
+    ts = ta.get("seo", Decimal(0))
+    m_des = _cz("projects_cost_design_uzs")
+    m_dev = _cz("projects_cost_dev_uzs")
+    m_oth = _cz("projects_cost_other_uzs")
+    m_seo = _cz("projects_cost_seo_uzs")
+    c_des = m_des + td
+    c_dev = m_dev + tv
+    c_oth = m_oth + to
+    c_seo = m_seo + ts
     internal = (c_des + c_dev + c_oth + c_seo).quantize(Decimal("0.01"))
     profit = (sum_paid - internal).quantize(Decimal("0.01"))
 
     mcp = None
+    reserved: Optional[Decimal] = None
+    profit_after = profit
     if manager_commission_percent is not None:
         mcp = Decimal(str(manager_commission_percent)).quantize(Decimal("0.01"))
+        if mcp > 0 and profit > 0:
+            reserved = (profit * mcp / Decimal(100)).quantize(Decimal("0.01"))
+            profit_after = (profit - reserved).quantize(Decimal("0.01"))
+        else:
+            reserved = Decimal("0")
 
     return ProjectCostRowOut(
         payment_id=p.id,
@@ -264,9 +322,19 @@ def _payment_to_project_cost_row(
         cost_dev_uzs=c_dev.quantize(Decimal("0.01")),
         cost_other_uzs=c_oth.quantize(Decimal("0.01")),
         cost_seo_uzs=c_seo.quantize(Decimal("0.01")),
+        cost_design_manual_uzs=m_des.quantize(Decimal("0.01")),
+        cost_dev_manual_uzs=m_dev.quantize(Decimal("0.01")),
+        cost_other_manual_uzs=m_oth.quantize(Decimal("0.01")),
+        cost_seo_manual_uzs=m_seo.quantize(Decimal("0.01")),
+        tasks_cost_design_uzs=td.quantize(Decimal("0.01")),
+        tasks_cost_dev_uzs=tv.quantize(Decimal("0.01")),
+        tasks_cost_other_uzs=to.quantize(Decimal("0.01")),
+        tasks_cost_seo_uzs=ts.quantize(Decimal("0.01")),
         internal_cost_sum=internal,
         profit_actual=profit,
         manager_commission_percent=mcp,
+        manager_commission_reserved_uzs=reserved,
+        profit_after_manager_uzs=profit_after,
     )
 
 
@@ -311,7 +379,10 @@ def projects_cost_report(
         mf, mt = bounds
         payments_sorted = [p for p in payments_sorted if _payment_overlaps_month_window(p, mf, mt)]
     pct_map = _commission_percent_by_payment_id(db)
-    return [_payment_to_project_cost_row(p, pct_map.get(p.id)) for p in payments_sorted]
+    task_amap = _task_allocated_cost_uzs_by_payment(db)
+    return [
+        _payment_to_project_cost_row(p, pct_map.get(p.id), task_amap.get(p.id)) for p in payments_sorted
+    ]
 
 
 @router.put("/projects-cost/{payment_id}/cost-breakdown", response_model=ProjectCostRowOut)
@@ -353,7 +424,8 @@ def put_projects_cost_breakdown(
         .first()
     )
     pct_map = _commission_percent_by_payment_id(db)
-    return _payment_to_project_cost_row(p, pct_map.get(p.id))
+    task_amap = _task_allocated_cost_uzs_by_payment(db)
+    return _payment_to_project_cost_row(p, pct_map.get(p.id), task_amap.get(p.id))
 
 
 _REV_CATEGORY_LABELS: Dict[str, str] = {
@@ -562,21 +634,20 @@ def pl_report(
             salary_uzs[m_idx - 1] += pl_amt
 
     # --- Процент менеджера (раздел «Комиссия»): доход менеджера = прибыль × %, по месяцу даты проекта
+    # Процент менеджера в P&L — по факту выплаченных/полученных сумм из карточки «Комиссия»;
+    # месяц колонки: дата получения (received_amount_*_on) или, если пусто, дата проекта.
     mgr_comm_uzs = [Decimal("0") for _ in range(n)]
-    for c in (
-        db.query(Commission)
-        .filter(Commission.project_date >= date(y, 1, 1))
-        .filter(Commission.project_date <= date(y, 12, 31))
-        .all()
-    ):
-        cost_c = Decimal(str(c.project_cost or 0))
-        prod_c = Decimal(str(c.production_cost or 0))
-        pct_c = Decimal(str(c.manager_percent or 0))
-        profit_c = cost_c - prod_c
-        amt_c = (profit_c * pct_c / Decimal(100)).quantize(Decimal("0.01"))
-        mi = int(c.project_date.month)
-        if 1 <= mi <= 12:
-            mgr_comm_uzs[mi - 1] += amt_c
+    for c in db.query(Commission).all():
+        r1 = Decimal(str(c.received_amount_1 or 0))
+        r2 = Decimal(str(c.received_amount_2 or 0))
+        if r1 > 0:
+            d1 = getattr(c, "received_amount_1_on", None) or c.project_date
+            if d1.year == y and 1 <= int(d1.month) <= 12:
+                mgr_comm_uzs[int(d1.month) - 1] += r1
+        if r2 > 0:
+            d2 = getattr(c, "received_amount_2_on", None) or c.project_date
+            if d2.year == y and 1 <= int(d2.month) <= 12:
+                mgr_comm_uzs[int(d2.month) - 1] += r2
 
     rates = {
         r.period_month: Decimal(str(r.usd_to_uzs_rate or 0))
