@@ -16,6 +16,7 @@ import {
   formatMoneyNumber,
   Empty,
   Select,
+  BtnOutline,
 } from '@/components/ui'
 import { useAuth } from '@/context/AuthContext'
 import api from '@/lib/api'
@@ -102,6 +103,22 @@ function serviceMonthLabel(ym?: string | null) {
   return `${MONTHS_RU[m - 1]} ${y}`
 }
 
+/** Дни до срока по дате строки дебиторки (положительные — ожидание, отрицательные — просрочка). */
+function debitorDaysUntilDue(p: Payment): number | null {
+  if (!p.deadline_date) return null
+  const raw = p.deadline_date
+  const d = new Date(raw.includes('T') ? raw : `${raw}T12:00:00`)
+  if (Number.isNaN(d.getTime())) return null
+  const today = new Date()
+  today.setHours(0, 0, 0, 0)
+  d.setHours(0, 0, 0, 0)
+  return Math.round((d.getTime() - today.getTime()) / 86400000)
+}
+
+const HOSTING_DEBITOR_VISIBLE_DAYS = 14
+
+type DebitorSegment = 'all' | 'services' | 'hosting'
+
 function firstOfMonth() {
   const d = new Date()
   return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-01`
@@ -150,17 +167,17 @@ const DATE_INPUT_STYLE: React.CSSProperties = {
 
 const DEBITOR_PROJECT_LINES_STORAGE = 'debitor_project_lines_v1'
 
-const CEO_LINE_FILTERS: { value: string; label: string }[] = [
+/** Линии для мультивыбора: без хостинга — он вынесен в отдельный раздел. */
+const DEBITOR_LINE_FILTERS: { value: string; label: string }[] = [
   { value: '', label: 'Все' },
   { value: 'web', label: 'Web' },
   { value: 'seo', label: 'SEO' },
   { value: 'ppc', label: 'PPC' },
   { value: 'mobile_app', label: 'Моб. приложение' },
   { value: 'tech_support', label: 'Тех сопровождение' },
-  { value: 'hosting_domain', label: 'Хостинг/домен' },
 ]
 
-const CEO_LINE_SLUGS = CEO_LINE_FILTERS.filter(f => f.value).map(f => f.value)
+const DEBITOR_LINE_SLUGS = DEBITOR_LINE_FILTERS.filter(f => f.value).map(f => f.value)
 
 function loadStoredProjectLines(): string[] {
   if (typeof window === 'undefined') return []
@@ -169,7 +186,7 @@ function loadStoredProjectLines(): string[] {
     if (!raw) return []
     const parsed = JSON.parse(raw) as unknown
     if (!Array.isArray(parsed)) return []
-    const allowed = new Set(CEO_LINE_SLUGS)
+    const allowed = new Set(DEBITOR_LINE_SLUGS)
     return parsed.filter((x): x is string => typeof x === 'string' && allowed.has(x))
   } catch {
     return []
@@ -204,6 +221,7 @@ export default function DebitorPage() {
   const [dateTo, setDateTo] = useState(today)
   const [statusFilter, setStatusFilter] = useState<'all' | 'overdue' | 'pending'>('all')
   const [selectedProjectLines, setSelectedProjectLines] = useState<string[]>([])
+  const [debitorSegment, setDebitorSegment] = useState<DebitorSegment>('all')
   const skipProjectLinesSaveOnce = useRef(true)
 
   const loadStats = useCallback(
@@ -273,16 +291,30 @@ export default function DebitorPage() {
     loadStats(from, to, filterManager)
   }
 
-  /** Строки за период с бэка (по сроку); дальше — менеджер и линии проектов (мультивыбор) */
+  /** Строки за период с бэка (по сроку); менеджер; раздел (Все / Услуги / Хостинг); мультивыбор линий (без хостинга). */
   const debitorBase = useMemo(() => {
     let list = allPayments
     if (filterManager) list = list.filter(p => String(p.partner?.manager?.id) === filterManager)
+
+    if (debitorSegment === 'services') {
+      list = list.filter(p => p.project_category !== 'hosting_domain')
+    } else if (debitorSegment === 'hosting') {
+      list = list.filter(p => p.project_category === 'hosting_domain')
+    } else {
+      list = list.filter(p => {
+        if (p.project_category !== 'hosting_domain') return true
+        const days = debitorDaysUntilDue(p)
+        if (days === null) return true
+        return days <= HOSTING_DEBITOR_VISIBLE_DAYS
+      })
+    }
+
     if (selectedProjectLines.length > 0) {
       const set = new Set(selectedProjectLines)
       list = list.filter(p => set.has(p.project_category || ''))
     }
     return list
-  }, [allPayments, filterManager, selectedProjectLines])
+  }, [allPayments, filterManager, selectedProjectLines, debitorSegment])
 
   /** Карточки 1–3: только неоплаченные */
   const debitorReceivableStats = useMemo(() => {
@@ -480,6 +512,58 @@ export default function DebitorPage() {
             style={{
               display: 'flex',
               flexWrap: 'wrap',
+              alignItems: 'center',
+              gap: 8,
+              marginBottom: 12,
+            }}
+          >
+            <span
+              style={{
+                fontSize: 11,
+                fontWeight: 700,
+                color: '#8a8fa8',
+                textTransform: 'uppercase',
+                letterSpacing: '0.06em',
+              }}
+            >
+              Раздел
+            </span>
+            {(['all', 'services', 'hosting'] as const).map(key => {
+              const labels: Record<typeof key, string> = {
+                all: 'Все',
+                services: 'Услуги',
+                hosting: 'Домены/хостинги',
+              }
+              const active = debitorSegment === key
+              return (
+                <BtnOutline
+                  key={key}
+                  type="button"
+                  onClick={() => {
+                    setDebitorSegment(key)
+                    if (key === 'hosting') setSelectedProjectLines([])
+                  }}
+                  style={{
+                    fontSize: 12,
+                    padding: '6px 12px',
+                    ...(active ? { background: '#1a6b3c', color: '#fff', borderColor: '#1a6b3c' } : {}),
+                  }}
+                >
+                  {labels[key]}
+                </BtnOutline>
+              )
+            })}
+          </div>
+          {debitorSegment === 'all' && (
+            <div style={{ fontSize: 12, color: '#64748b', marginBottom: 12, lineHeight: 1.45, maxWidth: 720 }}>
+              По умолчанию хостинг/домен в таблице показывается только если до срока оплаты не больше {HOSTING_DEBITOR_VISIBLE_DAYS}{' '}
+              дней (или просрочка). Полный список — раздел «Домены/хостинги».
+            </div>
+          )}
+          <div
+            style={{
+              display: 'flex',
+              flexWrap: 'wrap',
               alignItems: 'flex-start',
               gap: 10,
               marginBottom: 8,
@@ -496,7 +580,7 @@ export default function DebitorPage() {
                 flexShrink: 0,
               }}
             >
-              Линии проектов
+              Линии (услуги)
             </span>
             <div
               style={{
@@ -510,6 +594,7 @@ export default function DebitorPage() {
               <button
                 type="button"
                 onClick={() => setSelectedProjectLines([])}
+                disabled={debitorSegment === 'hosting'}
                 style={{
                   width: 118,
                   minHeight: 44,
@@ -520,7 +605,8 @@ export default function DebitorPage() {
                   border: selectedProjectLines.length === 0 ? '2px solid #1a6b3c' : '1px solid #e8e9ef',
                   background: selectedProjectLines.length === 0 ? '#f0faf4' : '#fff',
                   color: selectedProjectLines.length === 0 ? '#145a32' : '#4b5563',
-                  cursor: 'pointer',
+                  cursor: debitorSegment === 'hosting' ? 'not-allowed' : 'pointer',
+                  opacity: debitorSegment === 'hosting' ? 0.5 : 1,
                   fontFamily: 'inherit',
                   boxShadow: selectedProjectLines.length === 0 ? '0 1px 3px rgba(26,107,60,.12)' : 'none',
                   display: 'flex',
@@ -532,14 +618,15 @@ export default function DebitorPage() {
                   boxSizing: 'border-box',
                 }}
               >
-                Все
+                Любая линия
               </button>
-              {CEO_LINE_FILTERS.filter(f => f.value).map(opt => {
+              {DEBITOR_LINE_FILTERS.filter(f => f.value).map(opt => {
                 const active = selectedProjectLines.includes(opt.value)
                 return (
                   <button
                     key={opt.value}
                     type="button"
+                    disabled={debitorSegment === 'hosting'}
                     onClick={() => {
                       setSelectedProjectLines(prev => {
                         if (prev.includes(opt.value)) return prev.filter(s => s !== opt.value)
@@ -556,7 +643,8 @@ export default function DebitorPage() {
                       border: active ? '2px solid #1a6b3c' : '1px solid #e8e9ef',
                       background: active ? '#f0faf4' : '#fff',
                       color: active ? '#145a32' : '#4b5563',
-                      cursor: 'pointer',
+                      cursor: debitorSegment === 'hosting' ? 'not-allowed' : 'pointer',
+                      opacity: debitorSegment === 'hosting' ? 0.5 : 1,
                       fontFamily: 'inherit',
                       boxShadow: active ? '0 1px 3px rgba(26,107,60,.12)' : 'none',
                       display: 'flex',
@@ -576,9 +664,9 @@ export default function DebitorPage() {
               })}
             </div>
           </div>
-          <div style={{ fontSize: 11, color: '#a1a8bc', paddingLeft: 0, maxWidth: 640, lineHeight: 1.45 }}>
-            Можно выбрать несколько линий сразу. Выбор сохраняется в этом браузере и не сбрасывается при обновлении
-            страницы. «Все» снимает фильтр по линиям.
+          <div style={{ fontSize: 11, color: '#a1a8bc', paddingLeft: 0, maxWidth: 720, lineHeight: 1.45 }}>
+            Несколько линий можно комбинировать (Web + SEO и т.д.). Выбор сохраняется в браузере. «Любая линия» снимает
+            фильтр. В разделе «Домены/хостинги» отбор по линиям отключён.
           </div>
         </div>
 

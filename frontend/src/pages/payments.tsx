@@ -58,6 +58,21 @@ function paymentSortKeyDueDays(p: Payment): number | null {
   return daysLeftSortKey(listDueDateStr(p), listDueDayOfMonth(p))
 }
 
+/** В общем списке «Все» хостинг не показываем, если до оплаты больше N дней (не мешает основным услугам). */
+const HOSTING_VISIBLE_WITHIN_DAYS = 14
+
+type PaymentsSegment = 'all' | 'services' | 'hosting'
+
+function passesPaymentsSegment(p: Payment, segment: PaymentsSegment): boolean {
+  const isHosting = p.project_category === 'hosting_domain'
+  if (segment === 'services') return !isHosting
+  if (segment === 'hosting') return isHosting
+  if (!isHosting) return true
+  const d = paymentSortKeyDueDays(p)
+  if (d === null) return true
+  return d <= HOSTING_VISIBLE_WITHIN_DAYS
+}
+
 function dueSourceHint(p: Payment): string {
   if (p.next_payment_month) {
     return `По графику: ближайший срок среди неоплаченных строк (${monthLabel(p.next_payment_month)})`
@@ -243,6 +258,8 @@ export default function PaymentsPage() {
   const [filterManager, setFilterManager] = useState('')
   /** default — порядок с API; urgency — сначала просрочка (красные), затем ближайшие выплаты, в конце без даты и с большим запасом */
   const [sortByRemaining, setSortByRemaining] = useState<'default' | 'urgency'>('default')
+  /** Все — услуги + хостинг только если до срока ≤14 дн.; Услуги — без хостинга; Домены/хостинги — полный список хостинга */
+  const [paymentsSegment, setPaymentsSegment] = useState<PaymentsSegment>('all')
   const [users, setUsers] = useState<User[]>([])
   const [modal, setModal] = useState(false)
   const [editingId, setEditingId] = useState<number | null>(null)
@@ -342,6 +359,11 @@ export default function PaymentsPage() {
       return ka - kb
     })
   }, [payments, sortByRemaining])
+
+  const visiblePayments = useMemo(
+    () => displayedPayments.filter((p) => passesPaymentsSegment(p, paymentsSegment)),
+    [displayedPayments, paymentsSegment],
+  )
 
   useEffect(() => {
     api.get('partners').then(r => setPartners(r.data)).catch(() => setPartners([]))
@@ -726,7 +748,7 @@ export default function PaymentsPage() {
     <Layout>
       <PageHeader
         title="Проекты"
-        subtitle="Все проекты по партнёрам"
+        subtitle="Все проекты по партнёрам. Раздел «Все»: хостинг/домен только если до срока ≤14 дней; полный хостинг — «Домены/хостинги»."
         action={<BtnPrimary onClick={openAdd}>+ Новый проект</BtnPrimary>}
       />
 
@@ -742,44 +764,102 @@ export default function PaymentsPage() {
         }}
       >
         {/* Filters */}
-        <div style={{ display: 'flex', gap: 10, marginBottom: 18, flexWrap: 'wrap' }}>
-          {(user?.role === 'admin' || user?.role === 'administration') && (
-            <Select value={filterManager} onChange={e => setFilterManager(e.target.value)} style={{ maxWidth: 200 }}>
-              <option value="">Все менеджеры</option>
-              {users.map(u => <option key={u.id} value={u.id}>{u.name}</option>)}
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 10, marginBottom: 18, alignItems: 'flex-start' }}>
+          <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap', alignItems: 'center', width: '100%' }}>
+            {(user?.role === 'admin' || user?.role === 'administration') && (
+              <Select value={filterManager} onChange={e => setFilterManager(e.target.value)} style={{ maxWidth: 200 }}>
+                <option value="">Все менеджеры</option>
+                {users.map(u => <option key={u.id} value={u.id}>{u.name}</option>)}
+              </Select>
+            )}
+            <Select value={filterStatus} onChange={e => setFilterStatus(e.target.value)} style={{ maxWidth: 180 }}>
+              <option value="">Все статусы</option>
+              <option value="pending">Ожидается</option>
+              <option value="overdue">Просрочено</option>
+              <option value="paid">Оплачено</option>
+              <option value="postponed">Отложено</option>
             </Select>
-          )}
-          <Select value={filterStatus} onChange={e => setFilterStatus(e.target.value)} style={{ maxWidth: 180 }}>
-            <option value="">Все статусы</option>
-            <option value="pending">Ожидается</option>
-            <option value="overdue">Просрочено</option>
-            <option value="paid">Оплачено</option>
-            <option value="postponed">Отложено</option>
-          </Select>
-          <Select value={filterType} onChange={e => setFilterType(e.target.value)} style={{ maxWidth: 180 }}>
-            <option value="">Все типы</option>
-            <option value="recurring">Рекуррентный</option>
-            <option value="one_time">Разовый</option>
-            <option value="service_expiry">Сервисный</option>
-          </Select>
-          <Select value={filterCategory} onChange={e => setCategoryFilter(e.target.value)} style={{ maxWidth: 200 }}>
-            <option value="">Все линии</option>
-            <option value="web">Web</option>
-            <option value="seo">SEO</option>
-            <option value="ppc">PPC</option>
-            <option value="mobile_app">Мобильное приложение</option>
-            <option value="tech_support">Тех сопровождение</option>
-            <option value="hosting_domain">Хостинг/домен</option>
-          </Select>
-          <Select
-            value={sortByRemaining}
-            onChange={e => setSortByRemaining(e.target.value as 'default' | 'urgency')}
-            style={{ maxWidth: 320 }}
-          >
-            <option value="default">Осталось: как в системе</option>
-            <option value="urgency">Осталось: просрочка → ближайшие → дальше</option>
-          </Select>
+            <Select value={filterType} onChange={e => setFilterType(e.target.value)} style={{ maxWidth: 180 }}>
+              <option value="">Все типы</option>
+              <option value="recurring">Рекуррентный</option>
+              <option value="one_time">Разовый</option>
+              <option value="service_expiry">Сервисный</option>
+            </Select>
+            <Select value={filterCategory} onChange={e => setCategoryFilter(e.target.value)} style={{ maxWidth: 200 }}>
+              <option value="">Все линии</option>
+              <option value="web">Web</option>
+              <option value="seo">SEO</option>
+              <option value="ppc">PPC</option>
+              <option value="mobile_app">Мобильное приложение</option>
+              <option value="tech_support">Тех сопровождение</option>
+              <option value="hosting_domain">Хостинг/домен</option>
+            </Select>
+            <Select
+              value={sortByRemaining}
+              onChange={e => setSortByRemaining(e.target.value as 'default' | 'urgency')}
+              style={{ maxWidth: 320 }}
+            >
+              <option value="default">Осталось: как в системе</option>
+              <option value="urgency">Осталось: просрочка → ближайшие → дальше</option>
+            </Select>
+          </div>
+          <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap', alignItems: 'center', width: '100%' }}>
+            {/*
+              Те же отступы и скругление, что у Select (inputStyle), чтобы «РАЗДЕЛ» совпадал с текстом в селектах.
+              Прозрачная обводка — занимает ту же ширину кромки, что и 1px border у select.
+            */}
+            <div
+              style={{
+                boxSizing: 'border-box',
+                border: '1px solid transparent',
+                borderRadius: 9,
+                padding: '9px 12px',
+                display: 'inline-flex',
+                alignItems: 'center',
+                flexShrink: 0,
+              }}
+            >
+              <span
+                style={{
+                  fontSize: 11,
+                  fontWeight: 700,
+                  color: '#8a8fa8',
+                  letterSpacing: '0.06em',
+                }}
+              >
+                РАЗДЕЛ
+              </span>
+            </div>
+            {(['all', 'services', 'hosting'] as const).map((key) => {
+              const labels: Record<typeof key, string> = {
+                all: 'Все',
+                services: 'Услуги',
+                hosting: 'Домены/хостинги',
+              }
+              const active = paymentsSegment === key
+              return (
+                <BtnOutline
+                  key={key}
+                  type="button"
+                  onClick={() => setPaymentsSegment(key)}
+                  style={{
+                    fontSize: 12,
+                    padding: '6px 12px',
+                    ...(active ? { background: '#1a6b3c', color: '#fff', borderColor: '#1a6b3c' } : {}),
+                  }}
+                >
+                  {labels[key]}
+                </BtnOutline>
+              )
+            })}
+          </div>
         </div>
+        {paymentsSegment === 'all' && (
+          <div style={{ fontSize: 12, color: '#64748b', marginBottom: 12, lineHeight: 1.45, maxWidth: 720 }}>
+            В разделе «Все» строки «Хостинг/домен» показываются только если до ближайшего срока оплаты не больше{' '}
+            {HOSTING_VISIBLE_WITHIN_DAYS} дней (включая просрочку). Остальной хостинг — в «Домены/хостинги».
+          </div>
+        )}
 
         <Card style={{ width: '100%', minWidth: 0 }}>
           <table style={{ width: '100%', borderCollapse: 'collapse', tableLayout: 'fixed' }}>
@@ -821,7 +901,7 @@ export default function PaymentsPage() {
               </tr>
             </thead>
             <tbody>
-              {displayedPayments.map(p => {
+              {visiblePayments.map(p => {
                 const dl = paymentRemainingDisplay(p)
                 const isActive = drawer?.id === p.id
                 return (
@@ -892,7 +972,15 @@ export default function PaymentsPage() {
               })}
             </tbody>
           </table>
-          {displayedPayments.length === 0 && <Empty text="Проектов не найдено" />}
+          {visiblePayments.length === 0 && (
+            <Empty
+              text={
+                payments.length > 0 && visiblePayments.length === 0
+                  ? 'Нет строк для выбранного раздела (или для «Все» срок хостинга дальше чем 14 дней). Переключите «РАЗДЕЛ» или фильтры.'
+                  : 'Проектов не найдено'
+              }
+            />
+          )}
         </Card>
       </div>
 
