@@ -137,19 +137,7 @@ function debitorDaysUntilDue(p: Payment): number | null {
 
 const HOSTING_DEBITOR_VISIBLE_DAYS = 14
 
-const RECURRING_PAYMENT_TYPES = new Set(['recurring', 'regular', 'service_expiry'])
-
-function debitorIsRecurringSegmentRow(p: Payment): boolean {
-  if (p.project_category === 'hosting_domain') return false
-  return RECURRING_PAYMENT_TYPES.has(p.payment_type)
-}
-
-function debitorIsProjectSegmentRow(p: Payment): boolean {
-  if (p.project_category === 'hosting_domain') return true
-  return p.payment_type === 'one_time'
-}
-
-type DebitorSegment = 'all' | 'recurring' | 'project'
+type DebitorSegment = 'all' | 'services' | 'hosting'
 
 function firstOfMonth() {
   const d = new Date()
@@ -199,13 +187,15 @@ const DATE_INPUT_STYLE: React.CSSProperties = {
 
 const DEBITOR_PROJECT_LINES_STORAGE = 'debitor_project_lines_v3'
 
-/** Линии услуг (мультивыбор). Хостинг — в разделе «Проектные» / категория hosting_domain. */
+/** Линии услуг (мультивыбор). Совпадает с категориями проектов /payments. */
 const DEBITOR_LINE_FILTERS: { value: string; label: string }[] = [
   { value: '', label: 'Все' },
-  { value: 'smm', label: 'SMM' },
-  { value: 'target', label: 'Таргет' },
-  { value: 'personal_brand', label: 'Личный бренд' },
-  { value: 'content', label: 'Контент' },
+  { value: 'web', label: 'Web' },
+  { value: 'seo', label: 'SEO' },
+  { value: 'ppc', label: 'PPC' },
+  { value: 'mobile_app', label: 'Моб. приложение' },
+  { value: 'tech_support', label: 'Тех. сопр.' },
+  { value: 'hosting_domain', label: 'Хостинг' },
 ]
 
 const DEBITOR_LINE_SLUGS = DEBITOR_LINE_FILTERS.filter(f => f.value).map(f => f.value)
@@ -322,15 +312,15 @@ export default function DebitorPage() {
     loadStats(from, to, filterManager)
   }
 
-  /** Строки за период с бэка; менеджер; раздел (Все / Рекуррентные / Проектные); мультивыбор линий. */
+  /** Строки за период с бэка; менеджер; раздел (Все / Услуги / Домены/хостинг); мультивыбор линий. */
   const debitorBase = useMemo(() => {
     let list = allPayments
     if (filterManager) list = list.filter(p => String(p.partner?.manager?.id) === filterManager)
 
-    if (debitorSegment === 'recurring') {
-      list = list.filter(p => debitorIsRecurringSegmentRow(p))
-    } else if (debitorSegment === 'project') {
-      list = list.filter(p => debitorIsProjectSegmentRow(p))
+    if (debitorSegment === 'hosting') {
+      list = list.filter(p => p.project_category === 'hosting_domain')
+    } else if (debitorSegment === 'services') {
+      list = list.filter(p => p.project_category !== 'hosting_domain')
     } else {
       list = list.filter(p => {
         if (p.project_category !== 'hosting_domain') return true
@@ -559,11 +549,11 @@ export default function DebitorPage() {
             >
               Раздел
             </span>
-            {(['all', 'recurring', 'project'] as const).map(key => {
+            {(['all', 'services', 'hosting'] as const).map(key => {
               const labels: Record<typeof key, string> = {
                 all: 'Все',
-                recurring: 'Рекуррентные',
-                project: 'Проектные',
+                services: 'Услуги',
+                hosting: 'Домены/хостинг',
               }
               const active = debitorSegment === key
               return (
@@ -586,8 +576,8 @@ export default function DebitorPage() {
           </div>
           {debitorSegment === 'all' && (
             <div style={{ fontSize: 12, color: '#64748b', marginBottom: 12, lineHeight: 1.45, maxWidth: 720 }}>
-              В «Все» хостинг/домен показывается только если до срока не больше {HOSTING_DEBITOR_VISIBLE_DAYS} дней (или просрочка).
-              Рекуррентные строки без хостинга — «Рекуррентные»; разовые и весь хостинг — «Проектные».
+              В разделе «Все» строки «Хостинг/домен» показываются только если до ближайшего срока не больше{' '}
+              {HOSTING_DEBITOR_VISIBLE_DAYS} дней (или просрочка). Остальной хостинг — в «Домены/хостинг».
             </div>
           )}
           <div

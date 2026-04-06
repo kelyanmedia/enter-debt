@@ -61,25 +61,13 @@ function paymentSortKeyDueDays(p: Payment): number | null {
 /** В общем списке «Все» хостинг не показываем, если до оплаты больше N дней (не мешает основным услугам). */
 const HOSTING_VISIBLE_WITHIN_DAYS = 14
 
-type PaymentsSegment = 'all' | 'recurring' | 'project'
-
-/** Как на бэкенде (finance projects cost): рекуррентное выставление. */
-const RECURRING_PAYMENT_TYPES = new Set(['recurring', 'regular', 'service_expiry'])
-
-function isRecurringSegmentRow(p: Payment): boolean {
-  if (p.project_category === 'hosting_domain') return false
-  return RECURRING_PAYMENT_TYPES.has(p.payment_type)
-}
-
-function isProjectSegmentRow(p: Payment): boolean {
-  if (p.project_category === 'hosting_domain') return true
-  return p.payment_type === 'one_time'
-}
+/** Все — хостинг в списке с ограничением по сроку; Услуги — без хостинга/домена; Домены/хостинг — только хостинг/домен. */
+type PaymentsSegment = 'all' | 'services' | 'hosting'
 
 function passesPaymentsSegment(p: Payment, segment: PaymentsSegment): boolean {
   const isHosting = p.project_category === 'hosting_domain'
-  if (segment === 'recurring') return isRecurringSegmentRow(p)
-  if (segment === 'project') return isProjectSegmentRow(p)
+  if (segment === 'hosting') return Boolean(isHosting)
+  if (segment === 'services') return !isHosting
   if (!isHosting) return true
   const d = paymentSortKeyDueDays(p)
   if (d === null) return true
@@ -291,7 +279,6 @@ export default function PaymentsPage() {
   const [filterManager, setFilterManager] = useState('')
   /** default — порядок с API; urgency — сначала просрочка (красные), затем ближайшие выплаты, в конце без даты и с большим запасом */
   const [sortByRemaining, setSortByRemaining] = useState<'default' | 'urgency'>('default')
-  /** Все — см. подсказку; Рекуррентные — тип recurring/regular/service_expiry без хостинга; Проектные — разовые + хостинг/домен */
   const [paymentsSegment, setPaymentsSegment] = useState<PaymentsSegment>('all')
   const [users, setUsers] = useState<User[]>([])
   const [modal, setModal] = useState(false)
@@ -781,7 +768,7 @@ export default function PaymentsPage() {
     <Layout>
       <PageHeader
         title="Проекты"
-        subtitle="Все проекты по партнёрам. «Все»: хостинг/домен в списке только при сроке ≤14 дней. «Рекуррентные» — помесячные/сервисные договоры без линии хостинга. «Проектные» — разовые и хостинг/домен."
+        subtitle="Все проекты по партнёрам. «Все»: хостинг/домен в списке только при сроке ≤14 дней. «Услуги» — все строки без хостинга/домена. «Домены/хостинг» — только категория хостинг/домен."
         action={<BtnPrimary onClick={openAdd}>+ Новый проект</BtnPrimary>}
       />
 
@@ -867,11 +854,11 @@ export default function PaymentsPage() {
                 РАЗДЕЛ
               </span>
             </div>
-            {(['all', 'recurring', 'project'] as const).map((key) => {
+            {(['all', 'services', 'hosting'] as const).map((key) => {
               const labels: Record<typeof key, string> = {
                 all: 'Все',
-                recurring: 'Рекуррентные',
-                project: 'Проектные',
+                services: 'Услуги',
+                hosting: 'Домены/хостинг',
               }
               const active = paymentsSegment === key
               return (
@@ -893,8 +880,8 @@ export default function PaymentsPage() {
         </div>
         {paymentsSegment === 'all' && (
           <div style={{ fontSize: 12, color: '#64748b', marginBottom: 12, lineHeight: 1.45, maxWidth: 720 }}>
-            В «Все» строки «Хостинг/домен» — только если до ближайшего срока не больше {HOSTING_VISIBLE_WITHIN_DAYS} дней (включая
-            просрочку). Полный хостинг и разовые проекты — в «Проектные»; рекуррентные договоры без хостинга — в «Рекуррентные».
+            В разделе «Все» строки «Хостинг/домен» показываются только если до ближайшего срока не больше {HOSTING_VISIBLE_WITHIN_DAYS}{' '}
+            дней (или просрочка). Остальной хостинг — в «Домены/хостинг».
           </div>
         )}
 
