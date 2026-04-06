@@ -7,11 +7,12 @@
 
 ---
 
-## Три компании и раздельные базы PostgreSQL
+## Три компании и раздельные базы
 
 Переключатель организации во фронте шлёт заголовок `X-Company-Slug`. Бэкенд открывает **разные** подключения только если у каждой компании **свой** URL.
 
-- **По умолчанию** (`DATABASE_SEPARATE_DBS` не задан или `false`): все три slug используют **одну** базу из `DATABASE_URL` — данные **не** разделены (удобно для одной тестовой БД).
+- **Локально без права `CREATE DATABASE` в PostgreSQL**: в `backend/.env` можно задать три файла SQLite — см. `backend/.env.example` (`DATABASE_URL=sqlite:///./data_kelyanmedia.db`, `DATABASE_SEPARATE_DBS=true`). Тогда создаются `data_whiteway.db` и `data_enter_group_media.db` рядом с ним. Сброс данных: удалить эти три файла (сервер остановлен) или `python3 scripts/reset_all_company_data.py`.
+- **По умолчанию в коде** (`DATABASE_SEPARATE_DBS` не задан или `false`): все три slug используют **одну** базу из `DATABASE_URL` — данные **не** разделены (удобно для одной тестовой БД).
 - **Прод с изоляцией**: в `.env` на сервере задайте `DATABASE_SEPARATE_DBS=true` и создайте в PostgreSQL две дополнительные базы с тем же пользователем, что и основная:
   - `enterdebt_whiteway`
   - `enterdebt_enter_group_media`  

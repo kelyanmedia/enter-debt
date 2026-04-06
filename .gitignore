@@ -13,3 +13,5 @@ venv/
 db_backups/
 *.log
 backend/uploads/
+# локальные БД по компаниям (SQLite)
+backend/data*.db
