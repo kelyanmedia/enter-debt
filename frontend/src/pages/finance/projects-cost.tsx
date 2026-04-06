@@ -105,6 +105,10 @@ function formatStart(iso: string) {
 }
 
 const CAT_BG: Record<string, string> = {
+  smm: '#f3e8ff',
+  target: '#fff7ed',
+  personal_brand: '#ccfbf1',
+  content: '#ffedd5',
   web: '#fff4e6',
   ppc: '#e8f4fc',
   seo: '#f3e8ff',
@@ -116,6 +120,10 @@ const CAT_BG: Record<string, string> = {
 function categoryLabel(cat?: string | null) {
   if (!cat) return '—'
   const m: Record<string, string> = {
+    smm: 'SMM',
+    target: 'Таргет',
+    personal_brand: 'Личный бренд',
+    content: 'Контент',
     web: 'WEB',
     ppc: 'PPC',
     seo: 'SEO',

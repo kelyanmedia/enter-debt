@@ -61,12 +61,25 @@ function paymentSortKeyDueDays(p: Payment): number | null {
 /** В общем списке «Все» хостинг не показываем, если до оплаты больше N дней (не мешает основным услугам). */
 const HOSTING_VISIBLE_WITHIN_DAYS = 14
 
-type PaymentsSegment = 'all' | 'services' | 'hosting'
+type PaymentsSegment = 'all' | 'recurring' | 'project'
+
+/** Как на бэкенде (finance projects cost): рекуррентное выставление. */
+const RECURRING_PAYMENT_TYPES = new Set(['recurring', 'regular', 'service_expiry'])
+
+function isRecurringSegmentRow(p: Payment): boolean {
+  if (p.project_category === 'hosting_domain') return false
+  return RECURRING_PAYMENT_TYPES.has(p.payment_type)
+}
+
+function isProjectSegmentRow(p: Payment): boolean {
+  if (p.project_category === 'hosting_domain') return true
+  return p.payment_type === 'one_time'
+}
 
 function passesPaymentsSegment(p: Payment, segment: PaymentsSegment): boolean {
   const isHosting = p.project_category === 'hosting_domain'
-  if (segment === 'services') return !isHosting
-  if (segment === 'hosting') return isHosting
+  if (segment === 'recurring') return isRecurringSegmentRow(p)
+  if (segment === 'project') return isProjectSegmentRow(p)
   if (!isHosting) return true
   const d = paymentSortKeyDueDays(p)
   if (d === null) return true
@@ -126,6 +139,10 @@ const MONTHS_RU = ['Январь','Февраль','Март','Апрель','М
 
 /** Совпадает с опциями фильтра «Все линии» (query ?category=). */
 const PAYMENTS_CATEGORY_QUERY_VALUES = new Set([
+  'smm',
+  'target',
+  'personal_brand',
+  'content',
   'web',
   'seo',
   'ppc',
@@ -223,6 +240,22 @@ function hostingYearPeriodTitle(ym: string): string {
 }
 
 function lineBadge(cat?: string | null) {
+  if (cat === 'smm')
+    return <span style={{ fontSize: 11, fontWeight: 700, color: '#7c3aed', background: '#f3e8ff', padding: '3px 8px', borderRadius: 6 }}>SMM</span>
+  if (cat === 'target')
+    return <span style={{ fontSize: 11, fontWeight: 700, color: '#c2410c', background: '#fff7ed', padding: '3px 8px', borderRadius: 6 }}>Таргет</span>
+  if (cat === 'personal_brand')
+    return (
+      <span style={{ fontSize: 11, fontWeight: 700, color: '#0d9488', background: '#ccfbf1', padding: '3px 8px', borderRadius: 6 }}>
+        Личн. бренд
+      </span>
+    )
+  if (cat === 'content')
+    return (
+      <span style={{ fontSize: 11, fontWeight: 700, color: '#7c2d12', background: '#ffedd5', padding: '3px 8px', borderRadius: 6 }}>
+        Контент
+      </span>
+    )
   if (cat === 'web') return <span style={{ fontSize: 11, fontWeight: 700, color: '#2563eb', background: '#eff4ff', padding: '3px 8px', borderRadius: 6 }}>Web</span>
   if (cat === 'seo') return <span style={{ fontSize: 11, fontWeight: 700, color: '#b45309', background: '#fff8ee', padding: '3px 8px', borderRadius: 6 }}>SEO</span>
   if (cat === 'ppc') return <span style={{ fontSize: 11, fontWeight: 700, color: '#6b7280', background: '#f3f4f6', padding: '3px 8px', borderRadius: 6 }}>PPC</span>
@@ -258,7 +291,7 @@ export default function PaymentsPage() {
   const [filterManager, setFilterManager] = useState('')
   /** default — порядок с API; urgency — сначала просрочка (красные), затем ближайшие выплаты, в конце без даты и с большим запасом */
   const [sortByRemaining, setSortByRemaining] = useState<'default' | 'urgency'>('default')
-  /** Все — услуги + хостинг только если до срока ≤14 дн.; Услуги — без хостинга; Домены/хостинги — полный список хостинга */
+  /** Все — см. подсказку; Рекуррентные — тип recurring/regular/service_expiry без хостинга; Проектные — разовые + хостинг/домен */
   const [paymentsSegment, setPaymentsSegment] = useState<PaymentsSegment>('all')
   const [users, setUsers] = useState<User[]>([])
   const [modal, setModal] = useState(false)
@@ -748,7 +781,7 @@ export default function PaymentsPage() {
     <Layout>
       <PageHeader
         title="Проекты"
-        subtitle="Все проекты по партнёрам. Раздел «Все»: хостинг/домен только если до срока ≤14 дней; полный хостинг — «Домены/хостинги»."
+        subtitle="Все проекты по партнёрам. «Все»: хостинг/домен в списке только при сроке ≤14 дней. «Рекуррентные» — помесячные/сервисные договоры без линии хостинга. «Проектные» — разовые и хостинг/домен."
         action={<BtnPrimary onClick={openAdd}>+ Новый проект</BtnPrimary>}
       />
 
@@ -787,12 +820,16 @@ export default function PaymentsPage() {
             </Select>
             <Select value={filterCategory} onChange={e => setCategoryFilter(e.target.value)} style={{ maxWidth: 200 }}>
               <option value="">Все линии</option>
-              <option value="web">Web</option>
-              <option value="seo">SEO</option>
-              <option value="ppc">PPC</option>
-              <option value="mobile_app">Мобильное приложение</option>
-              <option value="tech_support">Тех сопровождение</option>
+              <option value="smm">SMM</option>
+              <option value="target">Таргет</option>
+              <option value="personal_brand">Личный бренд</option>
+              <option value="content">Контент</option>
               <option value="hosting_domain">Хостинг/домен</option>
+              <option value="tech_support">Тех сопровождение (legacy)</option>
+              <option value="web">Web (legacy)</option>
+              <option value="seo">SEO (legacy)</option>
+              <option value="ppc">PPC (legacy)</option>
+              <option value="mobile_app">Моб. приложение (legacy)</option>
             </Select>
             <Select
               value={sortByRemaining}
@@ -830,11 +867,11 @@ export default function PaymentsPage() {
                 РАЗДЕЛ
               </span>
             </div>
-            {(['all', 'services', 'hosting'] as const).map((key) => {
+            {(['all', 'recurring', 'project'] as const).map((key) => {
               const labels: Record<typeof key, string> = {
                 all: 'Все',
-                services: 'Услуги',
-                hosting: 'Домены/хостинги',
+                recurring: 'Рекуррентные',
+                project: 'Проектные',
               }
               const active = paymentsSegment === key
               return (
@@ -856,8 +893,8 @@ export default function PaymentsPage() {
         </div>
         {paymentsSegment === 'all' && (
           <div style={{ fontSize: 12, color: '#64748b', marginBottom: 12, lineHeight: 1.45, maxWidth: 720 }}>
-            В разделе «Все» строки «Хостинг/домен» показываются только если до ближайшего срока оплаты не больше{' '}
-            {HOSTING_VISIBLE_WITHIN_DAYS} дней (включая просрочку). Остальной хостинг — в «Домены/хостинги».
+            В «Все» строки «Хостинг/домен» — только если до ближайшего срока не больше {HOSTING_VISIBLE_WITHIN_DAYS} дней (включая
+            просрочку). Полный хостинг и разовые проекты — в «Проектные»; рекуррентные договоры без хостинга — в «Рекуррентные».
           </div>
         )}
 
@@ -976,7 +1013,7 @@ export default function PaymentsPage() {
             <Empty
               text={
                 payments.length > 0 && visiblePayments.length === 0
-                  ? 'Нет строк для выбранного раздела (или для «Все» срок хостинга дальше чем 14 дней). Переключите «РАЗДЕЛ» или фильтры.'
+                  ? 'Нет строк для выбранного раздела или фильтров. Для «Все» хостинг с дальним сроком скрыт — смотрите «Проектные».'
                   : 'Проектов не найдено'
               }
             />
@@ -1568,15 +1605,19 @@ export default function PaymentsPage() {
             {partners.map(p => <option key={p.id} value={p.id}>{p.name}</option>)}
           </Select>
         </Field>
-        <Field label="Линия (CEO)">
+        <Field label="Линия">
           <Select value={form.project_category} onChange={e => applyCategoryChange(e.target.value)}>
             <option value="">Не указано</option>
-            <option value="web">Web — сайты и веб</option>
-            <option value="seo">SEO</option>
-            <option value="ppc">PPC</option>
-            <option value="mobile_app">Мобильное приложение</option>
-            <option value="tech_support">Тех сопровождение</option>
+            <option value="smm">SMM</option>
+            <option value="target">Таргет</option>
+            <option value="personal_brand">Личный бренд</option>
+            <option value="content">Контент</option>
             <option value="hosting_domain">Хостинг/домен</option>
+            <option value="tech_support">Тех сопровождение (legacy)</option>
+            <option value="web">Web (legacy)</option>
+            <option value="seo">SEO (legacy)</option>
+            <option value="ppc">PPC (legacy)</option>
+            <option value="mobile_app">Мобильное приложение (legacy)</option>
           </Select>
         </Field>
         <Field label="Услуга *">

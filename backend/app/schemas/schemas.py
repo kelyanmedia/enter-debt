@@ -460,7 +460,7 @@ class PaymentBase(BaseModel):
     notify_accounting: bool = True
     contract_url: Optional[str] = None
     service_period: Optional[str] = None  # monthly / yearly
-    project_category: Optional[str] = None  # web | seo | ppc | mobile_app | tech_support | hosting_domain
+    project_category: Optional[str] = None  # smm | target | personal_brand | content | hosting_domain | legacy web…
     billing_variant: Optional[str] = None
     # tech_monthly_plus_extra | tech_piecework | hosting_subscription
     billing_notes: Optional[str] = None
@@ -532,7 +532,7 @@ class PaymentUpdate(BaseModel):
     notify_accounting: Optional[bool] = None
     contract_url: Optional[str] = None
     service_period: Optional[str] = None
-    project_category: Optional[str] = None  # web | seo | ppc | mobile_app | tech_support | hosting_domain
+    project_category: Optional[str] = None  # smm | target | personal_brand | content | hosting_domain | legacy web…
     billing_variant: Optional[str] = None
     billing_notes: Optional[str] = None
     hosting_contact_name: Optional[str] = None

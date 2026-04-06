@@ -368,34 +368,34 @@ export default function CeoDashboardPage() {
             hint="Все неархивные проекты в вашей зоне доступа"
           />
           <CeoCard
-            title="Web проекты"
+            title="SMM"
             value={stats?.web_projects ?? 0}
-            href="/payments?category=web"
-            hint="Сайты и веб-услуги"
+            href="/payments?category=smm"
+            hint="Соцсети и SMM"
           />
           <CeoCard
-            title="SEO проекты"
+            title="Таргет"
             value={stats?.seo_projects ?? 0}
-            href="/payments?category=seo"
-            hint="Поисковая оптимизация"
+            href="/payments?category=target"
+            hint="Таргетированная реклама"
           />
           <CeoCard
-            title="PPC проекты"
+            title="Личный бренд"
             value={stats?.ppc_projects ?? 0}
-            href="/payments?category=ppc"
-            hint="Контекстная реклама"
+            href="/payments?category=personal_brand"
+            hint="Личный бренд"
           />
           <CeoCard
-            title="Мобильные приложения"
+            title="Контент"
             value={stats?.mobile_app_projects ?? 0}
-            href="/payments?category=mobile_app"
-            hint="Разработка и сопровождение приложений"
+            href="/payments?category=content"
+            hint="Контент"
           />
           <CeoCard
-            title="Тех сопровождение"
+            title="Техподдержка (legacy)"
             value={stats?.tech_support_projects ?? 0}
             href="/payments?category=tech_support"
-            hint="Техническая поддержка и сопровождение"
+            hint="Старые проекты с линией «Тех сопровождение»"
           />
           <CeoCard
             title="Хостинг и домены"
@@ -421,8 +421,8 @@ export default function CeoDashboardPage() {
                 Активные партнёры · {clientYear}
               </div>
               <div style={{ fontSize: 12, color: '#8a8fa8', marginTop: 4, lineHeight: 1.5 }}>
-                Новые партнёры по месяцу добавления в систему, у которых есть неархивный проект в линиях веб, SEO,
-                PPC, мобильные приложения или техподдержка (как на карточках выше; хостинг и домены не учитываются).
+                Новые партнёры по месяцу добавления, у которых есть неархивный проект в линиях SMM, Таргет, личный бренд,
+                контент или старых линиях (как на карточках выше; хостинг и домены не учитываются).
                 Наведите на график — число за месяц.
               </div>
             </div>

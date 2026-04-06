@@ -35,12 +35,16 @@ from app.schemas.schemas import (
 router = APIRouter(prefix="/api/finance", tags=["finance"])
 
 _CATEGORY_SORT = {
-    "web": 0,
-    "ppc": 1,
-    "seo": 2,
-    "mobile_app": 3,
-    "tech_support": 4,
-    "hosting_domain": 5,
+    "smm": 0,
+    "target": 1,
+    "personal_brand": 2,
+    "content": 3,
+    "web": 10,
+    "ppc": 11,
+    "seo": 12,
+    "mobile_app": 13,
+    "tech_support": 14,
+    "hosting_domain": 20,
 }
 
 _YM_RE = re.compile(r"^\d{4}-\d{2}$")
@@ -429,6 +433,10 @@ def put_projects_cost_breakdown(
 
 
 _REV_CATEGORY_LABELS: Dict[str, str] = {
+    "smm": "SMM",
+    "target": "Таргет",
+    "personal_brand": "Личный бренд",
+    "content": "Контент",
     "web": "WEB",
     "ppc": "PPC",
     "seo": "SEO",
@@ -439,6 +447,10 @@ _REV_CATEGORY_LABELS: Dict[str, str] = {
 }
 
 _REV_CATEGORY_ORDER = [
+    "smm",
+    "target",
+    "personal_brand",
+    "content",
     "web",
     "ppc",
     "seo",

@@ -48,6 +48,26 @@ interface Payment {
 }
 
 function categoryBadge(cat?: string | null) {
+  if (cat === 'smm')
+    return (
+      <span style={{ fontSize: 11, fontWeight: 700, color: '#7c3aed', background: '#f3e8ff', padding: '3px 8px', borderRadius: 6 }}>SMM</span>
+    )
+  if (cat === 'target')
+    return (
+      <span style={{ fontSize: 11, fontWeight: 700, color: '#c2410c', background: '#fff7ed', padding: '3px 8px', borderRadius: 6 }}>Таргет</span>
+    )
+  if (cat === 'personal_brand')
+    return (
+      <span style={{ fontSize: 11, fontWeight: 700, color: '#0d9488', background: '#ccfbf1', padding: '3px 8px', borderRadius: 6 }}>
+        Личн. бренд
+      </span>
+    )
+  if (cat === 'content')
+    return (
+      <span style={{ fontSize: 11, fontWeight: 700, color: '#7c2d12', background: '#ffedd5', padding: '3px 8px', borderRadius: 6 }}>
+        Контент
+      </span>
+    )
   if (cat === 'web')
     return (
       <span style={{ fontSize: 11, fontWeight: 700, color: '#2563eb', background: '#eff4ff', padding: '3px 8px', borderRadius: 6 }}>Web</span>
@@ -117,7 +137,19 @@ function debitorDaysUntilDue(p: Payment): number | null {
 
 const HOSTING_DEBITOR_VISIBLE_DAYS = 14
 
-type DebitorSegment = 'all' | 'services' | 'hosting'
+const RECURRING_PAYMENT_TYPES = new Set(['recurring', 'regular', 'service_expiry'])
+
+function debitorIsRecurringSegmentRow(p: Payment): boolean {
+  if (p.project_category === 'hosting_domain') return false
+  return RECURRING_PAYMENT_TYPES.has(p.payment_type)
+}
+
+function debitorIsProjectSegmentRow(p: Payment): boolean {
+  if (p.project_category === 'hosting_domain') return true
+  return p.payment_type === 'one_time'
+}
+
+type DebitorSegment = 'all' | 'recurring' | 'project'
 
 function firstOfMonth() {
   const d = new Date()
@@ -165,16 +197,15 @@ const DATE_INPUT_STYLE: React.CSSProperties = {
   fontFamily: 'inherit',
 }
 
-const DEBITOR_PROJECT_LINES_STORAGE = 'debitor_project_lines_v1'
+const DEBITOR_PROJECT_LINES_STORAGE = 'debitor_project_lines_v3'
 
-/** Линии для мультивыбора: без хостинга — он вынесен в отдельный раздел. */
+/** Линии услуг (мультивыбор). Хостинг — в разделе «Проектные» / категория hosting_domain. */
 const DEBITOR_LINE_FILTERS: { value: string; label: string }[] = [
   { value: '', label: 'Все' },
-  { value: 'web', label: 'Web' },
-  { value: 'seo', label: 'SEO' },
-  { value: 'ppc', label: 'PPC' },
-  { value: 'mobile_app', label: 'Моб. приложение' },
-  { value: 'tech_support', label: 'Тех сопровождение' },
+  { value: 'smm', label: 'SMM' },
+  { value: 'target', label: 'Таргет' },
+  { value: 'personal_brand', label: 'Личный бренд' },
+  { value: 'content', label: 'Контент' },
 ]
 
 const DEBITOR_LINE_SLUGS = DEBITOR_LINE_FILTERS.filter(f => f.value).map(f => f.value)
@@ -291,15 +322,15 @@ export default function DebitorPage() {
     loadStats(from, to, filterManager)
   }
 
-  /** Строки за период с бэка (по сроку); менеджер; раздел (Все / Услуги / Хостинг); мультивыбор линий (без хостинга). */
+  /** Строки за период с бэка; менеджер; раздел (Все / Рекуррентные / Проектные); мультивыбор линий. */
   const debitorBase = useMemo(() => {
     let list = allPayments
     if (filterManager) list = list.filter(p => String(p.partner?.manager?.id) === filterManager)
 
-    if (debitorSegment === 'services') {
-      list = list.filter(p => p.project_category !== 'hosting_domain')
-    } else if (debitorSegment === 'hosting') {
-      list = list.filter(p => p.project_category === 'hosting_domain')
+    if (debitorSegment === 'recurring') {
+      list = list.filter(p => debitorIsRecurringSegmentRow(p))
+    } else if (debitorSegment === 'project') {
+      list = list.filter(p => debitorIsProjectSegmentRow(p))
     } else {
       list = list.filter(p => {
         if (p.project_category !== 'hosting_domain') return true
@@ -528,11 +559,11 @@ export default function DebitorPage() {
             >
               Раздел
             </span>
-            {(['all', 'services', 'hosting'] as const).map(key => {
+            {(['all', 'recurring', 'project'] as const).map(key => {
               const labels: Record<typeof key, string> = {
                 all: 'Все',
-                services: 'Услуги',
-                hosting: 'Домены/хостинги',
+                recurring: 'Рекуррентные',
+                project: 'Проектные',
               }
               const active = debitorSegment === key
               return (
@@ -541,7 +572,6 @@ export default function DebitorPage() {
                   type="button"
                   onClick={() => {
                     setDebitorSegment(key)
-                    if (key === 'hosting') setSelectedProjectLines([])
                   }}
                   style={{
                     fontSize: 12,
@@ -556,8 +586,8 @@ export default function DebitorPage() {
           </div>
           {debitorSegment === 'all' && (
             <div style={{ fontSize: 12, color: '#64748b', marginBottom: 12, lineHeight: 1.45, maxWidth: 720 }}>
-              По умолчанию хостинг/домен в таблице показывается только если до срока оплаты не больше {HOSTING_DEBITOR_VISIBLE_DAYS}{' '}
-              дней (или просрочка). Полный список — раздел «Домены/хостинги».
+              В «Все» хостинг/домен показывается только если до срока не больше {HOSTING_DEBITOR_VISIBLE_DAYS} дней (или просрочка).
+              Рекуррентные строки без хостинга — «Рекуррентные»; разовые и весь хостинг — «Проектные».
             </div>
           )}
           <div
@@ -594,7 +624,6 @@ export default function DebitorPage() {
               <button
                 type="button"
                 onClick={() => setSelectedProjectLines([])}
-                disabled={debitorSegment === 'hosting'}
                 style={{
                   width: 118,
                   minHeight: 44,
@@ -605,8 +634,8 @@ export default function DebitorPage() {
                   border: selectedProjectLines.length === 0 ? '2px solid #1a6b3c' : '1px solid #e8e9ef',
                   background: selectedProjectLines.length === 0 ? '#f0faf4' : '#fff',
                   color: selectedProjectLines.length === 0 ? '#145a32' : '#4b5563',
-                  cursor: debitorSegment === 'hosting' ? 'not-allowed' : 'pointer',
-                  opacity: debitorSegment === 'hosting' ? 0.5 : 1,
+                  cursor: 'pointer',
+                  opacity: 1,
                   fontFamily: 'inherit',
                   boxShadow: selectedProjectLines.length === 0 ? '0 1px 3px rgba(26,107,60,.12)' : 'none',
                   display: 'flex',
@@ -626,7 +655,6 @@ export default function DebitorPage() {
                   <button
                     key={opt.value}
                     type="button"
-                    disabled={debitorSegment === 'hosting'}
                     onClick={() => {
                       setSelectedProjectLines(prev => {
                         if (prev.includes(opt.value)) return prev.filter(s => s !== opt.value)
@@ -643,8 +671,8 @@ export default function DebitorPage() {
                       border: active ? '2px solid #1a6b3c' : '1px solid #e8e9ef',
                       background: active ? '#f0faf4' : '#fff',
                       color: active ? '#145a32' : '#4b5563',
-                      cursor: debitorSegment === 'hosting' ? 'not-allowed' : 'pointer',
-                      opacity: debitorSegment === 'hosting' ? 0.5 : 1,
+                      cursor: 'pointer',
+                      opacity: 1,
                       fontFamily: 'inherit',
                       boxShadow: active ? '0 1px 3px rgba(26,107,60,.12)' : 'none',
                       display: 'flex',
@@ -665,8 +693,7 @@ export default function DebitorPage() {
             </div>
           </div>
           <div style={{ fontSize: 11, color: '#a1a8bc', paddingLeft: 0, maxWidth: 720, lineHeight: 1.45 }}>
-            Несколько линий можно комбинировать (Web + SEO и т.д.). Выбор сохраняется в браузере. «Любая линия» снимает
-            фильтр. В разделе «Домены/хостинги» отбор по линиям отключён.
+            Несколько линий можно комбинировать (Web + SEO и т.д.). Выбор сохраняется в браузере. «Любая линия» снимает фильтр.
           </div>
         </div>
 
