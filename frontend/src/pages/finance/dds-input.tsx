@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from 'react'
+import { useCallback, useEffect, useMemo, useState } from 'react'
 import { useRouter } from 'next/router'
 import Layout from '@/components/Layout'
 import {
@@ -22,6 +22,18 @@ interface Meta {
   income_categories: { slug: string; label: string }[]
 }
 
+interface FxRateResponse {
+  period_month: string
+  usd_to_uzs_rate: string | number
+}
+
+function parseMoneyRaw(value: string | number | null | undefined): number {
+  if (value == null || value === '') return 0
+  const normalized = String(value).replace(/\s/g, '').replace(',', '.')
+  const n = Number(normalized)
+  return Number.isFinite(n) ? n : 0
+}
+
 function currentYMD() {
   const d = new Date()
   const y = d.getFullYear()
@@ -35,6 +47,7 @@ const emptyForm = {
   label: '',
   amount_uzs: '',
   amount_usd: '',
+  apply_fx_to_uzs: false,
   payment_method: 'transfer',
   flow_category: '',
   recipient: '',
@@ -51,6 +64,7 @@ export default function DdsInputPage() {
   const [error, setError] = useState('')
   const [confirmOpen, setConfirmOpen] = useState(false)
   const [doneMsg, setDoneMsg] = useState('')
+  const [fxRate, setFxRate] = useState(0)
 
   const allowed = user?.role === 'administration'
 
@@ -70,6 +84,24 @@ export default function DdsInputPage() {
   useEffect(() => {
     if (!loading && allowed) loadMeta()
   }, [loading, allowed, loadMeta])
+
+  const periodMonth = useMemo(() => {
+    const d = (form.entry_date || '').trim()
+    return /^\d{4}-\d{2}-\d{2}$/.test(d) ? d.slice(0, 7) : ''
+  }, [form.entry_date])
+
+  useEffect(() => {
+    if (!allowed || !modalDir || !periodMonth) {
+      setFxRate(0)
+      return
+    }
+    api
+      .get<FxRateResponse>(`finance/cash-flow/fx-rate?period_month=${encodeURIComponent(periodMonth)}`)
+      .then((r) => setFxRate(parseMoneyRaw(r.data.usd_to_uzs_rate)))
+      .catch(() => setFxRate(0))
+  }, [allowed, modalDir, periodMonth])
+
+  const usdPreviewUzs = useMemo(() => parseMoneyRaw(form.amount_usd) * fxRate, [form.amount_usd, fxRate])
 
   const openModal = (dir: 'income' | 'expense') => {
     setModalDir(dir)
@@ -107,6 +139,7 @@ export default function DdsInputPage() {
         label: form.label.trim(),
         amount_uzs: form.amount_uzs || '0',
         amount_usd: form.amount_usd || '0',
+        apply_fx_to_uzs: Boolean(form.apply_fx_to_uzs),
         payment_method: form.payment_method,
         flow_category: form.flow_category.trim().toLowerCase(),
         recipient: form.recipient.trim() || null,
@@ -287,6 +320,23 @@ export default function DdsInputPage() {
             <MoneyInput value={form.amount_usd} onChange={(v) => setForm((f) => ({ ...f, amount_usd: v }))} />
           </Field>
         </div>
+        {parseMoneyRaw(form.amount_usd) > 0 && (
+          <div style={{ fontSize: 12, color: '#64748b', marginTop: -6, marginBottom: 10, lineHeight: 1.45 }}>
+            {form.apply_fx_to_uzs
+              ? fxRate > 0
+                ? `По курсу P&L за ${periodMonth}: $${parseMoneyRaw(form.amount_usd).toLocaleString('en-US')} = ${Math.round(usdPreviewUzs).toLocaleString('ru-RU')} сум.`
+                : 'Курс P&L для месяца операции не задан: USD сохранится отдельно без пересчёта в сумы.'
+              : 'Автоконвертация выключена: сумма в UZS останется такой, как вы её ввели.'}
+          </div>
+        )}
+        <label style={{ display: 'flex', alignItems: 'flex-start', gap: 8, marginBottom: 10, fontSize: 12, color: '#475569' }}>
+          <input
+            type="checkbox"
+            checked={Boolean(form.apply_fx_to_uzs)}
+            onChange={(e) => setForm((f) => ({ ...f, apply_fx_to_uzs: e.target.checked }))}
+          />
+          <span>Редактировать сумму по курсу USD для этой строки</span>
+        </label>
         <Field label="Форма оплаты">
           <Select value={form.payment_method} onChange={(e) => setForm((f) => ({ ...f, payment_method: e.target.value }))}>
             {(meta?.payment_methods ?? []).map((p) => (

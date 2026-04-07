@@ -5,6 +5,7 @@ from datetime import datetime, timedelta, timezone
 
 from sqlalchemy.orm import Session
 
+from app.db.database import get_request_company
 from app.models.partner import Partner
 from app.models.payment import NotificationLog, Payment
 
@@ -17,19 +18,33 @@ def purge_expired_trash(db: Session) -> dict:
     removed_part = 0
     for p in (
         db.query(Payment)
-        .filter(Payment.trashed_at.isnot(None), Payment.trashed_at < cutoff)
+        .filter(
+            Payment.trashed_at.isnot(None),
+            Payment.trashed_at < cutoff,
+            Payment.company_slug == get_request_company(),
+        )
         .all()
     ):
-        db.query(NotificationLog).filter(NotificationLog.payment_id == p.id).delete(synchronize_session=False)
+        db.query(NotificationLog).filter(
+            NotificationLog.payment_id == p.id,
+            NotificationLog.company_slug == get_request_company(),
+        ).delete(synchronize_session=False)
         db.delete(p)
         removed_p += 1
     for part in (
         db.query(Partner)
-        .filter(Partner.trashed_at.isnot(None), Partner.trashed_at < cutoff)
+        .filter(
+            Partner.trashed_at.isnot(None),
+            Partner.trashed_at < cutoff,
+            Partner.company_slug == get_request_company(),
+        )
         .all()
     ):
         for pay in list(part.payments or []):
-            db.query(NotificationLog).filter(NotificationLog.payment_id == pay.id).delete(synchronize_session=False)
+            db.query(NotificationLog).filter(
+                NotificationLog.payment_id == pay.id,
+                NotificationLog.company_slug == get_request_company(),
+            ).delete(synchronize_session=False)
             db.delete(pay)
         db.delete(part)
         removed_part += 1

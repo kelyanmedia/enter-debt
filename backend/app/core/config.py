@@ -15,6 +15,8 @@ class Settings(BaseSettings):
     DATABASE_URL_KELYANMEDIA: Optional[str] = None
     DATABASE_URL_WHITEWAY: Optional[str] = None
     DATABASE_URL_ENTER_GROUP_MEDIA: Optional[str] = None
+    # Одна БД + колонка company_slug на строках (изоляция по X-Company-Slug). False — отдельные файлы/БД на компанию.
+    USE_SINGLE_DATABASE_MULTITENANT: bool = True
     SECRET_KEY: str = "supersecretkey_change_in_prod"
     ALGORITHM: str = "HS256"
     ACCESS_TOKEN_EXPIRE_MINUTES: int = 60 * 24 * 7

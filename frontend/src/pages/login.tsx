@@ -44,6 +44,8 @@ export default function LoginPage() {
       const status = err?.response?.status
       const detail = err?.response?.data?.detail
       const msg = typeof detail === 'string' ? detail : Array.isArray(detail) ? detail.map((x: { msg?: string }) => x?.msg).filter(Boolean).join(' ') : ''
+      const axCode = err?.code as string | undefined
+      const axMsg = (err?.message as string | undefined) || ''
       const notFound =
         status === 404 ||
         msg === 'Not Found' ||
@@ -55,7 +57,11 @@ export default function LoginPage() {
       } else if (status === 500 || status === 503 || !status) {
         setError(
           !status
-            ? 'Нет ответа от API. Запустите бэкенд и проверьте в frontend/.env.local переменную BACKEND_URL (должен совпадать с портом uvicorn). После смены порта перезапустите npm run dev.'
+            ? axCode === 'ECONNABORTED'
+              ? 'Превышено время ожидания API (30 с). Проверьте, что бэкенд отвечает: curl http://127.0.0.1:8000/health'
+              : axCode === 'ERR_NETWORK' || axMsg === 'Network Error'
+                ? 'Сеть: запрос до API не дошёл. Чаще всего не запущен бэкенд — в каталоге backend выполните: uvicorn app.main:app --host 127.0.0.1 --port 8000 (порт должен совпадать с BACKEND_URL в frontend/.env.local). После смены BACKEND_URL перезапустите npm run dev.'
+                : 'Нет ответа от API. Запустите бэкенд и проверьте в frontend/.env.local переменную BACKEND_URL (должен совпадать с портом uvicorn). Проверка: curl http://127.0.0.1:8000/health → {"status":"ok"}. После смены порта перезапустите npm run dev.'
             : 'Сервер недоступен. Попробуйте позже.'
         )
       } else if (msg) {
@@ -117,7 +123,7 @@ export default function LoginPage() {
               ))}
             </select>
             <div style={{ fontSize: 11, color: '#8a8fa8', marginTop: 6, lineHeight: 1.4 }}>
-              У каждой компании своя база: проекты и пользователи не смешиваются.
+              Данные привязаны к выбранной компании и не пересекаются с другими (изоляция по компании в системе).
             </div>
           </div>
           <div style={{ marginBottom: 14 }}>

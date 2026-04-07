@@ -1,18 +1,38 @@
 """Первичное заполнение шаблонов ДДС (по одной на компанию / БД)."""
 from __future__ import annotations
 
+import logging
 from decimal import Decimal
 
+from sqlalchemy.exc import OperationalError, ProgrammingError
 from sqlalchemy.orm import Session
 
+from app.db.database import get_request_company
 from app.models.cash_flow import CashFlowTemplateLine
+
+log = logging.getLogger(__name__)
 
 
 def seed_cash_flow_templates(db: Session) -> None:
-    if db.query(CashFlowTemplateLine).first() is not None:
+    slug = get_request_company()
+    try:
+        if (
+            db.query(CashFlowTemplateLine)
+            .filter(CashFlowTemplateLine.company_slug == slug)
+            .first()
+            is not None
+        ):
+            return
+    except (OperationalError, ProgrammingError) as e:
+        db.rollback()
+        log.warning(
+            "ДДС шаблоны: пропуск сидинга (схема БД не совпадает с моделью, нужна миграция/новая БД): %s",
+            e,
+        )
         return
     rows = [
         CashFlowTemplateLine(
+            company_slug=slug,
             template_group="monthly_salary",
             sort_order=1,
             label="Влад",
@@ -23,6 +43,7 @@ def seed_cash_flow_templates(db: Session) -> None:
             direction="expense",
         ),
         CashFlowTemplateLine(
+            company_slug=slug,
             template_group="monthly_salary",
             sort_order=2,
             label="Обиджон",
@@ -33,6 +54,7 @@ def seed_cash_flow_templates(db: Session) -> None:
             direction="expense",
         ),
         CashFlowTemplateLine(
+            company_slug=slug,
             template_group="monthly_salary",
             sort_order=3,
             label="Суннат",
@@ -43,6 +65,7 @@ def seed_cash_flow_templates(db: Session) -> None:
             direction="expense",
         ),
         CashFlowTemplateLine(
+            company_slug=slug,
             template_group="monthly_salary",
             sort_order=4,
             label="Рустам",
@@ -53,6 +76,7 @@ def seed_cash_flow_templates(db: Session) -> None:
             direction="expense",
         ),
         CashFlowTemplateLine(
+            company_slug=slug,
             template_group="monthly_admin",
             sort_order=1,
             label="Офис",
@@ -63,6 +87,7 @@ def seed_cash_flow_templates(db: Session) -> None:
             direction="expense",
         ),
         CashFlowTemplateLine(
+            company_slug=slug,
             template_group="monthly_admin",
             sort_order=2,
             label="Расходы бухгалтерии",
@@ -73,6 +98,10 @@ def seed_cash_flow_templates(db: Session) -> None:
             direction="expense",
         ),
     ]
-    for r in rows:
-        db.add(r)
-    db.commit()
+    try:
+        for r in rows:
+            db.add(r)
+        db.commit()
+    except (OperationalError, ProgrammingError) as e:
+        db.rollback()
+        log.warning("ДДС шаблоны: не удалось записать начальные строки: %s", e)

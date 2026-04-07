@@ -8,6 +8,7 @@ class SubscriptionItem(Base):
     __tablename__ = "subscription_items"
 
     id = Column(Integer, primary_key=True, index=True)
+    company_slug = Column(String(32), nullable=False, index=True, default="kelyanmedia")
     category = Column(String(20), nullable=False, index=True)
     name = Column(String(300), nullable=False)
     status = Column(String(20), nullable=False, default="active")

@@ -10,6 +10,7 @@ from typing import List, Optional, Set
 from sqlalchemy.orm import Session
 
 from app.core.access import accessible_partner_ids
+from app.db.database import get_request_company
 from app.models.feed_notification import FeedNotification
 from app.models.partner import Partner
 from app.models.payment import Payment
@@ -26,10 +27,18 @@ def emit_payment_created(payment_id: int, partner_id: int, description: str) -> 
 
     db = open_request_company_session()
     try:
-        partner = db.query(Partner).filter(Partner.id == partner_id).first()
+        partner = (
+            db.query(Partner)
+            .filter(
+                Partner.id == partner_id,
+                Partner.company_slug == get_request_company(),
+            )
+            .first()
+        )
         pname = partner.name if partner else "—"
         subtitle = _truncate(f"{description} · {pname}")
         db.add(FeedNotification(
+            company_slug=get_request_company(),
             kind="payment_created",
             title="Новый проект",
             subtitle=subtitle,
@@ -51,6 +60,7 @@ def emit_partner_created(partner_id: int, name: str) -> None:
     db = open_request_company_session()
     try:
         db.add(FeedNotification(
+            company_slug=get_request_company(),
             kind="partner_created",
             title="Новая компания",
             subtitle=_truncate(name),
@@ -72,6 +82,7 @@ def emit_user_created(user_id: int, name: str, email: str) -> None:
     db = open_request_company_session()
     try:
         db.add(FeedNotification(
+            company_slug=get_request_company(),
             kind="user_created",
             title="Новый сотрудник",
             subtitle=_truncate(f"{name} · {email}"),
@@ -102,5 +113,11 @@ def _visible_for_user(n: FeedNotification, user: User, db: Session) -> bool:
 
 
 def list_visible_ids(db: Session, user: User, limit: int = 400) -> List[FeedNotification]:
-    rows = db.query(FeedNotification).order_by(FeedNotification.created_at.desc()).limit(limit).all()
+    rows = (
+        db.query(FeedNotification)
+        .filter(FeedNotification.company_slug == get_request_company())
+        .order_by(FeedNotification.created_at.desc())
+        .limit(limit)
+        .all()
+    )
     return [n for n in rows if _visible_for_user(n, user, db)]

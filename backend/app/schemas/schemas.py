@@ -24,6 +24,27 @@ def _coerce_visible_manager_ids_field(v: Any) -> List[int]:
 VisibleManagerIds = Annotated[List[int], BeforeValidator(_coerce_visible_manager_ids_field)]
 
 
+def _coerce_admin_company_slugs_read(v: Any) -> Optional[List[str]]:
+    """Колонка TEXT с JSON-массивом slug или None = доступ ко всем организациям."""
+    if v is None:
+        return None
+    if isinstance(v, list):
+        return [str(x) for x in v]
+    if isinstance(v, str):
+        s = v.strip()
+        if not s:
+            return None
+        import json
+
+        try:
+            arr = json.loads(s)
+            if isinstance(arr, list):
+                return [str(x) for x in arr]
+        except (TypeError, ValueError, json.JSONDecodeError):
+            return None
+    return None
+
+
 # ── AUTH ──────────────────────────────────────────────────────────────────────
 class Token(BaseModel):
     access_token: str
@@ -70,6 +91,8 @@ class UserCreate(UserBase):
     password: str
     visible_manager_ids: Optional[List[int]] = None
     admin_telegram_notify_manager_ids: Optional[List[int]] = None
+    # только admin: какие организации в переключателе; не передано — только текущая (см. create_user)
+    admin_accessible_company_slugs: Optional[List[str]] = None
 
 
 class UserUpdate(BaseModel):
@@ -92,6 +115,7 @@ class UserUpdate(BaseModel):
     is_ad_budget_employee: Optional[bool] = None
     admin_telegram_notify_all: Optional[bool] = None
     admin_telegram_notify_manager_ids: Optional[List[int]] = None
+    admin_accessible_company_slugs: Optional[List[str]] = None
 
 
 class AssignedPartnersBody(BaseModel):
@@ -107,6 +131,9 @@ class UserOut(UserBase):
     last_login_at: Optional[datetime] = None
     visible_manager_ids: VisibleManagerIds = Field(default_factory=list)
     admin_telegram_notify_manager_ids: VisibleManagerIds = Field(default_factory=list)
+    admin_accessible_company_slugs: Annotated[
+        Optional[List[str]], BeforeValidator(_coerce_admin_company_slugs_read)
+    ] = None
     payment_details_updated_at: Optional[datetime] = None
 
     class Config:
@@ -610,6 +637,9 @@ class PLDataRowOut(BaseModel):
     label: str
     section: str  # revenue | expenses_fixed | summary
     is_calculated: bool = False
+    is_manual: bool = False
+    manual_line_id: Optional[int] = None
+    link_to_net_profit: bool = False
     cells: List[PLCellOut]
 
 
@@ -617,6 +647,34 @@ class PLReportOut(BaseModel):
     year: int
     columns: List[str]  # YYYY-MM, 12 шт.
     rows: List[PLDataRowOut]
+
+
+class PLManualLineCreate(BaseModel):
+    section: Literal["revenue", "expenses_fixed", "summary"]
+    label: str = Field(..., min_length=1, max_length=200)
+    sort_order: int = 0
+    link_to_net_profit: bool = False
+
+
+class PLManualLineUpdate(BaseModel):
+    label: Optional[str] = Field(None, min_length=1, max_length=200)
+    section: Optional[Literal["revenue", "expenses_fixed", "summary"]] = None
+    sort_order: Optional[int] = None
+    link_to_net_profit: Optional[bool] = None
+
+
+class PLManualLineOut(BaseModel):
+    id: int
+    section: str
+    label: str
+    sort_order: int
+    link_to_net_profit: bool = False
+
+
+class PLManualCellPut(BaseModel):
+    period_month: str = Field(..., pattern=r"^\d{4}-\d{2}$")
+    uzs: Decimal = Decimal("0")
+    usd: Decimal = Decimal("0")
 
 
 class CashFlowTemplateLineOut(BaseModel):
@@ -682,6 +740,7 @@ class CashFlowEntryOut(BaseModel):
     label: str
     amount_uzs: Decimal
     amount_usd: Decimal
+    apply_fx_to_uzs: bool = False
     payment_method: str
     flow_category: Optional[str] = None
     recipient: Optional[str] = None
@@ -701,6 +760,7 @@ class CashFlowEntryCreate(BaseModel):
     label: str = Field(..., min_length=1, max_length=300)
     amount_uzs: Decimal = Decimal("0")
     amount_usd: Decimal = Decimal("0")
+    apply_fx_to_uzs: bool = False
     payment_method: str = "transfer"
     flow_category: Optional[str] = Field(None, max_length=64)
     recipient: Optional[str] = Field(None, max_length=120)
@@ -726,6 +786,7 @@ class CashFlowEntryUpdate(BaseModel):
     label: Optional[str] = Field(None, max_length=300)
     amount_uzs: Optional[Decimal] = None
     amount_usd: Optional[Decimal] = None
+    apply_fx_to_uzs: Optional[bool] = None
     payment_method: Optional[str] = None
     flow_category: Optional[str] = Field(None, max_length=64)
     recipient: Optional[str] = Field(None, max_length=120)
@@ -917,6 +978,28 @@ class CeoOverridePut(BaseModel):
     metric: Literal["client_history", "turnover", "ltv"]
     year: int
     data: Dict[str, Any]
+
+
+class CeoLayoutBlockIn(BaseModel):
+    kind: Literal["client_history", "turnover", "pl_row", "ltv"]
+    title: Optional[str] = Field(None, max_length=200)
+    pl_row_id: Optional[str] = Field(None, max_length=80)
+
+
+class CeoLayoutPut(BaseModel):
+    blocks: List[CeoLayoutBlockIn]
+
+
+class CeoLayoutBlockOut(BaseModel):
+    id: int
+    kind: str
+    title: Optional[str] = None
+    pl_row_id: Optional[str] = None
+    sort_order: int
+
+
+class CeoLayoutOut(BaseModel):
+    blocks: List[CeoLayoutBlockOut]
 
 
 # ── NOTIFICATIONS ─────────────────────────────────────────────────────────────

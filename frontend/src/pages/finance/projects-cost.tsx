@@ -2,7 +2,7 @@ import { Fragment, useCallback, useEffect, useMemo, useRef, useState, type CSSPr
 import Link from 'next/link'
 import { useRouter } from 'next/router'
 import Layout from '@/components/Layout'
-import { PageHeader, Card, Th, Td, Empty, formatMoneyNumber, BtnOutline, MoneyInput, Input, Field } from '@/components/ui'
+import { PageHeader, Card, Th, Td, Empty, formatMoneyNumber, BtnOutline, BtnPrimary, MoneyInput, Input, Field, Modal } from '@/components/ui'
 import { useAuth } from '@/context/AuthContext'
 import api from '@/lib/api'
 import { isFinanceTeamRole } from '@/lib/roles'
@@ -17,6 +17,15 @@ interface ScheduleMonth {
 }
 
 type CostFieldApi = 'cost_design_uzs' | 'cost_dev_uzs' | 'cost_other_uzs' | 'cost_seo_uzs'
+
+interface ProjectsCostFieldUiRow {
+  field_key: CostFieldApi
+  label: string
+}
+
+interface ProjectsCostUi {
+  fields: ProjectsCostFieldUiRow[]
+}
 
 interface ProjectCostRow {
   payment_id: number
@@ -69,6 +78,13 @@ const COST_TASKS_FIELD: Record<CostFieldApi, keyof ProjectCostRow> = {
   cost_seo_uzs: 'tasks_cost_seo_uzs',
 }
 
+const DEFAULT_COST_FIELD_LABELS: Record<CostFieldApi, string> = {
+  cost_design_uzs: 'Дизайн',
+  cost_dev_uzs: 'Разраб.',
+  cost_other_uzs: 'Прочее',
+  cost_seo_uzs: 'SEO',
+}
+
 const COL_COUNT = 17
 
 const MONTHS_RU = [
@@ -114,6 +130,7 @@ const CAT_BG: Record<string, string> = {
   seo: '#f3e8ff',
   mobile_app: '#ecfdf5',
   tech_support: '#f1f5f9',
+  events: '#fce7f3',
   hosting_domain: '#fef3c7',
 }
 
@@ -129,6 +146,7 @@ function categoryLabel(cat?: string | null) {
     seo: 'SEO',
     mobile_app: 'App',
     tech_support: 'Поддержка',
+    events: 'Ивенты',
     hosting_domain: 'Хостинг / домен',
   }
   return m[cat] || cat.toUpperCase()
@@ -185,6 +203,13 @@ export default function FinanceProjectsCostPage() {
   const costDraftRef = useRef('')
   const [segmentTab, setSegmentTab] = useState<ProjectsCostSegment>('services')
   const [tableSearch, setTableSearch] = useState('')
+  const [costFieldLabels, setCostFieldLabels] = useState<Record<CostFieldApi, string>>(DEFAULT_COST_FIELD_LABELS)
+  const [labelEditField, setLabelEditField] = useState<CostFieldApi | null>(null)
+  const [labelDraft, setLabelDraft] = useState('')
+  const [labelSaving, setLabelSaving] = useState(false)
+
+  const canEditCostLabels =
+    user?.role === 'admin' || user?.role === 'accountant' || user?.role === 'financier'
 
   useEffect(() => {
     if (!loading && user && !isFinanceTeamRole(user.role)) router.replace('/')
@@ -231,8 +256,27 @@ export default function FinanceProjectsCostPage() {
   }, [user, monthRange])
 
   useEffect(() => {
-    load()
+    void load()
   }, [load])
+
+  const loadCostFieldUi = useCallback(async () => {
+    try {
+      const r = await api.get<ProjectsCostUi>('company-ui/projects-cost')
+      const next = { ...DEFAULT_COST_FIELD_LABELS }
+      for (const row of r.data.fields || []) {
+        next[row.field_key] = row.label || DEFAULT_COST_FIELD_LABELS[row.field_key]
+      }
+      setCostFieldLabels(next)
+    } catch {
+      setCostFieldLabels(DEFAULT_COST_FIELD_LABELS)
+    }
+  }, [])
+
+  useEffect(() => {
+    if (!loading && user && isFinanceTeamRole(user.role)) {
+      void loadCostFieldUi()
+    }
+  }, [loadCostFieldUi, loading, user])
 
   const segmentRows = useMemo(() => {
     if (segmentTab === 'hosting') {
@@ -395,6 +439,62 @@ export default function FinanceProjectsCostPage() {
       </button>
     )
   }
+
+  const openLabelEdit = useCallback((field: CostFieldApi) => {
+    setLabelEditField(field)
+    setLabelDraft(costFieldLabels[field] || DEFAULT_COST_FIELD_LABELS[field])
+  }, [costFieldLabels])
+
+  const saveLabelEdit = useCallback(async () => {
+    if (!labelEditField || labelSaving) return
+    setLabelSaving(true)
+    try {
+      const nextLabel = labelDraft.trim() || DEFAULT_COST_FIELD_LABELS[labelEditField]
+      const body: ProjectsCostUi = {
+        fields: (Object.keys(DEFAULT_COST_FIELD_LABELS) as CostFieldApi[]).map((field_key) => ({
+          field_key,
+          label: field_key === labelEditField ? nextLabel : costFieldLabels[field_key] || DEFAULT_COST_FIELD_LABELS[field_key],
+        })),
+      }
+      const r = await api.put<ProjectsCostUi>('company-ui/projects-cost', body)
+      const next = { ...DEFAULT_COST_FIELD_LABELS }
+      for (const row of r.data.fields || []) next[row.field_key] = row.label || DEFAULT_COST_FIELD_LABELS[row.field_key]
+      setCostFieldLabels(next)
+      setLabelEditField(null)
+      setLabelDraft('')
+    } finally {
+      setLabelSaving(false)
+    }
+  }, [costFieldLabels, labelDraft, labelEditField, labelSaving])
+
+  const renderCostHeader = useCallback((field: CostFieldApi) => {
+    const label = costFieldLabels[field] || DEFAULT_COST_FIELD_LABELS[field]
+    return (
+      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 6 }}>
+        <span>{label}</span>
+        {canEditCostLabels ? (
+          <button
+            type="button"
+            onClick={() => openLabelEdit(field)}
+            title="Изменить подпись колонки для текущей компании"
+            style={{
+              border: 'none',
+              background: 'transparent',
+              padding: 0,
+              margin: 0,
+              cursor: 'pointer',
+              color: '#64748b',
+              fontSize: 12,
+              lineHeight: 1,
+              fontFamily: 'inherit',
+            }}
+          >
+            ✎
+          </button>
+        ) : null}
+      </div>
+    )
+  }, [canEditCostLabels, costFieldLabels, openLabelEdit])
 
   const totals = useMemo(() => {
     let cost = 0
@@ -630,16 +730,16 @@ export default function FinanceProjectsCostPage() {
                     <Th>Оплата %</Th>
                     <Th title="% менеджера из учёта комиссий (при привязке к проекту)">% комиссии</Th>
                     <Th title="Итого по статье: ручной ввод в таблице + суммы из задач «Команда», привязанных к проекту">
-                      Дизайн
+                      {renderCostHeader('cost_design_uzs')}
                     </Th>
                     <Th title="Итого по статье: ручной ввод в таблице + суммы из задач «Команда», привязанных к проекту">
-                      Разраб.
+                      {renderCostHeader('cost_dev_uzs')}
                     </Th>
                     <Th title="Итого по статье: ручной ввод в таблице + суммы из задач «Команда», привязанных к проекту">
-                      Прочее
+                      {renderCostHeader('cost_other_uzs')}
                     </Th>
                     <Th title="Итого по статье: ручной ввод в таблице + суммы из задач «Команда», привязанных к проекту">
-                      SEO
+                      {renderCostHeader('cost_seo_uzs')}
                     </Th>
                     <Th>Начало</Th>
                     <Th style={{ minWidth: 120 }}>График</Th>
@@ -806,6 +906,45 @@ export default function FinanceProjectsCostPage() {
           только к текущему разделу («Услуги» или «Хостинг/домен»); при поиске суммируются видимые строки.
         </div>
       </div>
+      <Modal
+        open={labelEditField !== null}
+        onClose={() => {
+          if (labelSaving) return
+          setLabelEditField(null)
+          setLabelDraft('')
+        }}
+        title="Подпись колонки себестоимости"
+        width={460}
+        footer={
+          <>
+            <BtnOutline
+              type="button"
+              onClick={() => {
+                setLabelEditField(null)
+                setLabelDraft('')
+              }}
+              disabled={labelSaving}
+            >
+              Отмена
+            </BtnOutline>
+            <BtnPrimary type="button" onClick={() => void saveLabelEdit()} disabled={labelSaving}>
+              {labelSaving ? 'Сохранение…' : 'Сохранить'}
+            </BtnPrimary>
+          </>
+        }
+      >
+        <div style={{ fontSize: 13, color: '#64748b', lineHeight: 1.45, marginBottom: 12 }}>
+          Подпись меняется только для текущей компании. Сами поля себестоимости и расчёты остаются теми же.
+        </div>
+        <Field label="Название колонки">
+          <Input
+            value={labelDraft}
+            onChange={(e) => setLabelDraft(e.target.value)}
+            placeholder="Например: Дизайн / Продакшн / PM / Маркетинг"
+            autoFocus
+          />
+        </Field>
+      </Modal>
     </Layout>
   )
 }

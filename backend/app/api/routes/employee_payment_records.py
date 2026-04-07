@@ -13,7 +13,7 @@ from fastapi.responses import FileResponse
 from sqlalchemy.orm import Session
 
 from app.core.security import get_current_user
-from app.db.database import get_db
+from app.db.database import get_db, get_request_company
 from app.models.employee_payment_record import EmployeePaymentRecord
 from app.models.user import User
 from app.schemas.schemas import EmployeePaymentRecordOut, EmployeePayrollExpenseOut
@@ -122,13 +122,25 @@ def list_payment_records(
     else:
         raise HTTPException(status_code=403, detail="Нет доступа")
 
-    u = db.query(User).filter(User.id == uid, User.role == "employee", User.is_active == True).first()
+    u = (
+        db.query(User)
+        .filter(
+            User.id == uid,
+            User.role == "employee",
+            User.is_active == True,
+            User.company_slug == get_request_company(),
+        )
+        .first()
+    )
     if not u:
         raise HTTPException(status_code=404, detail="Сотрудник не найден")
 
     rows = (
         db.query(EmployeePaymentRecord)
-        .filter(EmployeePaymentRecord.user_id == uid)
+        .filter(
+            EmployeePaymentRecord.user_id == uid,
+            EmployeePaymentRecord.company_slug == get_request_company(),
+        )
         .order_by(EmployeePaymentRecord.paid_on.desc(), EmployeePaymentRecord.id.desc())
         .all()
     )
@@ -147,7 +159,11 @@ def list_payroll_expenses_for_finance(
     rows = (
         db.query(EmployeePaymentRecord, User.name)
         .join(User, User.id == EmployeePaymentRecord.user_id)
-        .filter(User.role == "employee")
+        .filter(
+            User.role == "employee",
+            User.company_slug == get_request_company(),
+            EmployeePaymentRecord.company_slug == get_request_company(),
+        )
         .filter(EmployeePaymentRecord.created_by_user_id.isnot(None))
         .order_by(EmployeePaymentRecord.paid_on.desc(), EmployeePaymentRecord.id.desc())
         .all()
@@ -239,7 +255,16 @@ async def create_payment_record(
     else:
         raise HTTPException(status_code=403, detail="Нет доступа")
 
-    target = db.query(User).filter(User.id == target_uid, User.role == "employee", User.is_active == True).first()
+    target = (
+        db.query(User)
+        .filter(
+            User.id == target_uid,
+            User.role == "employee",
+            User.is_active == True,
+            User.company_slug == get_request_company(),
+        )
+        .first()
+    )
     if not target:
         raise HTTPException(status_code=404, detail="Сотрудник не найден")
 
@@ -269,6 +294,7 @@ async def create_payment_record(
         receipt_name = safe
 
     row = EmployeePaymentRecord(
+        company_slug=get_request_company(),
         user_id=target_uid,
         paid_on=d,
         period_year=py,
@@ -292,7 +318,14 @@ def delete_payment_record(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
-    row = db.query(EmployeePaymentRecord).filter(EmployeePaymentRecord.id == record_id).first()
+    row = (
+        db.query(EmployeePaymentRecord)
+        .filter(
+            EmployeePaymentRecord.id == record_id,
+            EmployeePaymentRecord.company_slug == get_request_company(),
+        )
+        .first()
+    )
     if not row:
         raise HTTPException(status_code=404, detail="Запись не найдена")
 
@@ -305,7 +338,15 @@ def delete_payment_record(
                 detail="Запись от администратора может удалить только администратор",
             )
     elif current_user.role == "admin":
-        u = db.query(User).filter(User.id == row.user_id, User.role == "employee").first()
+        u = (
+            db.query(User)
+            .filter(
+                User.id == row.user_id,
+                User.role == "employee",
+                User.company_slug == get_request_company(),
+            )
+            .first()
+        )
         if not u:
             raise HTTPException(status_code=404, detail="Сотрудник не найден")
     else:
@@ -329,7 +370,14 @@ def download_receipt(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
-    row = db.query(EmployeePaymentRecord).filter(EmployeePaymentRecord.id == record_id).first()
+    row = (
+        db.query(EmployeePaymentRecord)
+        .filter(
+            EmployeePaymentRecord.id == record_id,
+            EmployeePaymentRecord.company_slug == get_request_company(),
+        )
+        .first()
+    )
     if not row or not row.receipt_path:
         raise HTTPException(status_code=404, detail="Чек не прикреплён")
 

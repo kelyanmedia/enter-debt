@@ -1,4 +1,5 @@
 import { useEffect, useState, useMemo, useCallback, useRef } from 'react'
+import Link from 'next/link'
 import { useRouter } from 'next/router'
 import Layout from '@/components/Layout'
 import {
@@ -20,6 +21,16 @@ import {
 } from '@/components/ui'
 import { useAuth } from '@/context/AuthContext'
 import api from '@/lib/api'
+import {
+  CANONICAL_CATEGORY_SLUGS,
+  type CompanyPaymentsUi,
+  ProjectLineBadge,
+  effectiveCompanyUi,
+  lineLabelMap,
+  segmentLabelMap,
+  visibleLinesSorted,
+  visibleSegmentsSorted,
+} from '@/lib/companyUi'
 
 interface Stats {
   total_receivable: number
@@ -45,60 +56,6 @@ interface Payment {
   /** YYYY-MM — период услуги по строке графика (напр. март 2026) */
   service_month?: string | null
   partner: { name: string; manager?: { id: number; name: string } }
-}
-
-function categoryBadge(cat?: string | null) {
-  if (cat === 'smm')
-    return (
-      <span style={{ fontSize: 11, fontWeight: 700, color: '#7c3aed', background: '#f3e8ff', padding: '3px 8px', borderRadius: 6 }}>SMM</span>
-    )
-  if (cat === 'target')
-    return (
-      <span style={{ fontSize: 11, fontWeight: 700, color: '#c2410c', background: '#fff7ed', padding: '3px 8px', borderRadius: 6 }}>Таргет</span>
-    )
-  if (cat === 'personal_brand')
-    return (
-      <span style={{ fontSize: 11, fontWeight: 700, color: '#0d9488', background: '#ccfbf1', padding: '3px 8px', borderRadius: 6 }}>
-        Личн. бренд
-      </span>
-    )
-  if (cat === 'content')
-    return (
-      <span style={{ fontSize: 11, fontWeight: 700, color: '#7c2d12', background: '#ffedd5', padding: '3px 8px', borderRadius: 6 }}>
-        Контент
-      </span>
-    )
-  if (cat === 'web')
-    return (
-      <span style={{ fontSize: 11, fontWeight: 700, color: '#2563eb', background: '#eff4ff', padding: '3px 8px', borderRadius: 6 }}>Web</span>
-    )
-  if (cat === 'seo')
-    return (
-      <span style={{ fontSize: 11, fontWeight: 700, color: '#b45309', background: '#fff8ee', padding: '3px 8px', borderRadius: 6 }}>SEO</span>
-    )
-  if (cat === 'ppc')
-    return (
-      <span style={{ fontSize: 11, fontWeight: 700, color: '#6b7280', background: '#f3f4f6', padding: '3px 8px', borderRadius: 6 }}>PPC</span>
-    )
-  if (cat === 'mobile_app')
-    return (
-      <span style={{ fontSize: 11, fontWeight: 700, color: '#7c3aed', background: '#f3e8ff', padding: '3px 8px', borderRadius: 6 }}>
-        Моб. прил.
-      </span>
-    )
-  if (cat === 'tech_support')
-    return (
-      <span style={{ fontSize: 11, fontWeight: 700, color: '#0d9488', background: '#ccfbf1', padding: '3px 8px', borderRadius: 6 }}>
-        Тех. сопр.
-      </span>
-    )
-  if (cat === 'hosting_domain')
-    return (
-      <span style={{ fontSize: 11, fontWeight: 700, color: '#4338ca', background: '#eef2ff', padding: '3px 8px', borderRadius: 6 }}>
-        Хостинг
-      </span>
-    )
-  return <span style={{ color: '#c5c8d4', fontSize: 12 }}>—</span>
 }
 
 const MONTHS_RU = [
@@ -187,19 +144,6 @@ const DATE_INPUT_STYLE: React.CSSProperties = {
 
 const DEBITOR_PROJECT_LINES_STORAGE = 'debitor_project_lines_v3'
 
-/** Линии услуг (мультивыбор). Совпадает с категориями проектов /payments. */
-const DEBITOR_LINE_FILTERS: { value: string; label: string }[] = [
-  { value: '', label: 'Все' },
-  { value: 'web', label: 'Web' },
-  { value: 'seo', label: 'SEO' },
-  { value: 'ppc', label: 'PPC' },
-  { value: 'mobile_app', label: 'Моб. приложение' },
-  { value: 'tech_support', label: 'Тех. сопр.' },
-  { value: 'hosting_domain', label: 'Хостинг' },
-]
-
-const DEBITOR_LINE_SLUGS = DEBITOR_LINE_FILTERS.filter(f => f.value).map(f => f.value)
-
 function loadStoredProjectLines(): string[] {
   if (typeof window === 'undefined') return []
   try {
@@ -207,7 +151,7 @@ function loadStoredProjectLines(): string[] {
     if (!raw) return []
     const parsed = JSON.parse(raw) as unknown
     if (!Array.isArray(parsed)) return []
-    const allowed = new Set(DEBITOR_LINE_SLUGS)
+    const allowed = new Set(CANONICAL_CATEGORY_SLUGS)
     return parsed.filter((x): x is string => typeof x === 'string' && allowed.has(x))
   } catch {
     return []
@@ -233,7 +177,8 @@ interface ManagerOption {
 
 export default function DebitorPage() {
   const router = useRouter()
-  const { user } = useAuth()
+  const { user, companySlug } = useAuth()
+  const [companyUiState, setCompanyUiState] = useState<CompanyPaymentsUi | null>(null)
   const [stats, setStats] = useState<Stats | null>(null)
   const [allPayments, setAllPayments] = useState<Payment[]>([])
   const [managers, setManagers] = useState<ManagerOption[]>([])
@@ -244,6 +189,24 @@ export default function DebitorPage() {
   const [selectedProjectLines, setSelectedProjectLines] = useState<string[]>([])
   const [debitorSegment, setDebitorSegment] = useState<DebitorSegment>('all')
   const skipProjectLinesSaveOnce = useRef(true)
+
+  const layoutUi = useMemo(() => effectiveCompanyUi(companyUiState), [companyUiState])
+  const lineLabels = useMemo(() => lineLabelMap(layoutUi), [layoutUi])
+  const segLabels = useMemo(() => segmentLabelMap(layoutUi), [layoutUi])
+
+  useEffect(() => {
+    api
+      .get<CompanyPaymentsUi>('company-ui/payments')
+      .then((r) => setCompanyUiState(r.data))
+      .catch(() => setCompanyUiState(null))
+  }, [companySlug])
+
+  useEffect(() => {
+    const vis = visibleSegmentsSorted(layoutUi).map((s) => s.segment_key as DebitorSegment)
+    if (vis.length && !vis.includes(debitorSegment)) {
+      setDebitorSegment(vis[0]!)
+    }
+  }, [layoutUi])
 
   const loadStats = useCallback(
     (from: string, to: string, mgr: string) => {
@@ -549,16 +512,12 @@ export default function DebitorPage() {
             >
               Раздел
             </span>
-            {(['all', 'services', 'hosting'] as const).map(key => {
-              const labels: Record<typeof key, string> = {
-                all: 'Все',
-                services: 'Услуги',
-                hosting: 'Домены/хостинг',
-              }
+            {visibleSegmentsSorted(layoutUi).map((s) => {
+              const key = s.segment_key as DebitorSegment
               const active = debitorSegment === key
               return (
                 <BtnOutline
-                  key={key}
+                  key={s.segment_key}
                   type="button"
                   onClick={() => {
                     setDebitorSegment(key)
@@ -569,15 +528,41 @@ export default function DebitorPage() {
                     ...(active ? { background: '#1a6b3c', color: '#fff', borderColor: '#1a6b3c' } : {}),
                   }}
                 >
-                  {labels[key]}
+                  {s.label}
                 </BtnOutline>
               )
             })}
+            {user?.role === 'admin' && (
+              <Link
+                href="/settings/payments-ui#payments-ui-segments"
+                title="Настроить подписи и видимость разделов (Все, Услуги, Домены/хостинг)"
+                style={{
+                  display: 'inline-flex',
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                  minWidth: 36,
+                  padding: '6px 10px',
+                  borderRadius: 10,
+                  fontSize: 18,
+                  fontWeight: 700,
+                  lineHeight: 1,
+                  border: '1px solid #1a6b3c',
+                  color: '#1a6b3c',
+                  background: '#fff',
+                  textDecoration: 'none',
+                  fontFamily: 'inherit',
+                  flexShrink: 0,
+                  boxSizing: 'border-box',
+                }}
+              >
+                +
+              </Link>
+            )}
           </div>
           {debitorSegment === 'all' && (
             <div style={{ fontSize: 12, color: '#64748b', marginBottom: 12, lineHeight: 1.45, maxWidth: 720 }}>
-              В разделе «Все» строки «Хостинг/домен» показываются только если до ближайшего срока не больше{' '}
-              {HOSTING_DEBITOR_VISIBLE_DAYS} дней (или просрочка). Остальной хостинг — в «Домены/хостинг».
+              В разделе «{segLabels.all}» строки «{lineLabels.hosting_domain}» показываются только если до ближайшего срока не больше{' '}
+              {HOSTING_DEBITOR_VISIBLE_DAYS} дней (или просрочка). Остальной хостинг — в «{segLabels.hosting}».
             </div>
           )}
           <div
@@ -639,16 +624,16 @@ export default function DebitorPage() {
               >
                 Любая линия
               </button>
-              {DEBITOR_LINE_FILTERS.filter(f => f.value).map(opt => {
-                const active = selectedProjectLines.includes(opt.value)
+              {visibleLinesSorted(layoutUi).map((opt) => {
+                const active = selectedProjectLines.includes(opt.category_slug)
                 return (
                   <button
-                    key={opt.value}
+                    key={opt.category_slug}
                     type="button"
                     onClick={() => {
-                      setSelectedProjectLines(prev => {
-                        if (prev.includes(opt.value)) return prev.filter(s => s !== opt.value)
-                        return [...prev, opt.value]
+                      setSelectedProjectLines((prev) => {
+                        if (prev.includes(opt.category_slug)) return prev.filter((s) => s !== opt.category_slug)
+                        return [...prev, opt.category_slug]
                       })
                     }}
                     style={{
@@ -680,6 +665,33 @@ export default function DebitorPage() {
                   </button>
                 )
               })}
+              {user?.role === 'admin' && (
+                <Link
+                  href="/settings/payments-ui#payments-ui-lines"
+                  title="Настроить подписи и видимость линий в фильтре (Web, SEO, хостинг…)"
+                  style={{
+                    display: 'inline-flex',
+                    alignItems: 'center',
+                    justifyContent: 'center',
+                    width: 118,
+                    minHeight: 44,
+                    padding: '6px 8px',
+                    borderRadius: 10,
+                    fontSize: 20,
+                    fontWeight: 700,
+                    lineHeight: 1,
+                    border: '1px dashed #1a6b3c',
+                    color: '#1a6b3c',
+                    background: '#f0faf4',
+                    textDecoration: 'none',
+                    fontFamily: 'inherit',
+                    flexShrink: 0,
+                    boxSizing: 'border-box',
+                  }}
+                >
+                  +
+                </Link>
+              )}
             </div>
           </div>
           <div style={{ fontSize: 11, color: '#a1a8bc', paddingLeft: 0, maxWidth: 720, lineHeight: 1.45 }}>
@@ -793,7 +805,9 @@ export default function DebitorPage() {
                     <Td style={{ fontWeight: 600, fontSize: 13, color: '#1a1d23', whiteSpace: 'nowrap' }}>
                       {serviceMonthLabel(p.service_month)}
                     </Td>
-                    <Td>{categoryBadge(p.project_category)}</Td>
+                    <Td>
+                      <ProjectLineBadge cat={p.project_category} labels={lineLabels} />
+                    </Td>
                     <Td style={{ color: '#5b6470', maxWidth: 280 }}>{p.description}</Td>
                     <Td>
                       <span style={{ fontWeight: 700 }}>{formatMoneyNumber(p.amount)}</span>

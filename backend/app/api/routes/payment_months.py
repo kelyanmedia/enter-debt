@@ -7,7 +7,7 @@ from datetime import datetime, date, timezone, timedelta
 from decimal import Decimal
 from calendar import monthrange
 
-from app.db.database import get_db
+from app.db.database import get_db, get_request_company
 from app.models.payment import Payment, PaymentMonth
 from app.models.partner import Partner
 from app.models.user import User
@@ -15,7 +15,7 @@ from app.schemas.schemas import PaymentMonthConfirmIn, PaymentMonthCreate, Payme
 from app.core.security import get_current_user, require_manager_or_admin
 from app.core.access import assert_payment_access
 from app.core.config import settings
-from app.api.routes.payments import _require_payment_not_trashed
+from app.api.routes.payments import _require_payment_not_trashed, load_payment
 from app.services.telegram_cc import collect_telegram_cc_chat_ids
 
 router = APIRouter(prefix="/api/payments", tags=["payment-months"])
@@ -118,7 +118,7 @@ def list_months(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
-    p = _require_payment_not_trashed(db.query(Payment).filter(Payment.id == payment_id).first())
+    p = _require_payment_not_trashed(load_payment(db, payment_id))
     assert_payment_access(db, current_user, p)
     return (
         db.query(PaymentMonth)
@@ -135,7 +135,7 @@ def add_month(
     db: Session = Depends(get_db),
     current_user: User = Depends(require_manager_or_admin),
 ):
-    p = _require_payment_not_trashed(db.query(Payment).filter(Payment.id == payment_id).first())
+    p = _require_payment_not_trashed(load_payment(db, payment_id))
     assert_payment_access(db, current_user, p)
 
     new_amt = _effective_month_amount(data.amount, p.amount)
@@ -182,7 +182,7 @@ def duplicate_month_to_next_month(
     Копия строки графика: обычно — следующий календарный месяц; для хостинга/домена — тот же месяц через год.
     Та же сумма, новое описание с меткой периода, срок оплаты по правилам договора; акт и оплата сброшены.
     """
-    p = _require_payment_not_trashed(db.query(Payment).filter(Payment.id == payment_id).first())
+    p = _require_payment_not_trashed(load_payment(db, payment_id))
     assert_payment_access(db, current_user, p)
     pm = db.query(PaymentMonth).filter(
         PaymentMonth.id == month_id,
@@ -269,7 +269,7 @@ async def mark_act_issued(
     current_user: User = Depends(require_manager_or_admin),
 ):
     """Фиксация «Акт выставлен» — независимо от оплаты. Уведомление бухгалтерии: Акт + кнопка «Добавить»."""
-    pay = _require_payment_not_trashed(db.query(Payment).filter(Payment.id == payment_id).first())
+    pay = _require_payment_not_trashed(load_payment(db, payment_id))
     assert_payment_access(db, current_user, pay)
     pm = db.query(PaymentMonth).filter(
         PaymentMonth.id == month_id,
@@ -287,12 +287,7 @@ async def mark_act_issued(
     else:
         db.refresh(pm)
 
-    payment = _require_payment_not_trashed(
-        db.query(Payment)
-        .options(joinedload(Payment.partner).joinedload(Partner.manager))
-        .filter(Payment.id == payment_id)
-        .first()
-    )
+    payment = _require_payment_not_trashed(load_payment(db, payment_id))
 
     if payment.notify_accounting and not already:
         amount_val = pm.amount or payment.amount
@@ -314,6 +309,7 @@ async def mark_act_issued(
             User.role == "accountant",
             User.is_active == True,
             User.telegram_chat_id.isnot(None),
+            User.company_slug == get_request_company(),
         ).all()
         for acc in accountants:
             text = (
@@ -341,7 +337,7 @@ async def confirm_month(
     body: PaymentMonthConfirmIn = Body(default_factory=PaymentMonthConfirmIn),
 ):
     """Только «Оплата прошла» — независимо от акта (предоплата и т.д.)."""
-    pay = _require_payment_not_trashed(db.query(Payment).filter(Payment.id == payment_id).first())
+    pay = _require_payment_not_trashed(load_payment(db, payment_id))
     assert_payment_access(db, current_user, pay)
     pm = db.query(PaymentMonth).filter(
         PaymentMonth.id == month_id,
@@ -371,12 +367,7 @@ async def confirm_month(
         db.commit()
         db.refresh(pm)
         # Хостинг/домен: все строки графика оплачены — переносим «следующее продление» на +1 год (без предоплаты лет)
-        pay_wm = (
-            db.query(Payment)
-            .options(joinedload(Payment.months))
-            .filter(Payment.id == payment_id)
-            .first()
-        )
+        pay_wm = load_payment(db, payment_id)
         if (
             pay_wm
             and pay_wm.project_category == "hosting_domain"
@@ -401,12 +392,7 @@ async def confirm_month(
     else:
         db.refresh(pm)
 
-    payment = _require_payment_not_trashed(
-        db.query(Payment)
-        .options(joinedload(Payment.partner).joinedload(Partner.manager))
-        .filter(Payment.id == payment_id)
-        .first()
-    )
+    payment = _require_payment_not_trashed(load_payment(db, payment_id))
 
     if not already_paid:
         amount_val = pm.amount or payment.amount
@@ -442,7 +428,7 @@ def delete_month(
     db: Session = Depends(get_db),
     current_user: User = Depends(require_manager_or_admin),
 ):
-    pay = _require_payment_not_trashed(db.query(Payment).filter(Payment.id == payment_id).first())
+    pay = _require_payment_not_trashed(load_payment(db, payment_id))
     assert_payment_access(db, current_user, pay)
     pm = db.query(PaymentMonth).filter(
         PaymentMonth.id == month_id,

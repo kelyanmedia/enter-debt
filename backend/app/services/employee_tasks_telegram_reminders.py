@@ -13,6 +13,7 @@ import httpx
 from sqlalchemy.orm import Session
 
 from app.core.config import settings
+from app.db.database import get_request_company
 from app.models.user import User
 
 logger = logging.getLogger(__name__)
@@ -61,6 +62,7 @@ def run_employee_task_check_reminders(db: Session, now_utc: datetime) -> dict[st
             User.role == "employee",
             User.is_active == True,
             User.telegram_chat_id.isnot(None),
+            User.company_slug == get_request_company(),
         )
         .all()
     )

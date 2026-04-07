@@ -1,4 +1,4 @@
-from sqlalchemy import Column, Date, DateTime, ForeignKey, Integer, Numeric, String, Text
+from sqlalchemy import Boolean, Column, Date, DateTime, ForeignKey, Integer, Numeric, String, Text
 from sqlalchemy.orm import relationship
 from sqlalchemy.sql import func
 
@@ -11,6 +11,7 @@ class CashFlowTemplateLine(Base):
     __tablename__ = "cash_flow_template_lines"
 
     id = Column(Integer, primary_key=True, index=True)
+    company_slug = Column(String(32), nullable=False, index=True, default="kelyanmedia")
     template_group = Column(String(40), nullable=False, index=True)
     sort_order = Column(Integer, nullable=False, default=0)
     label = Column(String(200), nullable=False)
@@ -27,12 +28,14 @@ class CashFlowEntry(Base):
     __tablename__ = "cash_flow_entries"
 
     id = Column(Integer, primary_key=True, index=True)
+    company_slug = Column(String(32), nullable=False, index=True, default="kelyanmedia")
     period_month = Column(String(7), nullable=False, index=True)  # YYYY-MM для отчётов; с entry_date = месяц этой даты
     entry_date = Column(Date, nullable=True)
     direction = Column(String(10), nullable=False)
     label = Column(String(300), nullable=False)
     amount_uzs = Column(Numeric(15, 2), nullable=False, default=0)
     amount_usd = Column(Numeric(15, 2), nullable=False, default=0)
+    apply_fx_to_uzs = Column(Boolean, nullable=False, default=False)
     payment_method = Column(String(20), nullable=False, default="transfer")
     flow_category = Column(String(64), nullable=True)
     recipient = Column(String(120), nullable=True)

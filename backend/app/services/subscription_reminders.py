@@ -16,6 +16,7 @@ from sqlalchemy import or_
 from sqlalchemy.orm import Session
 
 from app.core.config import settings
+from app.db.database import get_request_company
 from app.models.subscription_item import SubscriptionItem
 from app.models.user import User
 
@@ -51,6 +52,7 @@ def subscription_reminder_recipient_chat_ids(db: Session) -> List[int]:
             User.role.in_(("admin", "administration")),
             User.is_active == True,
             User.telegram_chat_id.isnot(None),
+            User.company_slug == get_request_company(),
         )
         .all()
     )
@@ -89,6 +91,7 @@ def _advance_overdue_deadlines(db: Session, now_utc: datetime) -> int:
         .filter(
             SubscriptionItem.next_deadline_at.isnot(None),
             SubscriptionItem.recurrence.in_(("monthly", "yearly")),
+            SubscriptionItem.company_slug == get_request_company(),
             _active_subscription_filter(),
         )
         .all()
@@ -150,6 +153,7 @@ def run_subscription_reminders(db: Session, now_utc: Optional[datetime] = None) 
         .filter(
             SubscriptionItem.next_deadline_at.isnot(None),
             SubscriptionItem.reminder_days_before.in_((1, 2)),
+            SubscriptionItem.company_slug == get_request_company(),
             _active_subscription_filter(),
         )
         .all()

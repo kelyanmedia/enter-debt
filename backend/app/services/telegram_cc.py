@@ -5,6 +5,7 @@ from typing import List, Optional
 from sqlalchemy.orm import Session
 
 from app.core.access import parse_visible_manager_ids
+from app.db.database import get_request_company
 from app.models.user import User
 
 
@@ -33,6 +34,7 @@ def collect_telegram_cc_chat_ids(db: Session, route_manager_id: Optional[int]) -
             User.role == "admin",
             User.is_active == True,
             User.telegram_chat_id.isnot(None),
+            User.company_slug == get_request_company(),
         )
         .all()
     )
@@ -51,6 +53,7 @@ def collect_telegram_cc_chat_ids(db: Session, route_manager_id: Optional[int]) -
                 User.role == "administration",
                 User.is_active == True,
                 User.telegram_chat_id.isnot(None),
+                User.company_slug == get_request_company(),
             )
             .all()
         ):

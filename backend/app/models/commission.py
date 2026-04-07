@@ -8,6 +8,7 @@ class Commission(Base):
     __tablename__ = "commissions"
 
     id = Column(Integer, primary_key=True, index=True)
+    company_slug = Column(String(32), nullable=False, index=True, default="kelyanmedia")
     project_name = Column(String(300), nullable=False)
     project_type = Column(String(20), nullable=False)          # site | seo | ppc
     project_cost = Column(Numeric(15, 2), nullable=False)      # Стоимость проекта

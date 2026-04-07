@@ -3,7 +3,7 @@ from sqlalchemy.orm import Session
 from sqlalchemy.exc import IntegrityError
 from typing import List, Set
 
-from app.db.database import get_db
+from app.db.database import get_db, get_request_company
 from app.models.user import User
 from app.models.feed_notification import FeedNotificationRead
 from app.schemas.schemas import FeedNotificationOut
@@ -109,7 +109,11 @@ def clear_feed(
 ):
     from datetime import datetime, timezone
 
-    u = db.query(User).filter(User.id == current_user.id).first()
+    u = (
+        db.query(User)
+        .filter(User.id == current_user.id, User.company_slug == get_request_company())
+        .first()
+    )
     if not u:
         raise HTTPException(status_code=404, detail="User not found")
     u.feed_cleared_at = datetime.now(timezone.utc)

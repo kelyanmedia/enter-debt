@@ -7,7 +7,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy.orm import Session, joinedload
 from sqlalchemy import extract, func
 
-from app.db.database import get_db
+from app.db.database import get_db, get_request_company
 from app.models.user import User
 from app.models.employee_task import EmployeeTask
 from app.models.payment import Payment
@@ -97,7 +97,12 @@ def _validate_task_cost_allocation(
         raise HTTPException(status_code=400, detail="Категория: design, dev, other или seo.")
     p = (
         db.query(Payment)
-        .filter(Payment.id == pid, Payment.is_archived == False, Payment.trashed_at.is_(None))
+        .filter(
+            Payment.id == pid,
+            Payment.is_archived == False,
+            Payment.trashed_at.is_(None),
+            Payment.company_slug == get_request_company(),
+        )
         .first()
     )
     if not p:
@@ -126,7 +131,10 @@ def _task_to_out(t: EmployeeTask) -> EmployeeTaskOut:
 
 
 def _task_query_for_user(db: Session, uid: int, year: Optional[int], month: Optional[int]):
-    q = db.query(EmployeeTask).filter(EmployeeTask.user_id == uid)
+    q = db.query(EmployeeTask).filter(
+        EmployeeTask.user_id == uid,
+        EmployeeTask.company_slug == get_request_company(),
+    )
     if year is not None:
         q = q.filter(extract("year", EmployeeTask.work_date) == year)
     if month is not None:
@@ -153,13 +161,25 @@ def list_staff_employees(
 ):
     rows = (
         db.query(User)
-        .filter(User.role == "employee", User.is_active == True)
+        .filter(
+            User.role == "employee",
+            User.is_active == True,
+            User.company_slug == get_request_company(),
+        )
         .order_by(User.name)
         .all()
     )
     out: List[StaffEmployeeOut] = []
     for u in rows:
-        cnt = db.query(func.count(EmployeeTask.id)).filter(EmployeeTask.user_id == u.id).scalar() or 0
+        cnt = (
+            db.query(func.count(EmployeeTask.id))
+            .filter(
+                EmployeeTask.user_id == u.id,
+                EmployeeTask.company_slug == get_request_company(),
+            )
+            .scalar()
+            or 0
+        )
         out.append(
             StaffEmployeeOut(
                 id=u.id,
@@ -182,13 +202,22 @@ def staff_month_totals(
     db: Session = Depends(get_db),
     _: User = Depends(require_admin),
 ):
-    owner = db.query(User).filter(User.id == user_id, User.role == "employee").first()
+    owner = (
+        db.query(User)
+        .filter(
+            User.id == user_id,
+            User.role == "employee",
+            User.company_slug == get_request_company(),
+        )
+        .first()
+    )
     if not owner:
         raise HTTPException(status_code=404, detail="Сотрудник не найден")
     rows = (
         db.query(EmployeeTask)
         .filter(
             EmployeeTask.user_id == user_id,
+            EmployeeTask.company_slug == get_request_company(),
             extract("year", EmployeeTask.work_date) == year,
             extract("month", EmployeeTask.work_date) == month,
         )
@@ -238,13 +267,25 @@ def staff_pending_payments_summary(
     db: Session = Depends(get_db),
     _: User = Depends(require_admin),
 ):
-    u = db.query(User).filter(User.id == user_id, User.role == "employee").first()
+    u = (
+        db.query(User)
+        .filter(
+            User.id == user_id,
+            User.role == "employee",
+            User.company_slug == get_request_company(),
+        )
+        .first()
+    )
     if not u:
         raise HTTPException(status_code=404, detail="Сотрудник не найден")
 
     rows = (
         db.query(EmployeeTask)
-        .filter(EmployeeTask.user_id == user_id, EmployeeTask.paid == False)
+        .filter(
+            EmployeeTask.user_id == user_id,
+            EmployeeTask.paid == False,
+            EmployeeTask.company_slug == get_request_company(),
+        )
         .order_by(EmployeeTask.work_date.desc(), EmployeeTask.id.desc())
         .all()
     )
@@ -308,7 +349,15 @@ def list_tasks(
     else:
         if user_id is None:
             raise HTTPException(status_code=400, detail="Укажите user_id сотрудника")
-        u = db.query(User).filter(User.id == user_id, User.role == "employee").first()
+        u = (
+            db.query(User)
+            .filter(
+                User.id == user_id,
+                User.role == "employee",
+                User.company_slug == get_request_company(),
+            )
+            .first()
+        )
         if not u:
             raise HTTPException(status_code=404, detail="Сотрудник не найден")
         uid = user_id
@@ -334,6 +383,7 @@ def list_months_with_tasks_in_year(
         db.query(extract("month", EmployeeTask.work_date))
         .filter(
             EmployeeTask.user_id == current_user.id,
+            EmployeeTask.company_slug == get_request_company(),
             extract("year", EmployeeTask.work_date) == year,
         )
         .distinct()
@@ -359,7 +409,16 @@ def create_task(
                 status_code=400,
                 detail="Укажите user_id сотрудника (в разделе «Команда» он подставляется автоматически).",
             )
-        u = db.query(User).filter(User.id == data.user_id, User.role == "employee", User.is_active == True).first()
+        u = (
+            db.query(User)
+            .filter(
+                User.id == data.user_id,
+                User.role == "employee",
+                User.is_active == True,
+                User.company_slug == get_request_company(),
+            )
+            .first()
+        )
         if not u:
             raise HTTPException(status_code=404, detail="Сотрудник не найден или неактивен")
         target_uid = data.user_id
@@ -371,7 +430,11 @@ def create_task(
     st = data.status or "not_started"
     now = datetime.now(timezone.utc)
     b_norm = _normalize_task_budget(data.budget_amount)
-    owner = db.query(User).filter(User.id == target_uid).first()
+    owner = (
+        db.query(User)
+        .filter(User.id == target_uid, User.company_slug == get_request_company())
+        .first()
+    )
     if (
         owner
         and bool(getattr(owner, "is_ad_budget_employee", False))
@@ -388,6 +451,7 @@ def create_task(
             getattr(data, "cost_category", None),
         )
     t = EmployeeTask(
+        company_slug=get_request_company(),
         user_id=target_uid,
         work_date=data.work_date,
         project_name=data.project_name.strip(),
@@ -423,7 +487,14 @@ def update_task(
     db: Session = Depends(get_db),
     current_user: User = Depends(_require_employee_or_admin),
 ):
-    t = db.query(EmployeeTask).filter(EmployeeTask.id == task_id).first()
+    t = (
+        db.query(EmployeeTask)
+        .filter(
+            EmployeeTask.id == task_id,
+            EmployeeTask.company_slug == get_request_company(),
+        )
+        .first()
+    )
     if not t:
         raise HTTPException(status_code=404, detail="Задача не найдена")
     if current_user.role == "employee" and t.user_id != current_user.id:
@@ -491,7 +562,11 @@ def update_task(
     elif not t.paid:
         t.paid_at = None
 
-    owner = db.query(User).filter(User.id == t.user_id).first()
+    owner = (
+        db.query(User)
+        .filter(User.id == t.user_id, User.company_slug == get_request_company())
+        .first()
+    )
     if (
         owner
         and bool(getattr(owner, "is_ad_budget_employee", False))
@@ -504,7 +579,10 @@ def update_task(
     t = (
         db.query(EmployeeTask)
         .options(joinedload(EmployeeTask.allocated_payment).joinedload(Payment.partner))
-        .filter(EmployeeTask.id == t.id)
+        .filter(
+            EmployeeTask.id == t.id,
+            EmployeeTask.company_slug == get_request_company(),
+        )
         .first()
     )
     return _task_to_out(t)
@@ -517,7 +595,14 @@ def move_task_next_month(
     current_user: User = Depends(_require_employee_or_admin),
 ):
     """Переносит задачу на следующий календарный месяц (та же строка). Сотрудник — только свои задачи."""
-    t = db.query(EmployeeTask).filter(EmployeeTask.id == task_id).first()
+    t = (
+        db.query(EmployeeTask)
+        .filter(
+            EmployeeTask.id == task_id,
+            EmployeeTask.company_slug == get_request_company(),
+        )
+        .first()
+    )
     if not t:
         raise HTTPException(status_code=404, detail="Задача не найдена")
     if current_user.role == "employee" and t.user_id != current_user.id:
@@ -527,7 +612,10 @@ def move_task_next_month(
     t = (
         db.query(EmployeeTask)
         .options(joinedload(EmployeeTask.allocated_payment).joinedload(Payment.partner))
-        .filter(EmployeeTask.id == t.id)
+        .filter(
+            EmployeeTask.id == t.id,
+            EmployeeTask.company_slug == get_request_company(),
+        )
         .first()
     )
     return _task_to_out(t)
@@ -540,13 +628,21 @@ def duplicate_task_next_month(
     current_user: User = Depends(_require_employee_or_admin),
 ):
     """Копия строки в следующем месяце; исходная остаётся. Сотрудник — только свои задачи."""
-    src = db.query(EmployeeTask).filter(EmployeeTask.id == task_id).first()
+    src = (
+        db.query(EmployeeTask)
+        .filter(
+            EmployeeTask.id == task_id,
+            EmployeeTask.company_slug == get_request_company(),
+        )
+        .first()
+    )
     if not src:
         raise HTTPException(status_code=404, detail="Задача не найдена")
     if current_user.role == "employee" and src.user_id != current_user.id:
         raise HTTPException(status_code=403, detail="Нет доступа")
     new_d = _add_one_calendar_month(src.work_date)
     clone = EmployeeTask(
+        company_slug=get_request_company(),
         user_id=src.user_id,
         work_date=new_d,
         project_name=src.project_name,
@@ -566,7 +662,10 @@ def duplicate_task_next_month(
     t = (
         db.query(EmployeeTask)
         .options(joinedload(EmployeeTask.allocated_payment).joinedload(Payment.partner))
-        .filter(EmployeeTask.id == clone.id)
+        .filter(
+            EmployeeTask.id == clone.id,
+            EmployeeTask.company_slug == get_request_company(),
+        )
         .first()
     )
     return _task_to_out(t)
@@ -578,7 +677,14 @@ def delete_task(
     db: Session = Depends(get_db),
     current_user: User = Depends(_require_employee_or_admin),
 ):
-    t = db.query(EmployeeTask).filter(EmployeeTask.id == task_id).first()
+    t = (
+        db.query(EmployeeTask)
+        .filter(
+            EmployeeTask.id == task_id,
+            EmployeeTask.company_slug == get_request_company(),
+        )
+        .first()
+    )
     if not t:
         raise HTTPException(status_code=404, detail="Задача не найдена")
     if current_user.role == "employee" and t.user_id != current_user.id:

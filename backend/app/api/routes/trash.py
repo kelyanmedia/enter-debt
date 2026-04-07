@@ -8,7 +8,7 @@ from sqlalchemy.orm import Session, joinedload
 
 from app.api.routes.payments import enrich as enrich_payment
 from app.core.security import require_admin
-from app.db.database import get_db
+from app.db.database import get_db, get_request_company
 from app.models.partner import Partner
 from app.models.payment import NotificationLog, Payment
 from app.models.user import User
@@ -41,7 +41,10 @@ def list_trashed_payments(
             joinedload(Payment.confirmed_by_user),
             joinedload(Payment.months),
         )
-        .filter(Payment.trashed_at.isnot(None))
+        .filter(
+            Payment.trashed_at.isnot(None),
+            Payment.company_slug == get_request_company(),
+        )
         .order_by(Payment.trashed_at.desc())
         .all()
     )
@@ -56,7 +59,10 @@ def list_trashed_partners(
     rows = (
         db.query(Partner)
         .options(joinedload(Partner.manager))
-        .filter(Partner.trashed_at.isnot(None))
+        .filter(
+            Partner.trashed_at.isnot(None),
+            Partner.company_slug == get_request_company(),
+        )
         .order_by(Partner.trashed_at.desc())
         .all()
     )
@@ -69,10 +75,24 @@ def restore_trashed_payment(
     db: Session = Depends(get_db),
     _: User = Depends(require_admin),
 ):
-    p = db.query(Payment).filter(Payment.id == payment_id).first()
+    p = (
+        db.query(Payment)
+        .filter(
+            Payment.id == payment_id,
+            Payment.company_slug == get_request_company(),
+        )
+        .first()
+    )
     if not p or p.trashed_at is None:
         raise HTTPException(status_code=404, detail="Запись не найдена в корзине")
-    partner = db.query(Partner).filter(Partner.id == p.partner_id).first()
+    partner = (
+        db.query(Partner)
+        .filter(
+            Partner.id == p.partner_id,
+            Partner.company_slug == get_request_company(),
+        )
+        .first()
+    )
     if partner and partner.trashed_at is not None:
         raise HTTPException(
             status_code=400,
@@ -89,7 +109,14 @@ def restore_trashed_partner(
     db: Session = Depends(get_db),
     _: User = Depends(require_admin),
 ):
-    partner = db.query(Partner).filter(Partner.id == partner_id).first()
+    partner = (
+        db.query(Partner)
+        .filter(
+            Partner.id == partner_id,
+            Partner.company_slug == get_request_company(),
+        )
+        .first()
+    )
     if not partner or partner.trashed_at is None:
         raise HTTPException(status_code=404, detail="Компания не найдена в корзине")
     partner.trashed_at = None
@@ -103,10 +130,20 @@ def permanently_delete_trashed_payment(
     db: Session = Depends(get_db),
     _: User = Depends(require_admin),
 ):
-    p = db.query(Payment).filter(Payment.id == payment_id).first()
+    p = (
+        db.query(Payment)
+        .filter(
+            Payment.id == payment_id,
+            Payment.company_slug == get_request_company(),
+        )
+        .first()
+    )
     if not p or p.trashed_at is None:
         raise HTTPException(status_code=404, detail="Запись не найдена в корзине")
-    db.query(NotificationLog).filter(NotificationLog.payment_id == payment_id).delete(synchronize_session=False)
+    db.query(NotificationLog).filter(
+        NotificationLog.payment_id == payment_id,
+        NotificationLog.company_slug == get_request_company(),
+    ).delete(synchronize_session=False)
     db.delete(p)
     db.commit()
     return {"ok": True}
@@ -118,11 +155,21 @@ def permanently_delete_trashed_partner(
     db: Session = Depends(get_db),
     _: User = Depends(require_admin),
 ):
-    partner = db.query(Partner).filter(Partner.id == partner_id).first()
+    partner = (
+        db.query(Partner)
+        .filter(
+            Partner.id == partner_id,
+            Partner.company_slug == get_request_company(),
+        )
+        .first()
+    )
     if not partner or partner.trashed_at is None:
         raise HTTPException(status_code=404, detail="Компания не найдена в корзине")
     for pay in list(partner.payments or []):
-        db.query(NotificationLog).filter(NotificationLog.payment_id == pay.id).delete(synchronize_session=False)
+        db.query(NotificationLog).filter(
+            NotificationLog.payment_id == pay.id,
+            NotificationLog.company_slug == get_request_company(),
+        ).delete(synchronize_session=False)
         db.delete(pay)
     db.delete(partner)
     db.commit()

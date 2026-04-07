@@ -11,6 +11,7 @@ class EmployeePaymentRecord(Base):
     __tablename__ = "employee_payment_records"
 
     id = Column(Integer, primary_key=True, index=True)
+    company_slug = Column(String(32), nullable=False, index=True, default="kelyanmedia")
     user_id = Column(Integer, ForeignKey("users.id", ondelete="CASCADE"), nullable=False, index=True)
     paid_on = Column(Date, nullable=False)
     period_year = Column(Integer, nullable=True)

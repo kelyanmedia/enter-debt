@@ -9,6 +9,7 @@ from sqlalchemy import false
 from app.models.user import User
 from app.models.partner import Partner
 from app.models.payment import Payment
+from app.db.database import get_request_company
 
 
 def parse_visible_manager_ids(user: User) -> List[int]:
@@ -42,7 +43,16 @@ def assert_manager_assignable_by_administration(db: Session, user: User, manager
             status_code=403,
             detail="Можно назначить только менеджера из списка, заданного для вашей учётной записи.",
         )
-    m = db.query(User).filter(User.id == manager_id, User.role == "manager", User.is_active == True).first()
+    m = (
+        db.query(User)
+        .filter(
+            User.id == manager_id,
+            User.role == "manager",
+            User.is_active == True,
+            User.company_slug == get_request_company(),
+        )
+        .first()
+    )
     if not m:
         raise HTTPException(status_code=400, detail="Указанный менеджер не найден или неактивен")
 
@@ -65,6 +75,7 @@ def accessible_partner_ids(db: Session, user: User) -> Optional[Set[int]]:
                 Partner.manager_id.in_(mids),
                 Partner.is_deleted == False,
                 Partner.trashed_at.is_(None),
+                Partner.company_slug == get_request_company(),
             )
             .all()
         )
@@ -79,6 +90,7 @@ def accessible_partner_ids(db: Session, user: User) -> Optional[Set[int]]:
             Partner.manager_id == user.id,
             Partner.is_deleted == False,
             Partner.trashed_at.is_(None),
+            Partner.company_slug == get_request_company(),
         )
         .all()
     )
@@ -92,6 +104,7 @@ def assert_partner_access(db: Session, user: User, partner_id: int) -> None:
             Partner.id == partner_id,
             Partner.is_deleted == False,
             Partner.trashed_at.is_(None),
+            Partner.company_slug == get_request_company(),
         )
         .first()
     )
@@ -131,7 +144,11 @@ def assert_partner_access_for_payment_delete(db: Session, user: User, partner_id
             detail="Вам не назначены компании. Обратитесь к администратору, чтобы привязать партнёров к вашему профилю.",
         )
 
-    row = db.query(Partner).filter(Partner.id == partner_id).first()
+    row = (
+        db.query(Partner)
+        .filter(Partner.id == partner_id, Partner.company_slug == get_request_company())
+        .first()
+    )
     if row is None:
         # Нет записи компании (битая ссылка) — не блокируем удаление проекта
         return
@@ -160,6 +177,7 @@ def assert_partner_access_for_payment_delete(db: Session, user: User, partner_id
 
 def filter_payments_query(q, db: Session, user: User):
     q = q.filter(Payment.trashed_at.is_(None))
+    q = q.filter(Payment.company_slug == get_request_company())
     ids = accessible_partner_ids(db, user)
     if ids is None:
         return q
@@ -170,6 +188,7 @@ def filter_payments_query(q, db: Session, user: User):
 
 def filter_partners_query(q, db: Session, user: User):
     q = q.filter(Partner.trashed_at.is_(None))
+    q = q.filter(Partner.company_slug == get_request_company())
     ids = accessible_partner_ids(db, user)
     if ids is None:
         return q

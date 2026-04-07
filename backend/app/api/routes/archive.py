@@ -2,7 +2,7 @@ from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session, joinedload
 from typing import List, Optional
 from datetime import date, datetime
-from app.db.database import get_db
+from app.db.database import get_db, get_request_company
 from app.models.payment import Payment, NotificationLog
 from app.models.partner import Partner
 from app.schemas.schemas import PaymentOut, PartnerOut
@@ -28,7 +28,11 @@ def get_archived_payments(
         joinedload(Payment.partner).joinedload(Partner.manager),
         joinedload(Payment.confirmed_by_user),
         joinedload(Payment.months),
-    ).filter(Payment.is_archived == True, Payment.trashed_at.is_(None))
+    ).filter(
+        Payment.is_archived == True,
+        Payment.trashed_at.is_(None),
+        Payment.company_slug == get_request_company(),
+    )
 
     if date_from:
         q = q.filter(Payment.created_at >= datetime.combine(date_from, datetime.min.time()))
@@ -54,6 +58,7 @@ def get_archived_partners(
         Partner.status == "archive",
         Partner.is_deleted == False,
         Partner.trashed_at.is_(None),
+        Partner.company_slug == get_request_company(),
     )
 
     if date_from:
@@ -83,7 +88,14 @@ def archive_payment(
     db: Session = Depends(get_db),
     _=Depends(require_admin)
 ):
-    p = db.query(Payment).filter(Payment.id == payment_id).first()
+    p = (
+        db.query(Payment)
+        .filter(
+            Payment.id == payment_id,
+            Payment.company_slug == get_request_company(),
+        )
+        .first()
+    )
     if not p:
         raise HTTPException(status_code=404, detail="Payment not found")
     p.is_archived = True
@@ -98,7 +110,14 @@ def permanently_delete_archived_payment(
     _=Depends(require_admin)
 ):
     """Удаление из БД только для уже архивных проектов."""
-    p = db.query(Payment).filter(Payment.id == payment_id).first()
+    p = (
+        db.query(Payment)
+        .filter(
+            Payment.id == payment_id,
+            Payment.company_slug == get_request_company(),
+        )
+        .first()
+    )
     if not p:
         raise HTTPException(status_code=404, detail="Payment not found")
     if not p.is_archived:
@@ -111,7 +130,10 @@ def permanently_delete_archived_payment(
             status_code=400,
             detail="Сначала восстановите проект из корзины или удалите его там",
         )
-    db.query(NotificationLog).filter(NotificationLog.payment_id == payment_id).delete(
+    db.query(NotificationLog).filter(
+        NotificationLog.payment_id == payment_id,
+        NotificationLog.company_slug == get_request_company(),
+    ).delete(
         synchronize_session=False
     )
     db.delete(p)
@@ -125,7 +147,14 @@ def archive_partner(
     db: Session = Depends(get_db),
     _=Depends(require_admin)
 ):
-    partner = db.query(Partner).filter(Partner.id == partner_id).first()
+    partner = (
+        db.query(Partner)
+        .filter(
+            Partner.id == partner_id,
+            Partner.company_slug == get_request_company(),
+        )
+        .first()
+    )
     if not partner:
         raise HTTPException(status_code=404, detail="Partner not found")
     partner.status = "archive"
@@ -139,7 +168,14 @@ def restore_partner(
     db: Session = Depends(get_db),
     _=Depends(require_admin)
 ):
-    partner = db.query(Partner).filter(Partner.id == partner_id).first()
+    partner = (
+        db.query(Partner)
+        .filter(
+            Partner.id == partner_id,
+            Partner.company_slug == get_request_company(),
+        )
+        .first()
+    )
     if not partner:
         raise HTTPException(status_code=404, detail="Partner not found")
     partner.status = "active"

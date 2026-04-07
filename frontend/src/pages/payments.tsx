@@ -1,9 +1,20 @@
 import { useEffect, useState, useCallback, useMemo, type CSSProperties } from 'react'
+import Link from 'next/link'
 import { useRouter } from 'next/router'
 import { useAuth } from '@/context/AuthContext'
 import Layout from '@/components/Layout'
 import { PageHeader, Card, Th, Td, PartnerAvatar, statusBadge, formatAmount, formatMoneyNumber, formatDate, daysLeft, daysLeftSortKey, BtnPrimary, BtnOutline, BtnIconEdit, BtnIconDelete, Modal, ConfirmModal, Field, Input, Select, Empty, MoneyInput } from '@/components/ui'
 import api from '@/lib/api'
+import {
+  type CompanyPaymentsUi,
+  ProjectLineBadge,
+  effectiveCompanyUi,
+  lineLabelMap,
+  segmentLabelMap,
+  allLinesSorted,
+  visibleLinesSorted,
+  visibleSegmentsSorted,
+} from '@/lib/companyUi'
 
 interface Partner { id: number; name: string }
 interface User { id: number; name: string }
@@ -136,6 +147,7 @@ const PAYMENTS_CATEGORY_QUERY_VALUES = new Set([
   'ppc',
   'mobile_app',
   'tech_support',
+  'events',
   'hosting_domain',
 ])
 
@@ -227,49 +239,8 @@ function hostingYearPeriodTitle(ym: string): string {
   return `${y} год — ${mon}`
 }
 
-function lineBadge(cat?: string | null) {
-  if (cat === 'smm')
-    return <span style={{ fontSize: 11, fontWeight: 700, color: '#7c3aed', background: '#f3e8ff', padding: '3px 8px', borderRadius: 6 }}>SMM</span>
-  if (cat === 'target')
-    return <span style={{ fontSize: 11, fontWeight: 700, color: '#c2410c', background: '#fff7ed', padding: '3px 8px', borderRadius: 6 }}>Таргет</span>
-  if (cat === 'personal_brand')
-    return (
-      <span style={{ fontSize: 11, fontWeight: 700, color: '#0d9488', background: '#ccfbf1', padding: '3px 8px', borderRadius: 6 }}>
-        Личн. бренд
-      </span>
-    )
-  if (cat === 'content')
-    return (
-      <span style={{ fontSize: 11, fontWeight: 700, color: '#7c2d12', background: '#ffedd5', padding: '3px 8px', borderRadius: 6 }}>
-        Контент
-      </span>
-    )
-  if (cat === 'web') return <span style={{ fontSize: 11, fontWeight: 700, color: '#2563eb', background: '#eff4ff', padding: '3px 8px', borderRadius: 6 }}>Web</span>
-  if (cat === 'seo') return <span style={{ fontSize: 11, fontWeight: 700, color: '#b45309', background: '#fff8ee', padding: '3px 8px', borderRadius: 6 }}>SEO</span>
-  if (cat === 'ppc') return <span style={{ fontSize: 11, fontWeight: 700, color: '#6b7280', background: '#f3f4f6', padding: '3px 8px', borderRadius: 6 }}>PPC</span>
-  if (cat === 'mobile_app')
-    return (
-      <span style={{ fontSize: 11, fontWeight: 700, color: '#7c3aed', background: '#f3e8ff', padding: '3px 8px', borderRadius: 6 }}>
-        Моб. прил.
-      </span>
-    )
-  if (cat === 'tech_support')
-    return (
-      <span style={{ fontSize: 11, fontWeight: 700, color: '#0d9488', background: '#ccfbf1', padding: '3px 8px', borderRadius: 6 }}>
-        Тех. сопр.
-      </span>
-    )
-  if (cat === 'hosting_domain')
-    return (
-      <span style={{ fontSize: 11, fontWeight: 700, color: '#4338ca', background: '#eef2ff', padding: '3px 8px', borderRadius: 6 }}>
-        Хостинг
-      </span>
-    )
-  return <span style={{ color: '#c5c8d4', fontSize: 12 }}>—</span>
-}
-
 export default function PaymentsPage() {
-  const { user } = useAuth()
+  const { user, companySlug } = useAuth()
   const router = useRouter()
   const [payments, setPayments] = useState<Payment[]>([])
   const [partners, setPartners] = useState<Partner[]>([])
@@ -280,6 +251,7 @@ export default function PaymentsPage() {
   /** default — порядок с API; urgency — сначала просрочка (красные), затем ближайшие выплаты, в конце без даты и с большим запасом */
   const [sortByRemaining, setSortByRemaining] = useState<'default' | 'urgency'>('default')
   const [paymentsSegment, setPaymentsSegment] = useState<PaymentsSegment>('all')
+  const [companyUiState, setCompanyUiState] = useState<CompanyPaymentsUi | null>(null)
   const [users, setUsers] = useState<User[]>([])
   const [modal, setModal] = useState(false)
   const [editingId, setEditingId] = useState<number | null>(null)
@@ -353,6 +325,24 @@ export default function PaymentsPage() {
     else delete q.category
     router.replace({ pathname: '/payments', query: q }, undefined, { shallow: true })
   }
+
+  const layoutUi = useMemo(() => effectiveCompanyUi(companyUiState), [companyUiState])
+  const lineLabels = useMemo(() => lineLabelMap(layoutUi), [layoutUi])
+  const segLabels = useMemo(() => segmentLabelMap(layoutUi), [layoutUi])
+
+  useEffect(() => {
+    api
+      .get<CompanyPaymentsUi>('company-ui/payments')
+      .then((r) => setCompanyUiState(r.data))
+      .catch(() => setCompanyUiState(null))
+  }, [companySlug])
+
+  useEffect(() => {
+    const vis = visibleSegmentsSorted(layoutUi).map((s) => s.segment_key as PaymentsSegment)
+    if (vis.length && !vis.includes(paymentsSegment)) {
+      setPaymentsSegment(vis[0]!)
+    }
+  }, [layoutUi])
 
   useEffect(() => {
     load()
@@ -807,16 +797,11 @@ export default function PaymentsPage() {
             </Select>
             <Select value={filterCategory} onChange={e => setCategoryFilter(e.target.value)} style={{ maxWidth: 200 }}>
               <option value="">Все линии</option>
-              <option value="smm">SMM</option>
-              <option value="target">Таргет</option>
-              <option value="personal_brand">Личный бренд</option>
-              <option value="content">Контент</option>
-              <option value="hosting_domain">Хостинг/домен</option>
-              <option value="tech_support">Тех сопровождение (legacy)</option>
-              <option value="web">Web (legacy)</option>
-              <option value="seo">SEO (legacy)</option>
-              <option value="ppc">PPC (legacy)</option>
-              <option value="mobile_app">Моб. приложение (legacy)</option>
+              {visibleLinesSorted(layoutUi).map((l) => (
+                <option key={l.category_slug} value={l.category_slug}>
+                  {l.label}
+                </option>
+              ))}
             </Select>
             <Select
               value={sortByRemaining}
@@ -854,16 +839,12 @@ export default function PaymentsPage() {
                 РАЗДЕЛ
               </span>
             </div>
-            {(['all', 'services', 'hosting'] as const).map((key) => {
-              const labels: Record<typeof key, string> = {
-                all: 'Все',
-                services: 'Услуги',
-                hosting: 'Домены/хостинг',
-              }
+            {visibleSegmentsSorted(layoutUi).map((s) => {
+              const key = s.segment_key as PaymentsSegment
               const active = paymentsSegment === key
               return (
                 <BtnOutline
-                  key={key}
+                  key={s.segment_key}
                   type="button"
                   onClick={() => setPaymentsSegment(key)}
                   style={{
@@ -872,16 +853,42 @@ export default function PaymentsPage() {
                     ...(active ? { background: '#1a6b3c', color: '#fff', borderColor: '#1a6b3c' } : {}),
                   }}
                 >
-                  {labels[key]}
+                  {s.label}
                 </BtnOutline>
               )
             })}
+            {user?.role === 'admin' && (
+              <Link
+                href="/settings/payments-ui#payments-ui-segments"
+                title="Настроить подписи и видимость разделов (Все, Услуги, Домены/хостинг)"
+                style={{
+                  display: 'inline-flex',
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                  minWidth: 36,
+                  padding: '6px 10px',
+                  borderRadius: 10,
+                  fontSize: 18,
+                  fontWeight: 700,
+                  lineHeight: 1,
+                  border: '1px solid #1a6b3c',
+                  color: '#1a6b3c',
+                  background: '#fff',
+                  textDecoration: 'none',
+                  fontFamily: 'inherit',
+                  flexShrink: 0,
+                  boxSizing: 'border-box',
+                }}
+              >
+                +
+              </Link>
+            )}
           </div>
         </div>
         {paymentsSegment === 'all' && (
           <div style={{ fontSize: 12, color: '#64748b', marginBottom: 12, lineHeight: 1.45, maxWidth: 720 }}>
-            В разделе «Все» строки «Хостинг/домен» показываются только если до ближайшего срока не больше {HOSTING_VISIBLE_WITHIN_DAYS}{' '}
-            дней (или просрочка). Остальной хостинг — в «Домены/хостинг».
+            В разделе «{segLabels.all}» строки «{lineLabels.hosting_domain}» показываются только если до ближайшего срока не больше{' '}
+            {HOSTING_VISIBLE_WITHIN_DAYS} дней (или просрочка). Остальной хостинг — в «{segLabels.hosting}».
           </div>
         )}
 
@@ -953,7 +960,9 @@ export default function PaymentsPage() {
                     <Td style={{ color: '#8a8fa8', wordBreak: 'break-word', overflowWrap: 'anywhere', verticalAlign: 'middle' }}>
                       {p.description}
                     </Td>
-                    <Td>{lineBadge(p.project_category)}</Td>
+                    <Td>
+                      <ProjectLineBadge cat={p.project_category} labels={lineLabels} />
+                    </Td>
                     <Td style={{ minWidth: 0, overflow: 'hidden', verticalAlign: 'middle' }}>
                       <div style={{ overflow: 'hidden', textOverflow: 'ellipsis' }}>{statusBadge(p.payment_type)}</div>
                     </Td>
@@ -1065,7 +1074,7 @@ export default function PaymentsPage() {
                   </div>
                 )}
                 <div style={{ display: 'flex', gap: 8, marginTop: 8, flexWrap: 'wrap', alignItems: 'center' }}>
-                  {lineBadge(drawer.project_category)}
+                  <ProjectLineBadge cat={drawer.project_category} labels={lineLabels} />
                   {statusBadge(drawer.payment_type)}
                   {statusBadge(drawer.status)}
                   <span style={{ fontWeight: 700, fontSize: 14, color: '#1a6b3c' }}>
@@ -1595,16 +1604,11 @@ export default function PaymentsPage() {
         <Field label="Линия">
           <Select value={form.project_category} onChange={e => applyCategoryChange(e.target.value)}>
             <option value="">Не указано</option>
-            <option value="smm">SMM</option>
-            <option value="target">Таргет</option>
-            <option value="personal_brand">Личный бренд</option>
-            <option value="content">Контент</option>
-            <option value="hosting_domain">Хостинг/домен</option>
-            <option value="tech_support">Тех сопровождение (legacy)</option>
-            <option value="web">Web (legacy)</option>
-            <option value="seo">SEO (legacy)</option>
-            <option value="ppc">PPC (legacy)</option>
-            <option value="mobile_app">Мобильное приложение (legacy)</option>
+            {allLinesSorted(layoutUi).map((l) => (
+              <option key={l.category_slug} value={l.category_slug}>
+                {l.label}
+              </option>
+            ))}
           </Select>
         </Field>
         <Field label="Услуга *">

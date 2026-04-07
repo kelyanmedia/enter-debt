@@ -8,15 +8,18 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import HTMLResponse
 from starlette.responses import JSONResponse
 
-from app.core.companies import normalize_company_slug
+from app.core.companies import COMPANY_SLUG_ORDER, normalize_company_slug
 from sqlalchemy import func
+from sqlalchemy.exc import OperationalError, ProgrammingError
 from sqlalchemy.orm import Session
 
 from app.db.database import (
     Base,
     get_db,
+    get_engine_for_slug,
     iter_company_engines,
     iter_company_sessionmakers,
+    iter_registered_company_slugs,
     is_registered_company_slug,
     log_company_database_binding,
     reset_company_context,
@@ -27,13 +30,16 @@ import app.models.telegram_join  # noqa: F401 — таблица telegram_join_r
 import app.models.feed_notification  # noqa: F401 — лента событий
 import app.models.ceo_metric_override  # noqa: F401 — ручные значения CEO dashboard
 from app.api.routes import auth, users, partners, payments, dashboard, notifications, archive, payment_months, telegram_join, feed_notifications, contract_requests, employee_tasks, employee_payment_records, finance_projects_cost, finance_cash_flow, trash
-from app.api.routes import commissions, subscription_items, access_entries
+from app.api.routes import commissions, subscription_items, access_entries, company_ui
 import app.models.commission  # noqa: F401
 import app.models.employee_task  # noqa: F401
 import app.models.subscription_item  # noqa: F401
 import app.models.employee_payment_record  # noqa: F401
 import app.models.access_entry  # noqa: F401
 import app.models.cash_flow  # noqa: F401 — ДДС
+import app.models.company_ui  # noqa: F401 — подписи разделов/линий по компании
+import app.models.ceo_dashboard_block  # noqa: F401 — блоки CEO Dashboard по компании
+import app.models.pl_manual_line  # noqa: F401 — ручные строки P&L по компании
 import app.models.available_funds_manual  # noqa: F401
 from app.core.config import settings
 from app.core.security import get_current_user, get_password_hash, normalize_email
@@ -184,6 +190,7 @@ app.include_router(users.router)
 app.include_router(partners.router)
 app.include_router(payments.router)
 app.include_router(dashboard.router)
+app.include_router(dashboard.router_dashboard_no_api_prefix)
 app.include_router(notifications.router)
 app.include_router(feed_notifications.router)
 app.include_router(archive.router)
@@ -193,10 +200,12 @@ app.include_router(contract_requests.router)
 app.include_router(employee_tasks.router)
 app.include_router(employee_payment_records.router)
 app.include_router(finance_projects_cost.router)
+app.include_router(finance_projects_cost.router_finance_no_api_prefix)
 app.include_router(finance_cash_flow.router)
 app.include_router(commissions.router)
 app.include_router(subscription_items.router)
 app.include_router(access_entries.router)
+app.include_router(company_ui.router)
 app.include_router(trash.router)
 
 
@@ -224,6 +233,7 @@ def startup():
         Base.metadata.create_all(bind=eng)
     _migrate()
     seed_initial_data()
+    _ensure_ceo_dashboard_defaults_all_companies()
     try:
         _scheduler = BackgroundScheduler(timezone=ZoneInfo("Asia/Tashkent"))
         _scheduler.add_job(
@@ -280,7 +290,7 @@ def shutdown_scheduler():
 def _migrate():
     """Idempotent column additions for existing deployments."""
     import logging
-    from sqlalchemy import text
+    from sqlalchemy import inspect, text
     log = logging.getLogger(__name__)
     migrations = [
         "ALTER TABLE users ADD COLUMN IF NOT EXISTS web_access BOOLEAN DEFAULT TRUE",
@@ -330,6 +340,7 @@ def _migrate():
         "ALTER TABLE users ADD COLUMN IF NOT EXISTS is_ad_budget_employee BOOLEAN NOT NULL DEFAULT FALSE",
         "ALTER TABLE users ADD COLUMN IF NOT EXISTS admin_telegram_notify_all BOOLEAN NOT NULL DEFAULT FALSE",
         "ALTER TABLE users ADD COLUMN IF NOT EXISTS admin_telegram_notify_manager_ids TEXT",
+        "ALTER TABLE users ADD COLUMN IF NOT EXISTS admin_accessible_company_slugs TEXT",
         "ALTER TABLE users ADD COLUMN IF NOT EXISTS can_enter_cash_flow BOOLEAN NOT NULL DEFAULT FALSE",
         # Commissions table
         """CREATE TABLE IF NOT EXISTS commissions (
@@ -437,6 +448,7 @@ def _migrate():
             label VARCHAR(300) NOT NULL,
             amount_uzs NUMERIC(15,2) NOT NULL DEFAULT 0,
             amount_usd NUMERIC(15,2) NOT NULL DEFAULT 0,
+            apply_fx_to_uzs BOOLEAN NOT NULL DEFAULT FALSE,
             payment_method VARCHAR(20) NOT NULL DEFAULT 'transfer',
             flow_category VARCHAR(64),
             recipient VARCHAR(120),
@@ -475,11 +487,92 @@ def _migrate():
         "ALTER TABLE payments ADD COLUMN IF NOT EXISTS hosting_prepaid_years INTEGER NOT NULL DEFAULT 0",
         """UPDATE payments SET hosting_renewal_anchor = deadline_date, hosting_prepaid_years = 0
            WHERE project_category = 'hosting_domain' AND hosting_renewal_anchor IS NULL AND deadline_date IS NOT NULL""",
+        # ── Multi-tenant: одна БД, колонка company_slug ─────────────────────────
+        "ALTER TABLE users ADD COLUMN IF NOT EXISTS company_slug VARCHAR(32) NOT NULL DEFAULT 'kelyanmedia'",
+        "ALTER TABLE partners ADD COLUMN IF NOT EXISTS company_slug VARCHAR(32) NOT NULL DEFAULT 'kelyanmedia'",
+        "ALTER TABLE payments ADD COLUMN IF NOT EXISTS company_slug VARCHAR(32) NOT NULL DEFAULT 'kelyanmedia'",
+        "UPDATE payments p SET company_slug = pr.company_slug FROM partners pr WHERE p.partner_id = pr.id",
+        "ALTER TABLE commissions ADD COLUMN IF NOT EXISTS company_slug VARCHAR(32) NOT NULL DEFAULT 'kelyanmedia'",
+        "UPDATE commissions c SET company_slug = u.company_slug FROM users u WHERE c.manager_id = u.id",
+        "ALTER TABLE employee_tasks ADD COLUMN IF NOT EXISTS company_slug VARCHAR(32) NOT NULL DEFAULT 'kelyanmedia'",
+        "UPDATE employee_tasks t SET company_slug = u.company_slug FROM users u WHERE t.user_id = u.id",
+        "ALTER TABLE employee_payment_records ADD COLUMN IF NOT EXISTS company_slug VARCHAR(32) NOT NULL DEFAULT 'kelyanmedia'",
+        "UPDATE employee_payment_records r SET company_slug = u.company_slug FROM users u WHERE r.user_id = u.id",
+        "ALTER TABLE cash_flow_template_lines ADD COLUMN IF NOT EXISTS company_slug VARCHAR(32) NOT NULL DEFAULT 'kelyanmedia'",
+        "ALTER TABLE cash_flow_entries ADD COLUMN IF NOT EXISTS company_slug VARCHAR(32) NOT NULL DEFAULT 'kelyanmedia'",
+        "ALTER TABLE ceo_metric_overrides ADD COLUMN IF NOT EXISTS company_slug VARCHAR(32) NOT NULL DEFAULT 'kelyanmedia'",
+        "ALTER TABLE feed_notifications ADD COLUMN IF NOT EXISTS company_slug VARCHAR(32) NOT NULL DEFAULT 'kelyanmedia'",
+        "ALTER TABLE telegram_join_requests ADD COLUMN IF NOT EXISTS company_slug VARCHAR(32) NOT NULL DEFAULT 'kelyanmedia'",
+        "ALTER TABLE subscription_items ADD COLUMN IF NOT EXISTS company_slug VARCHAR(32) NOT NULL DEFAULT 'kelyanmedia'",
+        "ALTER TABLE access_entries ADD COLUMN IF NOT EXISTS company_slug VARCHAR(32) NOT NULL DEFAULT 'kelyanmedia'",
+        "ALTER TABLE notification_logs ADD COLUMN IF NOT EXISTS company_slug VARCHAR(32) NOT NULL DEFAULT 'kelyanmedia'",
+        "UPDATE notification_logs n SET company_slug = p.company_slug FROM payments p WHERE n.payment_id = p.id",
+        "ALTER TABLE available_funds_manual ADD COLUMN IF NOT EXISTS company_slug VARCHAR(32) NOT NULL DEFAULT 'kelyanmedia'",
+        "ALTER TABLE available_funds_manual DROP CONSTRAINT IF EXISTS available_funds_manual_pkey",
+        "ALTER TABLE available_funds_manual ADD PRIMARY KEY (company_slug, period_month)",
+        "ALTER TABLE ceo_metric_overrides DROP CONSTRAINT IF EXISTS uq_ceo_metric_year",
+        "CREATE UNIQUE INDEX IF NOT EXISTS uq_ceo_metric_company_metric_year ON ceo_metric_overrides (company_slug, metric, year)",
+        "ALTER TABLE users DROP CONSTRAINT IF EXISTS users_email_key",
+        "DROP INDEX IF EXISTS ix_users_email",
+        "CREATE UNIQUE INDEX IF NOT EXISTS uq_users_email_company ON users (lower(email::text), company_slug)",
+        "DROP INDEX IF EXISTS uq_telegram_join_chat",
+        "ALTER TABLE telegram_join_requests DROP CONSTRAINT IF EXISTS telegram_join_requests_telegram_chat_id_key",
+        "CREATE UNIQUE INDEX IF NOT EXISTS uq_telegram_join_company_chat ON telegram_join_requests (company_slug, telegram_chat_id)",
+        """CREATE TABLE IF NOT EXISTS company_payments_segments (
+            id SERIAL PRIMARY KEY,
+            company_slug VARCHAR(32) NOT NULL,
+            segment_key VARCHAR(32) NOT NULL,
+            label VARCHAR(120) NOT NULL,
+            sort_order INTEGER NOT NULL DEFAULT 0,
+            is_visible BOOLEAN NOT NULL DEFAULT TRUE
+        )""",
+        "CREATE UNIQUE INDEX IF NOT EXISTS uq_company_payments_segment ON company_payments_segments (company_slug, segment_key)",
+        "CREATE INDEX IF NOT EXISTS ix_company_payments_segments_slug ON company_payments_segments (company_slug)",
+        """CREATE TABLE IF NOT EXISTS company_project_lines (
+            id SERIAL PRIMARY KEY,
+            company_slug VARCHAR(32) NOT NULL,
+            category_slug VARCHAR(32) NOT NULL,
+            label VARCHAR(120) NOT NULL,
+            sort_order INTEGER NOT NULL DEFAULT 0,
+            is_visible BOOLEAN NOT NULL DEFAULT TRUE
+        )""",
+        "CREATE UNIQUE INDEX IF NOT EXISTS uq_company_project_line ON company_project_lines (company_slug, category_slug)",
+        "CREATE INDEX IF NOT EXISTS ix_company_project_lines_slug ON company_project_lines (company_slug)",
+        """CREATE TABLE IF NOT EXISTS ceo_dashboard_blocks (
+            id SERIAL PRIMARY KEY,
+            company_slug VARCHAR(32) NOT NULL,
+            kind VARCHAR(32) NOT NULL,
+            pl_row_id VARCHAR(80),
+            title VARCHAR(200),
+            sort_order INTEGER NOT NULL DEFAULT 0
+        )""",
+        "CREATE INDEX IF NOT EXISTS ix_ceo_dashboard_blocks_company ON ceo_dashboard_blocks (company_slug)",
+        """CREATE TABLE IF NOT EXISTS pl_manual_lines (
+            id SERIAL PRIMARY KEY,
+            company_slug VARCHAR(32) NOT NULL,
+            section VARCHAR(32) NOT NULL,
+            label VARCHAR(200) NOT NULL,
+            sort_order INTEGER NOT NULL DEFAULT 0,
+            link_to_net_profit BOOLEAN NOT NULL DEFAULT FALSE
+        )""",
+        "CREATE INDEX IF NOT EXISTS ix_pl_manual_lines_company ON pl_manual_lines (company_slug)",
+        """CREATE TABLE IF NOT EXISTS pl_manual_month_cells (
+            id SERIAL PRIMARY KEY,
+            line_id INTEGER NOT NULL REFERENCES pl_manual_lines(id) ON DELETE CASCADE,
+            period_month VARCHAR(7) NOT NULL,
+            amount_uzs NUMERIC(15,2) NOT NULL DEFAULT 0,
+            amount_usd NUMERIC(15,2) NOT NULL DEFAULT 0
+        )""",
+        "CREATE UNIQUE INDEX IF NOT EXISTS uq_pl_manual_cell_line_month ON pl_manual_month_cells (line_id, period_month)",
+        "CREATE INDEX IF NOT EXISTS ix_pl_manual_month_cells_line ON pl_manual_month_cells (line_id)",
     ]
     for sql in migrations:
-        # Защита от случайного удаления данных
+        # Защита от случайного удаления данных (разрешены DROP CONSTRAINT / DROP INDEX для миграций схемы)
         su = sql.upper()
-        forbidden = any(kw in su for kw in ("DROP", "TRUNCATE", "ALTER TABLE USERS SET")) or "DELETE FROM" in su
+        safe_schema = "DROP CONSTRAINT" in su or "DROP INDEX" in su
+        forbidden = ("DELETE FROM" in su) or (
+            not safe_schema and any(kw in su for kw in ("DROP", "TRUNCATE", "ALTER TABLE USERS SET"))
+        )
         if forbidden:
             log.error(f"MIGRATION BLOCKED (destructive SQL): {sql[:80]}")
             continue
@@ -491,25 +584,100 @@ def _migrate():
             except Exception as e:
                 log.warning("Migration skipped [%s] (%s...): %s", _slug, sql[:60], e)
 
+    # SQLite не умеет ALTER TABLE ... ADD COLUMN IF NOT EXISTS, поэтому для новой
+    # ручной логики «чистой прибыли» добиваем колонку отдельно через inspector.
+    for _slug, eng in iter_company_engines():
+        try:
+            cols = {c["name"] for c in inspect(eng).get_columns("pl_manual_lines")}
+        except Exception:
+            continue
+        if "link_to_net_profit" in cols:
+            continue
+        try:
+            with eng.connect() as conn:
+                conn.execute(
+                    text(
+                        "ALTER TABLE pl_manual_lines "
+                        "ADD COLUMN link_to_net_profit BOOLEAN NOT NULL DEFAULT FALSE"
+                    )
+                )
+                conn.commit()
+        except Exception as e:
+            log.warning(
+                "Migration skipped [%s] (pl_manual_lines.link_to_net_profit): %s",
+                _slug,
+                e,
+            )
+
+    # Такой же добор для ДДС: старые строки не должны внезапно начать конвертироваться
+    # по курсу, поэтому по умолчанию флаг автоконвертации = FALSE.
+    for _slug, eng in iter_company_engines():
+        try:
+            cols = {c["name"] for c in inspect(eng).get_columns("cash_flow_entries")}
+        except Exception:
+            continue
+        if "apply_fx_to_uzs" in cols:
+            continue
+        try:
+            with eng.connect() as conn:
+                conn.execute(
+                    text(
+                        "ALTER TABLE cash_flow_entries "
+                        "ADD COLUMN apply_fx_to_uzs BOOLEAN NOT NULL DEFAULT FALSE"
+                    )
+                )
+                conn.commit()
+        except Exception as e:
+            log.warning(
+                "Migration skipped [%s] (cash_flow_entries.apply_fx_to_uzs): %s",
+                _slug,
+                e,
+            )
+
 
 _MASTER_ADMIN_EMAIL = "agasi@gmail.com"
 _MASTER_ADMIN_PASSWORD = "KM2026admin_controlpanel"
+
+
+def _ensure_ceo_dashboard_defaults_all_companies():
+    """Для каждой зарегистрированной компании: если блоков CEO ещё нет — создать четыре стандартных графика."""
+    from app.services.ceo_layout_defaults import ensure_ceo_layout_defaults
+
+    for slug in iter_registered_company_slugs():
+        eng = get_engine_for_slug(slug)
+        tok = set_company_context(slug)
+        db = Session(bind=eng)
+        try:
+            ensure_ceo_layout_defaults(db, slug)
+        except Exception:
+            log.exception("CEO dashboard default blocks [%s]", slug)
+        finally:
+            db.close()
+            reset_company_context(tok)
 
 
 def seed_initial_data():
     from app.models.user import User as UserModel
 
     email_key = normalize_email(_MASTER_ADMIN_EMAIL)
+    # Глобальный UNIQUE на users.telegram_chat_id: один chat_id — только у одной строки в БД.
+    primary_slug = COMPANY_SLUG_ORDER[0]
 
-    for _slug, eng in iter_company_engines():
+    for slug in iter_registered_company_slugs():
+        eng = get_engine_for_slug(slug)
+        tok = set_company_context(slug)
         db = Session(bind=eng)
         try:
             from app.services.cash_flow_seed import seed_cash_flow_templates
+            from app.services.pl_manual_defaults import ensure_pl_manual_defaults
 
             seed_cash_flow_templates(db)
+            ensure_pl_manual_defaults(db, slug)
 
             def _assign_admin_telegram(target: UserModel) -> None:
                 if not settings.ADMIN_TELEGRAM_CHAT_ID:
+                    return
+                if slug != primary_slug:
                     return
                 dup = (
                     db.query(UserModel)
@@ -525,17 +693,17 @@ def seed_initial_data():
 
             master = (
                 db.query(UserModel)
-                .filter(func.lower(UserModel.email) == email_key)
+                .filter(
+                    func.lower(UserModel.email) == email_key,
+                    UserModel.company_slug == slug,
+                )
                 .first()
             )
             if master:
-                master.hashed_password = get_password_hash(_MASTER_ADMIN_PASSWORD)
-                master.role = "admin"
-                master.is_active = True
-                master.web_access = True
-                _assign_admin_telegram(master)
-                db.commit()
-            elif db.query(UserModel).first() is None:
+                # Прод/стейдж: не перетираем существующего пользователя при каждом рестарте API.
+                # Иначе деплой неожиданно сбрасывает пароль/роль и меняет данные в боевой БД.
+                pass
+            elif db.query(UserModel).filter(UserModel.company_slug == slug).first() is None:
                 users_data = [
                     {
                         "name": "Администратор",
@@ -549,7 +717,11 @@ def seed_initial_data():
                     {"name": "Бухгалтерия", "email": "buh@entergroup.uz", "password": "buh123", "role": "accountant"},
                 ]
                 for u in users_data:
+                    tid = u.get("telegram_chat_id")
+                    if tid is not None and slug != primary_slug:
+                        tid = None
                     db_user = UserModel(
+                        company_slug=slug,
                         name=u["name"],
                         email=normalize_email(u["email"]),
                         hashed_password=get_password_hash(u["password"]),
@@ -557,29 +729,25 @@ def seed_initial_data():
                         is_active=True,
                         web_access=True,
                         see_all_partners=False,
-                        telegram_chat_id=u.get("telegram_chat_id"),
+                        telegram_chat_id=tid,
                     )
                     db.add(db_user)
                 db.commit()
             else:
-                # В БД уже есть пользователи, но нет строки с мастер-email (раньше первого admin переписывали
-                # на agasi@gmail.com — при уже существующем менеджере с этим email commit падал, вход ломался).
-                extra = UserModel(
-                    name="Администратор",
-                    email=email_key,
-                    hashed_password=get_password_hash(_MASTER_ADMIN_PASSWORD),
-                    role="admin",
-                    is_active=True,
-                    web_access=True,
-                    see_all_partners=False,
-                    telegram_chat_id=None,
-                )
-                db.add(extra)
-                db.flush()
-                _assign_admin_telegram(extra)
-                db.commit()
+                # В существующей БД не создаём новых seed-пользователей автоматически:
+                # деплой не должен менять пользователей/доступы без явной команды.
+                pass
+        except (OperationalError, ProgrammingError) as e:
+            db.rollback()
+            log.warning(
+                "Сид для company_slug=%s пропущен: схема БД не совпадает с текущим кодом (%s). "
+                "Для локального SQLite удалите backend/data_*.db и перезапустите uvicorn, либо подключите PostgreSQL по README.",
+                slug,
+                e,
+            )
         finally:
             db.close()
+            reset_company_context(tok)
 
 
 @app.get("/health")

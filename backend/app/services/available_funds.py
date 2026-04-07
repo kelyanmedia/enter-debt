@@ -8,6 +8,7 @@ from typing import Optional, Tuple
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
+from app.db.database import get_request_company
 from app.models.available_funds_manual import AvailableFundsManual
 from app.models.partner import Partner
 from app.models.payment import Payment, PaymentMonth
@@ -35,7 +36,9 @@ def _sums_from_payments(db: Session, year: int, month: int) -> Tuple[Decimal, De
         .filter(
             Payment.is_archived == False,
             Payment.trashed_at.is_(None),
+            Payment.company_slug == get_request_company(),
             Partner.trashed_at.is_(None),
+            Partner.company_slug == get_request_company(),
             PaymentMonth.status == "paid",
             PaymentMonth.paid_at.isnot(None),
             func.date(PaymentMonth.paid_at) >= start_date,
@@ -55,7 +58,9 @@ def _sums_from_payments(db: Session, year: int, month: int) -> Tuple[Decimal, De
         .filter(
             Payment.is_archived == False,
             Payment.trashed_at.is_(None),
+            Payment.company_slug == get_request_company(),
             Partner.trashed_at.is_(None),
+            Partner.company_slug == get_request_company(),
             Payment.status == "paid",
             Payment.paid_at.isnot(None),
             ~Payment.id.in_(has_months_sq),
@@ -76,7 +81,14 @@ def available_funds_for_period(db: Session, period_month: str) -> AvailableFunds
     y, mo = period_month.split("-")
     yi, mi = int(y), int(mo)
     base_a, base_c = _sums_from_payments(db, yi, mi)
-    row = db.query(AvailableFundsManual).filter(AvailableFundsManual.period_month == period_month).first()
+    row = (
+        db.query(AvailableFundsManual)
+        .filter(
+            AvailableFundsManual.period_month == period_month,
+            AvailableFundsManual.company_slug == get_request_company(),
+        )
+        .first()
+    )
     dep = Decimal(str(row.deposits_uzs)) if row else Decimal("0")
     adj_a = Decimal(str(row.adjust_account_uzs)) if row else Decimal("0")
     adj_c = Decimal(str(row.adjust_cards_uzs)) if row else Decimal("0")

@@ -6,6 +6,11 @@ loadEnvConfig(__dirname)
 
 const nextConfig = {
   reactStrictMode: false,
+  /** Иначе PackFileCache в dev ломается на ENOENT `.next/server` после 1-го запроса → все следующие GET дают 404. */
+  webpack: (config, { dev }) => {
+    if (dev) config.cache = false
+    return config
+  },
   allowedDevOrigins: [
     'http://localhost:3000',
     'http://127.0.0.1:3000',
@@ -20,14 +25,11 @@ const nextConfig = {
   // Без этого после rm -rf .next браузер запрашивает старые URL → 404 → белый экран.
   async headers() {
     if (process.env.NODE_ENV !== 'development') return []
+    // Только чанки: глобальный `/(.*)` в dev давал странные 404 на `/` и `/login` после компиляции `/_error`.
     return [
       {
         source: '/_next/static/(.*)',
         headers: [{ key: 'Cache-Control', value: 'no-store' }],
-      },
-      {
-        source: '/(.*)',
-        headers: [{ key: 'Cache-Control', value: 'no-store, must-revalidate' }],
       },
     ]
   },
@@ -43,6 +45,19 @@ const nextConfig = {
       {
         source: '/api/:path*',
         destination: `${backendUrl}/api/:path*`,
+      },
+      // Те же ручки, что на FastAPI без префикса /api (nginx часто проксирует сюда после strip).
+      {
+        source: '/finance/:path*',
+        destination: `${backendUrl}/finance/:path*`,
+      },
+      {
+        source: '/dashboard/:path*',
+        destination: `${backendUrl}/dashboard/:path*`,
+      },
+      {
+        source: '/auth/:path*',
+        destination: `${backendUrl}/auth/:path*`,
       },
     ]
   },

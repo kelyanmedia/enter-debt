@@ -8,6 +8,7 @@ class Partner(Base):
     __tablename__ = "partners"
 
     id = Column(Integer, primary_key=True, index=True)
+    company_slug = Column(String(32), nullable=False, index=True, default="kelyanmedia")
     name = Column(String(200), nullable=False, index=True)
     contact_person = Column(String(200), nullable=True)
     phone = Column(String(50), nullable=True)

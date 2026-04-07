@@ -10,7 +10,7 @@ from sqlalchemy.orm import Session, joinedload
 
 from app.core.access import filter_payments_query
 from app.core.security import require_admin_or_financier, require_cash_flow_dds_input
-from app.db.database import get_db
+from app.db.database import get_db, get_request_company
 from sqlalchemy import func
 
 from app.finance.cash_flow_catalog import (
@@ -72,6 +72,18 @@ router = APIRouter(prefix="/api/finance", tags=["finance"])
 _YM = re.compile(r"^\d{4}-\d{2}$")
 
 
+def _pl_fx_rate_for_period(db: Session, period_month: str) -> Decimal:
+    row = (
+        db.query(AvailableFundsManual)
+        .filter(
+            AvailableFundsManual.period_month == period_month,
+            AvailableFundsManual.company_slug == get_request_company(),
+        )
+        .first()
+    )
+    return Decimal(str(row.usd_to_uzs_rate or 0)) if row else Decimal("0")
+
+
 @router.get("/cash-flow/meta", response_model=CashFlowMetaOut)
 def cash_flow_meta(
     db: Session = Depends(get_db),
@@ -79,6 +91,7 @@ def cash_flow_meta(
 ):
     distinct = (
         db.query(CashFlowTemplateLine.template_group)
+        .filter(CashFlowTemplateLine.company_slug == get_request_company())
         .distinct()
         .order_by(CashFlowTemplateLine.template_group)
         .all()
@@ -102,6 +115,20 @@ def cash_flow_meta(
     )
 
 
+@router.get("/cash-flow/fx-rate")
+def cash_flow_fx_rate(
+    period_month: str = Query(..., description="YYYY-MM"),
+    db: Session = Depends(get_db),
+    _user: User = Depends(require_cash_flow_dds_input),
+):
+    if not _YM.match(period_month):
+        raise HTTPException(status_code=400, detail="period_month: формат YYYY-MM")
+    return {
+        "period_month": period_month,
+        "usd_to_uzs_rate": _pl_fx_rate_for_period(db, period_month),
+    }
+
+
 @router.get("/cash-flow/templates", response_model=List[CashFlowTemplateLineOut])
 def list_templates(
     db: Session = Depends(get_db),
@@ -109,6 +136,7 @@ def list_templates(
 ):
     rows = (
         db.query(CashFlowTemplateLine)
+        .filter(CashFlowTemplateLine.company_slug == get_request_company())
         .order_by(CashFlowTemplateLine.template_group, CashFlowTemplateLine.sort_order, CashFlowTemplateLine.id)
         .all()
     )
@@ -128,7 +156,10 @@ def create_template_line(
         _check_income_category(body.flow_category)
     mx = (
         db.query(func.max(CashFlowTemplateLine.sort_order))
-        .filter(CashFlowTemplateLine.template_group == tg)
+        .filter(
+            CashFlowTemplateLine.template_group == tg,
+            CashFlowTemplateLine.company_slug == get_request_company(),
+        )
         .scalar()
     )
     so = (
@@ -137,6 +168,7 @@ def create_template_line(
         else (int(mx) if mx is not None else 0) + 1
     )
     row = CashFlowTemplateLine(
+        company_slug=get_request_company(),
         template_group=tg,
         sort_order=so,
         label=body.label.strip(),
@@ -159,7 +191,14 @@ def update_template_line(
     db: Session = Depends(get_db),
     _admin: User = Depends(require_admin_or_financier),
 ):
-    row = db.query(CashFlowTemplateLine).filter(CashFlowTemplateLine.id == template_id).first()
+    row = (
+        db.query(CashFlowTemplateLine)
+        .filter(
+            CashFlowTemplateLine.id == template_id,
+            CashFlowTemplateLine.company_slug == get_request_company(),
+        )
+        .first()
+    )
     if not row:
         raise HTTPException(status_code=404, detail="Строка шаблона не найдена")
     data = body.model_dump(exclude_unset=True)
@@ -189,7 +228,14 @@ def delete_template_line(
     db: Session = Depends(get_db),
     _admin: User = Depends(require_admin_or_financier),
 ):
-    row = db.query(CashFlowTemplateLine).filter(CashFlowTemplateLine.id == template_id).first()
+    row = (
+        db.query(CashFlowTemplateLine)
+        .filter(
+            CashFlowTemplateLine.id == template_id,
+            CashFlowTemplateLine.company_slug == get_request_company(),
+        )
+        .first()
+    )
     if not row:
         raise HTTPException(status_code=404, detail="Строка шаблона не найдена")
     db.delete(row)
@@ -203,7 +249,10 @@ def delete_template_group(
     db: Session = Depends(get_db),
     _admin: User = Depends(require_admin_or_financier),
 ):
-    q = db.query(CashFlowTemplateLine).filter(CashFlowTemplateLine.template_group == template_group)
+    q = db.query(CashFlowTemplateLine).filter(
+        CashFlowTemplateLine.template_group == template_group,
+        CashFlowTemplateLine.company_slug == get_request_company(),
+    )
     n = q.delete(synchronize_session=False)
     db.commit()
     return {"ok": True, "deleted": n}
@@ -219,7 +268,10 @@ def list_entries(
         raise HTTPException(status_code=400, detail="period_month: формат YYYY-MM")
     return (
         db.query(CashFlowEntry)
-        .filter(CashFlowEntry.period_month == period_month)
+        .filter(
+            CashFlowEntry.period_month == period_month,
+            CashFlowEntry.company_slug == get_request_company(),
+        )
         .order_by(CashFlowEntry.direction.desc(), CashFlowEntry.id)
         .all()
     )
@@ -256,7 +308,10 @@ def apply_template(
     for g in body.template_groups:
         n = (
             db.query(CashFlowTemplateLine)
-            .filter(CashFlowTemplateLine.template_group == g)
+            .filter(
+                CashFlowTemplateLine.template_group == g,
+                CashFlowTemplateLine.company_slug == get_request_company(),
+            )
             .count()
         )
         if n == 0:
@@ -269,18 +324,23 @@ def apply_template(
 
     tpls = (
         db.query(CashFlowTemplateLine)
-        .filter(CashFlowTemplateLine.template_group.in_(body.template_groups))
+        .filter(
+            CashFlowTemplateLine.template_group.in_(body.template_groups),
+            CashFlowTemplateLine.company_slug == get_request_company(),
+        )
         .order_by(CashFlowTemplateLine.template_group, CashFlowTemplateLine.sort_order)
         .all()
     )
     created: List[CashFlowEntry] = []
     for t in tpls:
         row = CashFlowEntry(
+            company_slug=get_request_company(),
             period_month=body.period_month,
             direction=t.direction,
             label=t.label,
             amount_uzs=t.default_amount_uzs,
             amount_usd=t.default_amount_usd,
+            apply_fx_to_uzs=False,
             payment_method=t.payment_method,
             flow_category=t.flow_category,
             recipient=None,
@@ -308,7 +368,14 @@ def create_entry(
     if current_user.role == "administration":
         pay_id = None
     if pay_id is not None:
-        p = db.query(Payment).filter(Payment.id == pay_id).first()
+        p = (
+            db.query(Payment)
+            .filter(
+                Payment.id == pay_id,
+                Payment.company_slug == get_request_company(),
+            )
+            .first()
+        )
         if not p or p.trashed_at is not None:
             raise HTTPException(status_code=404, detail="Проект не найден")
     if body.direction == "expense":
@@ -324,12 +391,14 @@ def create_entry(
             raise HTTPException(status_code=400, detail="Укажите месяц учёта или дату операции")
         entry_date_val = None
     row = CashFlowEntry(
+        company_slug=get_request_company(),
         period_month=period_month,
         entry_date=entry_date_val,
         direction=body.direction,
         label=body.label.strip(),
         amount_uzs=body.amount_uzs,
         amount_usd=body.amount_usd,
+        apply_fx_to_uzs=bool(body.apply_fx_to_uzs),
         payment_method=body.payment_method,
         flow_category=(body.flow_category or "").strip() or None,
         recipient=(body.recipient or "").strip() or None,
@@ -350,7 +419,14 @@ def update_entry(
     db: Session = Depends(get_db),
     _admin: User = Depends(require_admin_or_financier),
 ):
-    row = db.query(CashFlowEntry).filter(CashFlowEntry.id == entry_id).first()
+    row = (
+        db.query(CashFlowEntry)
+        .filter(
+            CashFlowEntry.id == entry_id,
+            CashFlowEntry.company_slug == get_request_company(),
+        )
+        .first()
+    )
     if not row:
         raise HTTPException(status_code=404, detail="Строка не найдена")
     data = body.model_dump(exclude_unset=True)
@@ -360,7 +436,14 @@ def update_entry(
             data["payment_id"] = None
             pid = None
         if pid is not None:
-            p = db.query(Payment).filter(Payment.id == pid).first()
+            p = (
+                db.query(Payment)
+                .filter(
+                    Payment.id == pid,
+                    Payment.company_slug == get_request_company(),
+                )
+                .first()
+            )
             if not p or p.trashed_at is not None:
                 raise HTTPException(status_code=404, detail="Проект не найден")
     for k, v in data.items():
@@ -380,7 +463,14 @@ def delete_entry(
     db: Session = Depends(get_db),
     _admin: User = Depends(require_admin_or_financier),
 ):
-    row = db.query(CashFlowEntry).filter(CashFlowEntry.id == entry_id).first()
+    row = (
+        db.query(CashFlowEntry)
+        .filter(
+            CashFlowEntry.id == entry_id,
+            CashFlowEntry.company_slug == get_request_company(),
+        )
+        .first()
+    )
     if not row:
         raise HTTPException(status_code=404, detail="Строка не найдена")
     db.delete(row)
@@ -405,9 +495,17 @@ def put_available_funds_deposits(
     db: Session = Depends(get_db),
     _admin: User = Depends(require_admin_or_financier),
 ):
-    row = db.query(AvailableFundsManual).filter(AvailableFundsManual.period_month == body.period_month).first()
+    row = (
+        db.query(AvailableFundsManual)
+        .filter(
+            AvailableFundsManual.period_month == body.period_month,
+            AvailableFundsManual.company_slug == get_request_company(),
+        )
+        .first()
+    )
     if not row:
         row = AvailableFundsManual(
+            company_slug=get_request_company(),
             period_month=body.period_month,
             deposits_uzs=body.deposits_uzs,
             adjust_account_uzs=body.adjust_account_uzs,

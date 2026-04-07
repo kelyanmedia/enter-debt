@@ -4,7 +4,7 @@ from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session, joinedload
 from sqlalchemy import func, case
 from typing import List, Optional
-from app.db.database import get_db
+from app.db.database import get_db, get_request_company
 from app.models.partner import Partner
 from app.models.payment import Payment
 from app.schemas.schemas import PartnerOut, PartnerCreate, PartnerUpdate
@@ -23,6 +23,7 @@ def enrich_partner(partner: Partner, db: Session) -> PartnerOut:
         Payment.partner_id == partner.id,
         Payment.is_archived == False,
         Payment.trashed_at.is_(None),
+        Payment.company_slug == get_request_company(),
     ).first()
     out.open_payments_count = counts.total or 0
     out.overdue_count = int(counts.overdue or 0)
@@ -55,6 +56,7 @@ def get_partner(partner_id: int, db: Session = Depends(get_db), current_user=Dep
         Partner.id == partner_id,
         Partner.is_deleted == False,
         Partner.trashed_at.is_(None),
+        Partner.company_slug == get_request_company(),
     ).first()
     if not partner:
         raise HTTPException(status_code=404, detail="Partner not found")
@@ -69,7 +71,7 @@ def create_partner(data: PartnerCreate, db: Session = Depends(get_db), current_u
         payload["manager_id"] = current_user.id
     if current_user.role == "administration":
         assert_manager_assignable_by_administration(db, current_user, payload.get("manager_id"))
-    partner = Partner(**payload)
+    partner = Partner(**payload, company_slug=get_request_company())
     db.add(partner)
     db.commit()
     db.refresh(partner)
@@ -89,6 +91,7 @@ def update_partner(
         Partner.id == partner_id,
         Partner.is_deleted == False,
         Partner.trashed_at.is_(None),
+        Partner.company_slug == get_request_company(),
     ).first()
     if not partner:
         raise HTTPException(status_code=404, detail="Partner not found")

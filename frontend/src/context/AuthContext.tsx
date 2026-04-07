@@ -1,5 +1,6 @@
-import { createContext, useCallback, useContext, useEffect, useState, ReactNode } from 'react'
+import { createContext, useCallback, useContext, useEffect, useMemo, useState, ReactNode } from 'react'
 import { useRouter } from 'next/router'
+import axios from 'axios'
 import api from '@/lib/api'
 import {
   clearTokenForSlug,
@@ -27,6 +28,8 @@ interface User {
   payment_details_updated_at?: string | null
   /** Только сотрудник: переключение компаний в кабинете (иначе закреплена компания входа). */
   multi_company_access?: boolean
+  /** Только админ: какие организации в переключателе; undefined/null = все (как раньше). */
+  admin_accessible_company_slugs?: string[] | null
   /** Только сотрудник: рекламный бюджет клиента — в P&L учитывается только доля «услуга». */
   is_ad_budget_employee?: boolean
 }
@@ -39,8 +42,13 @@ export interface CompanyOption {
 interface AuthCtx {
   user: User | null
   loading: boolean
+  /** После F5: токен есть, но /auth/me не ответил (сеть/таймаут) — не сбрасываем сессию. */
+  authBootstrapFailed: boolean
+  retryAuthBootstrap: () => void
   companySlug: string
   companies: CompanyOption[]
+  /** Список для переключателя (у админа может быть уже полного списка). */
+  workspaceCompanies: CompanyOption[]
   login: (email: string, password: string, remember: boolean) => Promise<User>
   logout: () => void
   refreshUser: () => Promise<void>
@@ -59,8 +67,43 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const router = useRouter()
   const [user, setUser] = useState<User | null>(null)
   const [loading, setLoading] = useState(true)
+  const [authBootstrapFailed, setAuthBootstrapFailed] = useState(false)
   const [companySlug, setCompanySlugState] = useState(DEFAULT_COMPANY_SLUG)
   const [companies, setCompanies] = useState<CompanyOption[]>(FALLBACK_COMPANIES)
+
+  const workspaceCompanies = useMemo(() => {
+    if (!user || user.role !== 'admin') return companies
+    const slugs = user.admin_accessible_company_slugs
+    if (slugs == null || slugs.length === 0) return companies
+    return companies.filter((c) => slugs.includes(c.slug))
+  }, [companies, user])
+
+  const applyMeError = useCallback((err: unknown, slug: string) => {
+    if (axios.isAxiosError(err) && err.response?.status === 401) {
+      clearTokenForSlug(slug)
+      setAuthBootstrapFailed(false)
+      return
+    }
+    setAuthBootstrapFailed(true)
+  }, [])
+
+  const retryAuthBootstrap = useCallback(() => {
+    const slug = getCompanySlug()
+    if (!getTokenForSlug(slug)) {
+      setAuthBootstrapFailed(false)
+      return
+    }
+    setLoading(true)
+    setAuthBootstrapFailed(false)
+    api
+      .get<User>('auth/me')
+      .then((r) => {
+        setUser(r.data)
+        setAuthBootstrapFailed(false)
+      })
+      .catch((err) => applyMeError(err, slug))
+      .finally(() => setLoading(false))
+  }, [applyMeError])
 
   useEffect(() => {
     migrateLegacyToken()
@@ -77,10 +120,13 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     }
     api
       .get<User>('auth/me')
-      .then((r) => setUser(r.data))
-      .catch(() => clearTokenForSlug(slug))
+      .then((r) => {
+        setUser(r.data)
+        setAuthBootstrapFailed(false)
+      })
+      .catch((err) => applyMeError(err, slug))
       .finally(() => setLoading(false))
-  }, [])
+  }, [applyMeError])
 
   const login = async (email: string, password: string, remember: boolean) => {
     const emailKey = email.trim().toLowerCase()
@@ -97,6 +143,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     }
     const me = await api.get<User>('auth/me')
     setUser(me.data)
+    setAuthBootstrapFailed(false)
     setCompanySlugState(slug)
     return me.data
   }
@@ -122,6 +169,14 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     async (slug: string) => {
       if (!slug || slug === getCompanySlug()) return
       if (user?.role === 'employee' && user.multi_company_access !== true) return
+      if (
+        user?.role === 'admin' &&
+        user.admin_accessible_company_slugs != null &&
+        user.admin_accessible_company_slugs.length > 0 &&
+        !user.admin_accessible_company_slugs.includes(slug)
+      ) {
+        return
+      }
       persistCompanySlug(slug)
       setCompanySlugState(slug)
       const tok = getTokenForSlug(slug)
@@ -150,7 +205,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         setLoading(false)
       }
     },
-    [router, user?.role, user?.multi_company_access]
+    [router, user?.role, user?.multi_company_access, user?.admin_accessible_company_slugs]
   )
 
   return (
@@ -158,8 +213,11 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       value={{
         user,
         loading,
+        authBootstrapFailed,
+        retryAuthBootstrap,
         companySlug,
         companies,
+        workspaceCompanies,
         login,
         logout,
         refreshUser,

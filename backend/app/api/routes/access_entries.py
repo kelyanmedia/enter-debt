@@ -5,7 +5,7 @@ from starlette.responses import Response
 from sqlalchemy.orm import Session
 
 from app.core.security import get_current_user, require_admin
-from app.db.database import get_db
+from app.db.database import get_db, get_request_company
 from app.models.access_entry import AccessEntry
 from app.models.user import User
 from app.schemas.schemas import AccessEntryCreate, AccessEntryOut, AccessEntryUpdate
@@ -51,6 +51,7 @@ def create_access_entry(
     if data.category not in VALID_CATEGORIES:
         raise HTTPException(status_code=400, detail="Категория: email | telegram | device | service")
     row = AccessEntry(
+        company_slug=get_request_company(),
         employee_name=data.employee_name.strip(),
         category=data.category,
         title=data.title.strip(),
@@ -80,7 +81,14 @@ def update_access_entry(
     db: Session = Depends(get_db),
     _: User = Depends(require_admin),
 ):
-    row = db.query(AccessEntry).filter(AccessEntry.id == entry_id).first()
+    row = (
+        db.query(AccessEntry)
+        .filter(
+            AccessEntry.id == entry_id,
+            AccessEntry.company_slug == get_request_company(),
+        )
+        .first()
+    )
     if not row:
         raise HTTPException(status_code=404, detail="Запись не найдена")
     upd = data.model_dump(exclude_unset=True)
@@ -116,7 +124,14 @@ def delete_access_entry(
     db: Session = Depends(get_db),
     _: User = Depends(require_admin),
 ):
-    row = db.query(AccessEntry).filter(AccessEntry.id == entry_id).first()
+    row = (
+        db.query(AccessEntry)
+        .filter(
+            AccessEntry.id == entry_id,
+            AccessEntry.company_slug == get_request_company(),
+        )
+        .first()
+    )
     if not row:
         raise HTTPException(status_code=404, detail="Запись не найдена")
     db.delete(row)

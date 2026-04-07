@@ -5,7 +5,7 @@ from fastapi import APIRouter, Depends, HTTPException, status
 from fastapi.security import OAuth2PasswordRequestForm
 from pydantic import BaseModel
 from sqlalchemy.orm import Session
-from app.db.database import get_db
+from app.db.database import get_db, get_request_company
 from app.models.user import User
 from sqlalchemy import func
 import httpx
@@ -48,7 +48,14 @@ class LoginRequest(BaseModel):
 def authenticate_user(email: str, password: str, db: Session):
     email_key = normalize_email(email)
     pwd = (password or "").strip()
-    user = db.query(User).filter(func.lower(User.email) == email_key).first()
+    user = (
+        db.query(User)
+        .filter(
+            func.lower(User.email) == email_key,
+            User.company_slug == get_request_company(),
+        )
+        .first()
+    )
     if not user:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
@@ -119,7 +126,11 @@ def post_me_telegram_ping(
     """
     Тестовое сообщение в Telegram текущего пользователя — проверка, что пуши доходят.
     """
-    user = db.query(User).filter(User.id == current_user.id).first()
+    user = (
+        db.query(User)
+        .filter(User.id == current_user.id, User.company_slug == get_request_company())
+        .first()
+    )
     if not user:
         raise HTTPException(status_code=404, detail="User not found")
     if not user.telegram_chat_id:
@@ -158,7 +169,11 @@ def patch_me(
 ):
     """Свой email, пароль и (для сотрудника) реквизиты. Остальные роли — /api/users у админа."""
     pwd = (data.current_password or "").strip()
-    user = db.query(User).filter(User.id == current_user.id).first()
+    user = (
+        db.query(User)
+        .filter(User.id == current_user.id, User.company_slug == get_request_company())
+        .first()
+    )
     if not user:
         raise HTTPException(status_code=404, detail="User not found")
     if not verify_password(pwd, user.hashed_password):
@@ -169,7 +184,15 @@ def patch_me(
     email_norm = normalize_email(str(data.email))
     changed = False
     if email_norm != user.email:
-        if db.query(User).filter(func.lower(User.email) == email_norm, User.id != user.id).first():
+        if (
+            db.query(User)
+            .filter(
+                func.lower(User.email) == email_norm,
+                User.id != user.id,
+                User.company_slug == get_request_company(),
+            )
+            .first()
+        ):
             raise HTTPException(status_code=400, detail="Email уже занят")
         user.email = email_norm
         changed = True

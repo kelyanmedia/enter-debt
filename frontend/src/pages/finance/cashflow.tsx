@@ -47,6 +47,7 @@ interface CFEntry {
   label: string
   amount_uzs: string
   amount_usd: string
+  apply_fx_to_uzs?: boolean
   payment_method: string
   flow_category?: string | null
   recipient?: string | null
@@ -70,6 +71,25 @@ interface TemplateLine {
   flow_category: string
   payment_method: string
   direction: 'income' | 'expense'
+}
+
+function parseMoneyRaw(value: string | number | null | undefined): number {
+  if (value == null || value === '') return 0
+  const normalized = String(value).replace(/\s/g, '').replace(',', '.')
+  const n = Number(normalized)
+  return Number.isFinite(n) ? n : 0
+}
+
+function effectiveUzsAmount(
+  amountUzs: string | number,
+  amountUsd: string | number,
+  usdToUzsRate: number,
+  applyFxToUzs: boolean,
+): number {
+  const uzs = parseMoneyRaw(amountUzs)
+  const usd = parseMoneyRaw(amountUsd)
+  if (!applyFxToUzs || usd <= 0 || usdToUzsRate <= 0) return uzs
+  return uzs + usd * usdToUzsRate
 }
 
 const DEFAULT_GROUP_LABELS: Record<string, string> = {
@@ -224,6 +244,7 @@ export default function FinanceCashflowPage() {
     label: '',
     amount_uzs: '',
     amount_usd: '',
+    apply_fx_to_uzs: false,
     payment_method: 'transfer',
     flow_category: '',
     recipient: '',
@@ -278,6 +299,16 @@ export default function FinanceCashflowPage() {
         : '0'
     setFxRateDraft(rx)
   }, [availableFunds, ym])
+
+  const currentPlFxRate = useMemo(
+    () => parseMoneyRaw(availableFunds?.usd_to_uzs_rate ?? 0),
+    [availableFunds?.usd_to_uzs_rate],
+  )
+
+  const currentUsdPreviewUzs = useMemo(
+    () => effectiveUzsAmount(0, form.amount_usd, currentPlFxRate, true),
+    [form.amount_usd, currentPlFxRate],
+  )
 
   const loadMeta = useCallback(() => {
     api.get<Meta>('finance/cash-flow/meta').then((r) => setMeta(r.data))
@@ -405,7 +436,14 @@ export default function FinanceCashflowPage() {
   const expenseRows = useMemo(() => entries.filter((e) => e.direction === 'expense'), [entries])
 
   const sumCol = (rows: CFEntry[], cur: 'uzs' | 'usd') =>
-    rows.reduce((a, r) => a + (Number(cur === 'uzs' ? r.amount_uzs : r.amount_usd) || 0), 0)
+    rows.reduce(
+      (a, r) =>
+        a +
+        (cur === 'uzs'
+          ? effectiveUzsAmount(r.amount_uzs, r.amount_usd, currentPlFxRate, Boolean(r.apply_fx_to_uzs))
+          : parseMoneyRaw(r.amount_usd)),
+      0,
+    )
 
   const applyTemplate = async (groups: string[]) => {
     setBusy(true)
@@ -537,6 +575,7 @@ export default function FinanceCashflowPage() {
       label: '',
       amount_uzs: '',
       amount_usd: '',
+      apply_fx_to_uzs: false,
       payment_method: 'transfer',
       flow_category: dir === 'expense' ? 'other' : '',
       recipient: '',
@@ -561,6 +600,7 @@ export default function FinanceCashflowPage() {
         label: form.label.trim(),
         amount_uzs: uzs,
         amount_usd: usd,
+        apply_fx_to_uzs: Boolean(form.apply_fx_to_uzs),
         payment_method: form.payment_method,
         flow_category: form.flow_category.trim().toLowerCase() || null,
         recipient: form.recipient.trim() || null,
@@ -589,6 +629,7 @@ export default function FinanceCashflowPage() {
         label: form.label.trim(),
         amount_uzs: uzs,
         amount_usd: usd,
+        apply_fx_to_uzs: Boolean(form.apply_fx_to_uzs),
         payment_method: form.payment_method,
         notes: form.notes.trim() || null,
       }
@@ -616,6 +657,7 @@ export default function FinanceCashflowPage() {
       label: r.label,
       amount_uzs: String(r.amount_uzs ?? ''),
       amount_usd: String(r.amount_usd ?? ''),
+      apply_fx_to_uzs: Boolean(r.apply_fx_to_uzs),
       payment_method: r.payment_method,
       flow_category: r.flow_category || (r.direction === 'expense' ? 'other' : ''),
       recipient: r.recipient || '',
@@ -1050,7 +1092,9 @@ export default function FinanceCashflowPage() {
                         whiteSpace: 'nowrap',
                       }}
                     >
-                      {formatMoneyNumber(Number(r.amount_uzs))} сум
+                      {formatMoneyNumber(
+                        effectiveUzsAmount(r.amount_uzs, r.amount_usd, currentPlFxRate, Boolean(r.apply_fx_to_uzs)),
+                      )} сум
                       {Number(r.amount_usd) > 0 && ` · $${formatMoneyNumber(Number(r.amount_usd))}`}
                     </div>
                     <div
@@ -1200,7 +1244,9 @@ export default function FinanceCashflowPage() {
                         whiteSpace: 'nowrap',
                       }}
                     >
-                      {formatMoneyNumber(Number(r.amount_uzs))} сум
+                      {formatMoneyNumber(
+                        effectiveUzsAmount(r.amount_uzs, r.amount_usd, currentPlFxRate, Boolean(r.apply_fx_to_uzs)),
+                      )} сум
                       {Number(r.amount_usd) > 0 && ` · $${formatMoneyNumber(Number(r.amount_usd))}`}
                     </div>
                     <div
@@ -1332,6 +1378,23 @@ export default function FinanceCashflowPage() {
             <MoneyInput value={form.amount_usd} onChange={(v) => setForm((f) => ({ ...f, amount_usd: v }))} />
           </Field>
         </div>
+        {parseMoneyRaw(form.amount_usd) > 0 && (
+          <div style={{ fontSize: 12, color: '#64748b', marginTop: -6, marginBottom: 10, lineHeight: 1.45 }}>
+            {form.apply_fx_to_uzs
+              ? currentPlFxRate > 0
+                ? `По курсу P&L ${formatMoneyNumber(currentPlFxRate)}: $${formatMoneyNumber(parseMoneyRaw(form.amount_usd))} = ${formatMoneyNumber(currentUsdPreviewUzs)} сум.`
+                : 'Курс P&L для этого месяца не задан: USD сохранится отдельно без пересчёта в сумы.'
+              : 'Автоконвертация выключена: введённая сумма в UZS останется как есть, без скачков при смене курса.'}
+          </div>
+        )}
+        <label style={{ display: 'flex', alignItems: 'flex-start', gap: 8, marginBottom: 10, fontSize: 12, color: '#475569' }}>
+          <input
+            type="checkbox"
+            checked={Boolean(form.apply_fx_to_uzs)}
+            onChange={(e) => setForm((f) => ({ ...f, apply_fx_to_uzs: e.target.checked }))}
+          />
+          <span>Редактировать сумму по курсу USD для этой строки</span>
+        </label>
         <Field label="Форма оплаты">
           <Select value={form.payment_method} onChange={(e) => setForm((f) => ({ ...f, payment_method: e.target.value }))}>
             {(meta?.payment_methods ?? []).map((p) => (
@@ -1413,6 +1476,23 @@ export default function FinanceCashflowPage() {
                 <MoneyInput value={form.amount_usd} onChange={(v) => setForm((f) => ({ ...f, amount_usd: v }))} />
               </Field>
             </div>
+            {parseMoneyRaw(form.amount_usd) > 0 && (
+              <div style={{ fontSize: 12, color: '#64748b', marginTop: -6, marginBottom: 10, lineHeight: 1.45 }}>
+                {form.apply_fx_to_uzs
+                  ? currentPlFxRate > 0
+                    ? `По курсу P&L ${formatMoneyNumber(currentPlFxRate)}: $${formatMoneyNumber(parseMoneyRaw(form.amount_usd))} = ${formatMoneyNumber(currentUsdPreviewUzs)} сум.`
+                    : 'Курс P&L для этого месяца не задан: USD сохранится отдельно без пересчёта в сумы.'
+                  : 'Автоконвертация выключена: сумма в UZS останется такой, как вы её ввели.'}
+              </div>
+            )}
+            <label style={{ display: 'flex', alignItems: 'flex-start', gap: 8, marginBottom: 10, fontSize: 12, color: '#475569' }}>
+              <input
+                type="checkbox"
+                checked={Boolean(form.apply_fx_to_uzs)}
+                onChange={(e) => setForm((f) => ({ ...f, apply_fx_to_uzs: e.target.checked }))}
+              />
+              <span>Редактировать сумму по курсу USD для этой строки</span>
+            </label>
             <Field label="Форма оплаты">
               <Select value={form.payment_method} onChange={(e) => setForm((f) => ({ ...f, payment_method: e.target.value }))}>
                 {(meta?.payment_methods ?? []).map((p) => (

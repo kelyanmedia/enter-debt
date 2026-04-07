@@ -1,7 +1,7 @@
 from fastapi import APIRouter, Depends
 from sqlalchemy.orm import Session, joinedload
 from typing import List
-from app.db.database import get_db
+from app.db.database import get_db, get_request_company
 from app.models.payment import NotificationLog
 from app.schemas.schemas import NotificationLogOut
 from app.core.security import get_current_user
@@ -17,9 +17,14 @@ def list_notifications(
     current_user: User = Depends(get_current_user),
 ):
     allowed = accessible_partner_ids(db, current_user)
-    logs = db.query(NotificationLog).options(
-        joinedload(NotificationLog.payment)
-    ).order_by(NotificationLog.sent_at.desc()).limit(200).all()
+    logs = (
+        db.query(NotificationLog)
+        .options(joinedload(NotificationLog.payment))
+        .filter(NotificationLog.company_slug == get_request_company())
+        .order_by(NotificationLog.sent_at.desc())
+        .limit(200)
+        .all()
+    )
     out = []
     for log in logs:
         if not log.payment:

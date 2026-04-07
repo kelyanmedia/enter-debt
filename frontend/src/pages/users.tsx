@@ -20,6 +20,7 @@ interface User {
   visible_manager_ids?: number[]
   admin_telegram_notify_all?: boolean
   admin_telegram_notify_manager_ids?: number[]
+  admin_accessible_company_slugs?: string[] | null
   payment_details?: string | null
   multi_company_access?: boolean
   is_ad_budget_employee?: boolean
@@ -58,7 +59,7 @@ const EMPTY = {
 }
 
 export default function UsersPage() {
-  const { user } = useAuth()
+  const { user, companies, companySlug } = useAuth()
   const router = useRouter()
   const [users, setUsers] = useState<User[]>([])
   const [modal, setModal] = useState(false)
@@ -83,6 +84,8 @@ export default function UsersPage() {
   const [deleteUserId, setDeleteUserId] = useState<number | null>(null)
   const [visibleManagerIds, setVisibleManagerIds] = useState<number[]>([])
   const [adminNotifyManagerIds, setAdminNotifyManagerIds] = useState<number[]>([])
+  const [adminOrgFullAccess, setAdminOrgFullAccess] = useState(false)
+  const [adminCompanySlugs, setAdminCompanySlugs] = useState<string[]>([])
   const [managerOptions, setManagerOptions] = useState<User[]>([])
   const [userRoleFilter, setUserRoleFilter] = useState<UserRoleFilter>('all')
 
@@ -102,6 +105,8 @@ export default function UsersPage() {
     setAssignedPartnerIds([])
     setVisibleManagerIds([])
     setAdminNotifyManagerIds([])
+    setAdminOrgFullAccess(false)
+    setAdminCompanySlugs([companySlug])
     setError('')
     setModal(true)
   }
@@ -129,6 +134,18 @@ export default function UsersPage() {
     setAssignedPartnerIds([])
     setVisibleManagerIds(Array.isArray(u.visible_manager_ids) ? u.visible_manager_ids : [])
     setAdminNotifyManagerIds(Array.isArray(u.admin_telegram_notify_manager_ids) ? u.admin_telegram_notify_manager_ids : [])
+    if (u.role === 'admin') {
+      if (u.admin_accessible_company_slugs == null) {
+        setAdminOrgFullAccess(true)
+        setAdminCompanySlugs(companies.map((c) => c.slug))
+      } else {
+        setAdminOrgFullAccess(false)
+        setAdminCompanySlugs([...u.admin_accessible_company_slugs])
+      }
+    } else {
+      setAdminOrgFullAccess(false)
+      setAdminCompanySlugs([companySlug])
+    }
     if (u.role === 'manager') {
       try {
         const [ap, pr] = await Promise.all([
@@ -188,6 +205,7 @@ export default function UsersPage() {
         if (form.role === 'admin') {
           payload.admin_telegram_notify_all = form.admin_telegram_notify_all === 'true'
           payload.admin_telegram_notify_manager_ids = adminNotifyManagerIds
+          payload.admin_accessible_company_slugs = adminOrgFullAccess ? null : adminCompanySlugs
         }
         if (form.role === 'employee') {
           payload.payment_details = form.payment_details.trim() || null
@@ -220,6 +238,8 @@ export default function UsersPage() {
           is_ad_budget_employee: form.role === 'employee' ? form.is_ad_budget_employee === 'true' : false,
           admin_telegram_notify_all: form.role === 'admin' ? form.admin_telegram_notify_all === 'true' : undefined,
           admin_telegram_notify_manager_ids: form.role === 'admin' ? adminNotifyManagerIds : undefined,
+          admin_accessible_company_slugs:
+            form.role === 'admin' ? (adminOrgFullAccess ? null : adminCompanySlugs) : undefined,
         })
       }
       setModal(false)
@@ -547,7 +567,15 @@ export default function UsersPage() {
                   setVisibleManagerIds([])
                   setForm((f) => ({ ...f, can_enter_cash_flow: 'false' }))
                 }
-                if (r !== 'admin') setAdminNotifyManagerIds([])
+                if (r !== 'admin') {
+                  setAdminNotifyManagerIds([])
+                  setAdminOrgFullAccess(false)
+                  setAdminCompanySlugs([companySlug])
+                }
+                if (r === 'admin') {
+                  setAdminOrgFullAccess(false)
+                  setAdminCompanySlugs([companySlug])
+                }
               }}
             >
               <option value="admin">Администратор</option>
@@ -607,6 +635,78 @@ export default function UsersPage() {
                 </div>
               </>
             )}
+            <div style={{ marginTop: 14, paddingTop: 14, borderTop: '1px solid #e8e9ef' }}>
+              <div style={{ fontSize: 12, fontWeight: 600, marginBottom: 8 }}>Организации в переключателе панели</div>
+              <label
+                style={{
+                  display: 'flex',
+                  alignItems: 'center',
+                  gap: 8,
+                  fontSize: 13,
+                  cursor: 'pointer',
+                  marginBottom: 10,
+                }}
+              >
+                <input
+                  type="checkbox"
+                  checked={adminOrgFullAccess}
+                  onChange={(e) => {
+                    const on = e.target.checked
+                    setAdminOrgFullAccess(on)
+                    if (on) setAdminCompanySlugs(companies.map((c) => c.slug))
+                    else setAdminCompanySlugs([companySlug])
+                  }}
+                />
+                Все организации (без ограничений, как у старых записей)
+              </label>
+              {!adminOrgFullAccess && (
+                <div
+                  style={{
+                    maxHeight: 200,
+                    overflowY: 'auto',
+                    border: '1px solid #e8e9ef',
+                    borderRadius: 8,
+                    padding: 8,
+                    marginBottom: 8,
+                  }}
+                >
+                  {companies.map((c) => (
+                    <label
+                      key={c.slug}
+                      style={{
+                        display: 'flex',
+                        alignItems: 'center',
+                        gap: 8,
+                        padding: '4px 0',
+                        fontSize: 13,
+                        cursor: c.slug === companySlug ? 'default' : 'pointer',
+                      }}
+                    >
+                      <input
+                        type="checkbox"
+                        checked={adminCompanySlugs.includes(c.slug)}
+                        disabled={c.slug === companySlug}
+                        onChange={(e) => {
+                          const on = e.target.checked
+                          setAdminCompanySlugs((prev) => {
+                            if (on) return prev.includes(c.slug) ? prev : [...prev, c.slug]
+                            if (c.slug === companySlug) return prev
+                            return prev.filter((s) => s !== c.slug)
+                          })
+                        }}
+                      />
+                      {c.name}
+                      {c.slug === companySlug ? (
+                        <span style={{ fontSize: 10, color: '#94a3b8' }}>(эта учётная запись)</span>
+                      ) : null}
+                    </label>
+                  ))}
+                </div>
+              )}
+              <div style={{ fontSize: 11, color: '#8a8fa8', lineHeight: 1.45 }}>
+                По умолчанию доступна только организация, в которой создан администратор. Отметьте другие юрлица, если этому входу нужен переключатель между ними.
+              </div>
+            </div>
           </div>
         )}
         {form.role === 'administration' && (

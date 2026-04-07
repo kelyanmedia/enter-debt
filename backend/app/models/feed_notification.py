@@ -8,6 +8,7 @@ class FeedNotification(Base):
     __tablename__ = "feed_notifications"
 
     id = Column(Integer, primary_key=True, index=True)
+    company_slug = Column(String(32), nullable=False, index=True, default="kelyanmedia")
     kind = Column(String(40), nullable=False)  # payment_created | partner_created | user_created
     title = Column(String(200), nullable=False)
     subtitle = Column(String(400), nullable=True)

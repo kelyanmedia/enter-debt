@@ -16,7 +16,7 @@ const MONTHS_RU_CEO = [
 
 export interface PLReportForNet {
   columns: string[]
-  rows: { row_id: string; cells: { uzs: string; usd: string }[] }[]
+  rows: { row_id: string; label?: string; cells: { uzs: string; usd: string }[] }[]
 }
 
 export interface NetProfitSeriesPoint {
@@ -26,6 +26,13 @@ export interface NetProfitSeriesPoint {
   previous_year_amount: number
 }
 
+function cellsForRowId(report: PLReportForNet | null | undefined, rowId: string): number[] {
+  if (!report?.rows?.length) return Array(12).fill(0)
+  const row = report.rows.find(r => r.row_id === rowId)
+  if (!row?.cells?.length) return Array(12).fill(0)
+  return row.cells.map(c => Number(c.uzs) || 0)
+}
+
 function netProfitCells(report: PLReportForNet | null | undefined): number[] {
   if (!report?.rows?.length) return Array(12).fill(0)
   const op = report.rows.find(r => r.row_id === 'operating_profit')
@@ -33,6 +40,35 @@ function netProfitCells(report: PLReportForNet | null | undefined): number[] {
   const row = op ?? net
   if (!row?.cells?.length) return Array(12).fill(0)
   return row.cells.map(c => Number(c.uzs) || 0)
+}
+
+/** Подпись строки P&L по row_id (для заголовков блоков CEO). */
+export function plRowLabel(report: PLReportForNet | null | undefined, rowId: string): string | null {
+  const row = report?.rows?.find(r => r.row_id === rowId)
+  return row?.label ?? null
+}
+
+/** Месячные суммы (UZS) по любой строке P&L. */
+export function buildPlRowSeriesFromPl(
+  rowId: string,
+  year: number,
+  current: PLReportForNet | null | undefined,
+  previous: PLReportForNet | null | undefined,
+): NetProfitSeriesPoint[] {
+  const cur = cellsForRowId(current, rowId)
+  const prev = cellsForRowId(previous, rowId)
+  const cols = current?.columns?.length === 12 ? current.columns : null
+  const out: NetProfitSeriesPoint[] = []
+  for (let i = 0; i < 12; i++) {
+    const ym = cols?.[i] ?? `${year}-${String(i + 1).padStart(2, '0')}`
+    out.push({
+      month: ym,
+      label: `${MONTHS_RU_CEO[i]} ${year}`,
+      amount: cur[i] ?? 0,
+      previous_year_amount: prev[i] ?? 0,
+    })
+  }
+  return out
 }
 
 /** Точки для графика: текущий год из P&L + тот же месяц год назад. */

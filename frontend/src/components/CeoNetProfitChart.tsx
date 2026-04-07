@@ -54,7 +54,15 @@ function CustomTooltip({ active, payload, label }: {
   )
 }
 
-export default function CeoNetProfitChart({ data }: { data: NetProfitPoint[] }) {
+export default function CeoNetProfitChart({
+  data,
+  seriesName = 'Операционный результат',
+  prevSeriesName = 'Год назад',
+}: {
+  data: NetProfitPoint[]
+  seriesName?: string
+  prevSeriesName?: string
+}) {
   const chartData = data.map(p => ({
     label: p.label,
     amount: Number(p.amount),
@@ -99,7 +107,7 @@ export default function CeoNetProfitChart({ data }: { data: NetProfitPoint[] }) 
           <Area
             type="monotone"
             dataKey="amount"
-            name="Операционный результат"
+            name={seriesName}
             stroke="#15803d"
             strokeWidth={2.5}
             fill="url(#ceoNetProfitFill)"
@@ -108,7 +116,7 @@ export default function CeoNetProfitChart({ data }: { data: NetProfitPoint[] }) 
           <Line
             type="monotone"
             dataKey="prev"
-            name="Год назад"
+            name={prevSeriesName}
             stroke="#9ca3af"
             strokeWidth={2}
             strokeDasharray="6 6"

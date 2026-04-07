@@ -10,7 +10,7 @@ from sqlalchemy.orm import Session
 
 from app.core.config import settings
 from app.core.security import get_current_user
-from app.db.database import get_db
+from app.db.database import get_db, get_request_company
 from app.models.user import User
 from app.services.telegram_cc import collect_telegram_cc_chat_ids
 
@@ -124,6 +124,7 @@ async def notify_accounting_new_contract(
             User.role == "accountant",
             User.is_active == True,
             User.telegram_chat_id.isnot(None),
+            User.company_slug == get_request_company(),
         )
         .all()
     )

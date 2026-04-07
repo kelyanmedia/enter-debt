@@ -8,7 +8,7 @@ from fastapi import APIRouter, Depends, Header, HTTPException
 from sqlalchemy import func
 from sqlalchemy.orm import Session
 
-from app.db.database import get_db
+from app.db.database import get_db, get_request_company
 from app.models.user import User
 from app.models.telegram_join import TelegramJoinRequest
 from app.schemas.schemas import (
@@ -87,12 +87,14 @@ def bot_create_request(
     existing_user = db.query(User).filter(
         User.telegram_chat_id == data.chat_id,
         User.is_active == True,
+        User.company_slug == get_request_company(),
     ).first()
     if existing_user:
         return {"status": "already_registered", "message": "Вы уже зарегистрированы в системе."}
 
     req = db.query(TelegramJoinRequest).filter(
-        TelegramJoinRequest.telegram_chat_id == data.chat_id
+        TelegramJoinRequest.telegram_chat_id == data.chat_id,
+        TelegramJoinRequest.company_slug == get_request_company(),
     ).first()
 
     if req:
@@ -108,6 +110,7 @@ def bot_create_request(
             return {"status": "resubmitted", "message": "Заявка отправлена повторно."}
 
     req = TelegramJoinRequest(
+        company_slug=get_request_company(),
         telegram_chat_id=data.chat_id,
         telegram_username=data.username,
         full_name=data.full_name,
@@ -127,7 +130,10 @@ def list_pending(
 ):
     return (
         db.query(TelegramJoinRequest)
-        .filter(TelegramJoinRequest.status == "pending")
+        .filter(
+            TelegramJoinRequest.status == "pending",
+            TelegramJoinRequest.company_slug == get_request_company(),
+        )
         .order_by(TelegramJoinRequest.created_at.asc())
         .all()
     )
@@ -140,7 +146,11 @@ def _approve_link_telegram(db: Session, req: TelegramJoinRequest, data: Telegram
     if uid is None:
         raise HTTPException(status_code=400, detail="Не указан пользователь для привязки")
 
-    u = db.query(User).filter(User.id == uid).first()
+    u = (
+        db.query(User)
+        .filter(User.id == uid, User.company_slug == get_request_company())
+        .first()
+    )
     if not u or not u.is_active:
         raise HTTPException(status_code=400, detail="Пользователь не найден или деактивирован")
 
@@ -161,6 +171,7 @@ def _approve_link_telegram(db: Session, req: TelegramJoinRequest, data: Telegram
             User.telegram_chat_id == chat_id,
             User.is_active == True,
             User.id != uid,
+            User.company_slug == get_request_company(),
         )
         .first()
     )
@@ -226,7 +237,14 @@ def approve_request(
     if data.role not in ("manager", "accountant", "administration"):
         raise HTTPException(status_code=400, detail="Роль: manager, accountant или administration")
 
-    req = db.query(TelegramJoinRequest).filter(TelegramJoinRequest.id == request_id).first()
+    req = (
+        db.query(TelegramJoinRequest)
+        .filter(
+            TelegramJoinRequest.id == request_id,
+            TelegramJoinRequest.company_slug == get_request_company(),
+        )
+        .first()
+    )
     if not req or req.status != "pending":
         raise HTTPException(status_code=404, detail="Заявка не найдена или уже обработана")
 
@@ -235,7 +253,11 @@ def approve_request(
     if data.link_user_id is not None:
         return _approve_link_telegram(db, req, data)
 
-    conflict = db.query(User).filter(User.telegram_chat_id == chat_id, User.is_active == True).first()
+    conflict = db.query(User).filter(
+        User.telegram_chat_id == chat_id,
+        User.is_active == True,
+        User.company_slug == get_request_company(),
+    ).first()
     if conflict:
         db.delete(req)
         db.commit()
@@ -245,10 +267,18 @@ def approve_request(
         if not data.email or not data.email.strip():
             raise HTTPException(status_code=400, detail="Для менеджера укажите email")
         email = normalize_email(data.email.strip())
-        if db.query(User).filter(func.lower(User.email) == email).first():
+        if (
+            db.query(User)
+            .filter(
+                func.lower(User.email) == email,
+                User.company_slug == get_request_company(),
+            )
+            .first()
+        ):
             raise HTTPException(status_code=400, detail="Email уже занят")
         plain_password = secrets.token_urlsafe(10)
         user = User(
+            company_slug=get_request_company(),
             name=data.name.strip(),
             email=email,
             role="manager",
@@ -284,11 +314,19 @@ def approve_request(
                 detail="Отметьте хотя бы одного менеджера в зоне видимости (как в карточке пользователя)",
             )
         email = normalize_email(data.email.strip())
-        if db.query(User).filter(func.lower(User.email) == email).first():
+        if (
+            db.query(User)
+            .filter(
+                func.lower(User.email) == email,
+                User.company_slug == get_request_company(),
+            )
+            .first()
+        ):
             raise HTTPException(status_code=400, detail="Email уже занят")
         vm_json = json.dumps(_validate_visible_manager_ids(db, data.visible_manager_ids))
         plain_password = secrets.token_urlsafe(10)
         user = User(
+            company_slug=get_request_company(),
             name=data.name.strip(),
             email=email,
             role="administration",
@@ -330,7 +368,10 @@ def approve_request(
         _send_telegram_message(int(chat_id), text)
 
     # Уже есть строка с этим chat_id (часто is_active=False после «удаления» в админке)
-    u_by_chat = db.query(User).filter(User.telegram_chat_id == chat_id).first()
+    u_by_chat = db.query(User).filter(
+        User.telegram_chat_id == chat_id,
+        User.company_slug == get_request_company(),
+    ).first()
     if u_by_chat:
         if u_by_chat.is_active:
             db.delete(req)
@@ -353,7 +394,10 @@ def approve_request(
         return {"ok": True, "user_id": u_by_chat.id, "role": "accountant"}
 
     # Служебный email остался от прошлой бухгалтерии, chat_id сняли — повторная заявка
-    existing_buh = db.query(User).filter(User.email == email).first()
+    existing_buh = db.query(User).filter(
+        User.email == email,
+        User.company_slug == get_request_company(),
+    ).first()
     if existing_buh:
         if existing_buh.telegram_chat_id is not None and int(existing_buh.telegram_chat_id) != int(chat_id):
             raise HTTPException(
@@ -375,6 +419,7 @@ def approve_request(
 
     plain_unused = secrets.token_urlsafe(16)
     user = User(
+        company_slug=get_request_company(),
         name=data.name.strip(),
         email=email,
         role="accountant",
@@ -399,7 +444,14 @@ def reject_request(
     db: Session = Depends(get_db),
     _=Depends(require_admin),
 ):
-    req = db.query(TelegramJoinRequest).filter(TelegramJoinRequest.id == request_id).first()
+    req = (
+        db.query(TelegramJoinRequest)
+        .filter(
+            TelegramJoinRequest.id == request_id,
+            TelegramJoinRequest.company_slug == get_request_company(),
+        )
+        .first()
+    )
     if not req or req.status != "pending":
         raise HTTPException(status_code=404, detail="Заявка не найдена")
     req.status = "rejected"

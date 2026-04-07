@@ -30,6 +30,11 @@ def _build_company_urls() -> Dict[str, str]:
     lower = base.lower()
     is_pg = "postgresql" in lower or lower.startswith("postgres:")
 
+    if getattr(settings, "USE_SINGLE_DATABASE_MULTITENANT", True):
+        # Одна строка подключения для всех slug — изоляция по company_slug в таблицах
+        u = km
+        return {"kelyanmedia": u, "whiteway": u, "enter_group_media": u}
+
     use_derived = settings.DATABASE_SEPARATE_DBS or bool(ww_opt) or bool(eg_opt)
 
     if is_pg:
@@ -70,11 +75,15 @@ def _mask_database_url(url: str) -> str:
 
 
 def log_company_database_binding() -> None:
-    """Вызов при старте API: видно в логах, сливаются ли БД компаний в одну."""
     masked = {slug: _mask_database_url(u) for slug, u in _COMPANY_URLS.items()}
     log.info("БД по компаниям (пароль скрыт): %s", masked)
     uniq = set(_COMPANY_URLS.values())
     if len(uniq) != 1:
+        return
+    if getattr(settings, "USE_SINGLE_DATABASE_MULTITENANT", True):
+        log.info(
+            "Режим single-DB multi-tenant: одна база, изоляция по company_slug (заголовок X-Company-Slug)."
+        )
         return
     base = (settings.DATABASE_URL or "").strip().lower()
     is_pg = "postgresql" in base or base.startswith("postgres:")
@@ -92,38 +101,68 @@ def log_company_database_binding() -> None:
 
 _COMPANY_URLS = _build_company_urls()
 _engines: Dict[str, object] = {}
-_sessionmakers: Dict[str, sessionmaker] = {}
+_sessionmakers: Dict[str, Any] = {}
 
-for _slug in COMPANY_SLUG_ORDER:
-    _url = _COMPANY_URLS.get(_slug)
-    if not _url:
-        continue
-    eng = create_engine(_url, pool_pre_ping=True)
-    _engines[_slug] = eng
-    _sessionmakers[_slug] = sessionmaker(autocommit=False, autoflush=False, bind=eng)
+if getattr(settings, "USE_SINGLE_DATABASE_MULTITENANT", True):
+    _single_url = _COMPANY_URLS.get("kelyanmedia") or next(iter(_COMPANY_URLS.values()))
+    _eng = create_engine(_single_url, pool_pre_ping=True)
+    _sm = sessionmaker(autocommit=False, autoflush=False, bind=_eng)
+    for _slug in COMPANY_SLUG_ORDER:
+        if _slug in _COMPANY_URLS:
+            _engines[_slug] = _eng
+            _sessionmakers[_slug] = _sm
+else:
+    for _slug in COMPANY_SLUG_ORDER:
+        _url = _COMPANY_URLS.get(_slug)
+        if not _url:
+            continue
+        eng = create_engine(_url, pool_pre_ping=True)
+        _engines[_slug] = eng
+        _sessionmakers[_slug] = sessionmaker(autocommit=False, autoflush=False, bind=eng)
 
 # Обратная совместимость: «основной» движок = KelyanMedia
 engine = _engines.get("kelyanmedia") or next(iter(_engines.values()))
 
 
 def iter_company_engines() -> Iterator[tuple[str, object]]:
+    seen = set()
     for s in COMPANY_SLUG_ORDER:
         if s in _engines:
-            yield s, _engines[s]
+            e = _engines[s]
+            if id(e) not in seen:
+                seen.add(id(e))
+                yield s, e
 
 
 def iter_company_sessionmakers() -> Iterator[Tuple[str, Any]]:
+    seen = set()
     for s in COMPANY_SLUG_ORDER:
         if s in _sessionmakers:
-            yield s, _sessionmakers[s]
+            sm = _sessionmakers[s]
+            if id(sm) not in seen:
+                seen.add(id(sm))
+                yield s, sm
 
 
 def is_registered_company_slug(slug: str) -> bool:
     return slug in _engines
 
 
+def iter_registered_company_slugs() -> Iterator[str]:
+    """Все slug с зарегистрированной сессией (для сидов в single-DB — по одному разу на компанию)."""
+    for s in COMPANY_SLUG_ORDER:
+        if s in _sessionmakers:
+            yield s
+
+
+def get_engine_for_slug(slug: str) -> object:
+    if slug not in _engines:
+        raise RuntimeError(f"No engine for company slug: {slug}")
+    return _engines[slug]
+
+
 def set_company_context(slug: str) -> Token:
-    return _company_ctx.set(slug)
+    return _company_ctx.set(normalize_company_slug(slug))
 
 
 def reset_company_context(token: Token) -> None:
@@ -147,12 +186,15 @@ def get_db() -> Iterator[Session]:
 
 
 def init_db() -> None:
+    seen = set()
     for _, eng in iter_company_engines():
+        if id(eng) in seen:
+            continue
+        seen.add(id(eng))
         Base.metadata.create_all(bind=eng)
 
 
 def open_request_company_session() -> Session:
-    """Отдельная сессия для текущей компании (лента событий и т.п.)."""
     slug = get_request_company()
     if slug not in _sessionmakers:
         raise RuntimeError(f"No database for company slug: {slug}")

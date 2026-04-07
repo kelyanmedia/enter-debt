@@ -14,6 +14,7 @@ import httpx
 from sqlalchemy.orm import Session
 
 from app.core.config import settings
+from app.db.database import get_request_company
 from app.models.user import User
 from app.schemas.schemas import ReceivedPaymentRowOut
 from app.services.received_cashflow import fetch_received_payment_rows_range
@@ -182,6 +183,7 @@ def admin_report_chat_ids(db: Session) -> List[int]:
             User.role == "admin",
             User.is_active == True,
             User.telegram_chat_id.isnot(None),
+            User.company_slug == get_request_company(),
         )
         .all()
     )

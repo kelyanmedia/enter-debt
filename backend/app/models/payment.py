@@ -8,6 +8,7 @@ class Payment(Base):
     __tablename__ = "payments"
 
     id = Column(Integer, primary_key=True, index=True)
+    company_slug = Column(String(32), nullable=False, index=True, default="kelyanmedia")
     partner_id = Column(Integer, ForeignKey("partners.id"), nullable=False)
     payment_type = Column(String(30), nullable=False)
     description = Column(String(300), nullable=False)
@@ -29,7 +30,7 @@ class Payment(Base):
     notify_accounting = Column(Boolean, default=True)
     contract_url = Column(String(500), nullable=True)
     service_period = Column(String(20), nullable=True)  # monthly / yearly — for service_expiry type
-    project_category = Column(String(20), nullable=True)  # web | seo | ppc | mobile_app | tech_support | hosting_domain
+    project_category = Column(String(20), nullable=True)  # smm | target | … | events | hosting_domain
     # Режим оплаты для техподдержки / хостинга (остальные линии — NULL)
     billing_variant = Column(String(40), nullable=True)
     billing_notes = Column(Text, nullable=True)  # доп. работы, комментарий к сдельной задаче
@@ -80,6 +81,7 @@ class NotificationLog(Base):
     __tablename__ = "notification_logs"
 
     id = Column(Integer, primary_key=True, index=True)
+    company_slug = Column(String(32), nullable=False, index=True, default="kelyanmedia")
     payment_id = Column(Integer, ForeignKey("payments.id"), nullable=False)
     sent_to_chat_id = Column(String(50), nullable=False)
     sent_to_name = Column(String(100), nullable=True)

@@ -7,6 +7,7 @@ from typing import List
 from sqlalchemy import select
 from sqlalchemy.orm import Session, joinedload
 
+from app.db.database import get_request_company
 from app.models.partner import Partner
 from app.models.payment import Payment, PaymentMonth
 from app.schemas.schemas import ReceivedPaymentRowOut
@@ -31,7 +32,9 @@ def fetch_received_payment_rows_range(
         .filter(
             Payment.is_archived == False,
             Payment.trashed_at.is_(None),
+            Payment.company_slug == get_request_company(),
             Partner.trashed_at.is_(None),
+            Partner.company_slug == get_request_company(),
             PaymentMonth.status == "paid",
             PaymentMonth.paid_at.isnot(None),
             PaymentMonth.paid_at >= start_at,
@@ -69,7 +72,9 @@ def fetch_received_payment_rows_range(
         .filter(
             Payment.is_archived == False,
             Payment.trashed_at.is_(None),
+            Payment.company_slug == get_request_company(),
             Partner.trashed_at.is_(None),
+            Partner.company_slug == get_request_company(),
             Payment.status == "paid",
             Payment.paid_at.isnot(None),
             ~Payment.id.in_(has_months_sq),

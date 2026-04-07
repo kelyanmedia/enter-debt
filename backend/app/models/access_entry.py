@@ -8,6 +8,7 @@ class AccessEntry(Base):
     __tablename__ = "access_entries"
 
     id = Column(Integer, primary_key=True, index=True)
+    company_slug = Column(String(32), nullable=False, index=True, default="kelyanmedia")
     employee_name = Column(String(160), nullable=False, index=True)
     category = Column(String(24), nullable=False, index=True)  # email | telegram | device | service
     title = Column(String(220), nullable=False)

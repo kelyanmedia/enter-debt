@@ -14,10 +14,11 @@ EXPENSE_CATEGORY_LABELS: Dict[str, str] = {
     "other": "Прочее",
     "recruiting": "Рекрутинг",
     "office": "Офис",
-    "fund_development": "Ф: развития, кризиса, прочность, обучение",
+    "fund_development": "Бюджет на развитие",
     "it_infra": "IT инфраструктура",
+    "subscriptions": "Подписки",
     "dividends": "Дивиденды",
-    "agasi_d": "Агаси Д (дивиденды)",
+    "agasi_d": "Дивиденды учредителей",
     "refund": "Возврат",
     "loss": "Утеря",
     "printing": "Распечатки и канцелярия",
@@ -32,7 +33,9 @@ EXPENSE_CATEGORY_LABELS: Dict[str, str] = {
 
 
 def expense_categories_for_api() -> List[Dict[str, str]]:
-    return [{"slug": k, "label": v} for k, v in sorted(EXPENSE_CATEGORY_LABELS.items(), key=lambda x: x[1])]
+    # legacy slug agasi_d нужен для старых записей, но в UI показываем только общий dividends
+    visible = {k: v for k, v in EXPENSE_CATEGORY_LABELS.items() if k != "agasi_d"}
+    return [{"slug": k, "label": v} for k, v in sorted(visible.items(), key=lambda x: x[1])]
 
 
 def normalize_flow_category(slug: str | None) -> str:
@@ -42,7 +45,7 @@ def normalize_flow_category(slug: str | None) -> str:
 def expense_pl_bucket(slug: str | None) -> str:
     """
     Группа для строк P&L (ДДС расходы).
-    salary | office | accounting | marketing | taxes | personal_brand | publics | agasi_d | other
+    salary | office | accounting | marketing | taxes | personal_brand | publics | subscriptions | fund_development | agasi_d | other
     """
     c = normalize_flow_category(slug)
     if c in ("salary", "зарплата"):
@@ -59,6 +62,10 @@ def expense_pl_bucket(slug: str | None) -> str:
         return "personal_brand"
     if c in ("publics", "паблики", "public"):
         return "publics"
+    if c in ("subscriptions", "subscription", "подписки", "подписка"):
+        return "subscriptions"
+    if c in ("fund_development", "development_budget", "budget_development", "бюджет на развитие"):
+        return "fund_development"
     if c in ("agasi_d", "agasi-d", "dividends", "dividend"):
         return "agasi_d"
     return "other"

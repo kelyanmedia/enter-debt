@@ -7,7 +7,7 @@ from sqlalchemy import extract, or_
 from typing import List, Optional
 from decimal import Decimal
 
-from app.db.database import get_db
+from app.db.database import get_db, get_request_company
 from app.models.commission import Commission
 from app.models.payment import Payment
 from app.models.partner import Partner
@@ -55,6 +55,7 @@ def _validate_payment_for_commission(db: Session, payment_id: int) -> None:
             Payment.id == payment_id,
             Payment.is_archived == False,
             Payment.trashed_at.is_(None),
+            Payment.company_slug == get_request_company(),
         )
         .first()
     )
@@ -101,7 +102,7 @@ def _commission_load_options(q):
 
 
 def _base_query(db: Session, current_user: User, year: Optional[int], month: Optional[int], manager_id: Optional[int]):
-    q = db.query(Commission)
+    q = db.query(Commission).filter(Commission.company_slug == get_request_company())
     q = _commission_load_options(q)
     if current_user.role == "manager":
         q = q.filter(Commission.manager_id == current_user.id)
@@ -133,7 +134,9 @@ def linkable_payments(
         .filter(
             Payment.is_archived == False,
             Payment.trashed_at.is_(None),
+            Payment.company_slug == get_request_company(),
             Partner.trashed_at.is_(None),
+            Partner.company_slug == get_request_company(),
         )
     )
     if for_commission:
@@ -225,6 +228,7 @@ def create_commission(
     for k in range(dup_n + 1):
         pd = _add_calendar_months(data.project_date, k)
         c = Commission(
+            company_slug=get_request_company(),
             project_name=data.project_name,
             project_type=data.project_type,
             project_cost=data.project_cost,
@@ -248,7 +252,7 @@ def create_commission(
     db.commit()
     row = (
         _commission_load_options(db.query(Commission))
-        .filter(Commission.id == first_id)
+        .filter(Commission.id == first_id, Commission.company_slug == get_request_company())
         .first()
     )
     return _enrich(row)
@@ -262,7 +266,11 @@ def update_commission(
     current_user: User = Depends(get_current_user),
 ):
     _require_commissions_role(current_user)
-    c = db.query(Commission).filter(Commission.id == cid).first()
+    c = (
+        db.query(Commission)
+        .filter(Commission.id == cid, Commission.company_slug == get_request_company())
+        .first()
+    )
     if not c:
         raise HTTPException(404, "Не найдено")
     if current_user.role == "manager" and c.manager_id != current_user.id:
@@ -275,7 +283,7 @@ def update_commission(
     db.commit()
     row = (
         _commission_load_options(db.query(Commission))
-        .filter(Commission.id == cid)
+        .filter(Commission.id == cid, Commission.company_slug == get_request_company())
         .first()
     )
     return _enrich(row)
@@ -289,12 +297,17 @@ def duplicate_commission_next_month(
 ):
     """Копия строки комиссии на следующий календарный месяц (рекуррент). Полученные суммы сбрасываются."""
     _require_commissions_role(current_user)
-    src = db.query(Commission).filter(Commission.id == cid).first()
+    src = (
+        db.query(Commission)
+        .filter(Commission.id == cid, Commission.company_slug == get_request_company())
+        .first()
+    )
     if not src:
         raise HTTPException(404, "Не найдено")
     if current_user.role == "manager" and src.manager_id != current_user.id:
         raise HTTPException(403, "Нет доступа")
     new = Commission(
+        company_slug=get_request_company(),
         project_name=src.project_name,
         project_type=src.project_type,
         project_cost=src.project_cost,
@@ -315,7 +328,7 @@ def duplicate_commission_next_month(
     db.commit()
     row = (
         _commission_load_options(db.query(Commission))
-        .filter(Commission.id == new.id)
+        .filter(Commission.id == new.id, Commission.company_slug == get_request_company())
         .first()
     )
     return _enrich(row)
@@ -329,7 +342,11 @@ def shift_commission_next_month(
 ):
     """Сдвиг даты проекта на +1 месяц (та же строка)."""
     _require_commissions_role(current_user)
-    c = db.query(Commission).filter(Commission.id == cid).first()
+    c = (
+        db.query(Commission)
+        .filter(Commission.id == cid, Commission.company_slug == get_request_company())
+        .first()
+    )
     if not c:
         raise HTTPException(404, "Не найдено")
     if current_user.role == "manager" and c.manager_id != current_user.id:
@@ -338,7 +355,7 @@ def shift_commission_next_month(
     db.commit()
     row = (
         _commission_load_options(db.query(Commission))
-        .filter(Commission.id == cid)
+        .filter(Commission.id == cid, Commission.company_slug == get_request_company())
         .first()
     )
     return _enrich(row)
@@ -351,7 +368,11 @@ def delete_commission(
     current_user: User = Depends(get_current_user),
 ):
     _require_commissions_role(current_user)
-    c = db.query(Commission).filter(Commission.id == cid).first()
+    c = (
+        db.query(Commission)
+        .filter(Commission.id == cid, Commission.company_slug == get_request_company())
+        .first()
+    )
     if not c:
         raise HTTPException(404, "Не найдено")
     if current_user.role == "manager" and c.manager_id != current_user.id:

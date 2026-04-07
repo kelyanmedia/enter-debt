@@ -9,6 +9,7 @@ class EmployeeTask(Base):
     __tablename__ = "employee_tasks"
 
     id = Column(Integer, primary_key=True, index=True)
+    company_slug = Column(String(32), nullable=False, index=True, default="kelyanmedia")
     user_id = Column(Integer, ForeignKey("users.id", ondelete="CASCADE"), nullable=False, index=True)
     work_date = Column(Date, nullable=False)
     project_name = Column(String(300), nullable=False)

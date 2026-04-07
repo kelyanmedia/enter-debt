@@ -5,10 +5,12 @@ from datetime import date, datetime
 from typing import Optional, List, Tuple, Dict, Any
 from decimal import Decimal
 from calendar import monthrange
-from app.db.database import get_db
+from app.db.database import get_db, get_request_company
 from app.models.payment import Payment, PaymentMonth
 from app.models.partner import Partner
 from app.models.ceo_metric_override import CeoMetricOverride
+from app.models.ceo_dashboard_block import CeoDashboardBlock
+from app.services.ceo_layout_defaults import ensure_ceo_layout_defaults, validate_layout_blocks
 from app.schemas.schemas import (
     DashboardStats,
     ReceivedPaymentRowOut,
@@ -21,6 +23,9 @@ from app.schemas.schemas import (
     CeoClientHistoryOut,
     CeoClientHistoryPoint,
     CeoOverridePut,
+    CeoLayoutOut,
+    CeoLayoutBlockOut,
+    CeoLayoutPut,
 )
 from app.core.security import get_current_user, require_admin, require_admin_or_accountant, require_admin_or_financier
 from app.core.access import accessible_partner_ids, filter_payments_query, filter_partners_query, parse_visible_manager_ids
@@ -45,7 +50,18 @@ _MONTHS_RU = (
 )
 
 # Линии CEO-дашборда (карточки Web / SEO / PPC / приложения / техподдержка), без хостинга и доменов.
-_CEO_CORE_PROJECT_CATEGORIES = ("smm", "target", "personal_brand", "content", "web", "seo", "ppc", "mobile_app", "tech_support")
+_CEO_CORE_PROJECT_CATEGORIES = (
+    "smm",
+    "target",
+    "personal_brand",
+    "content",
+    "web",
+    "seo",
+    "ppc",
+    "mobile_app",
+    "tech_support",
+    "events",
+)
 
 _LTV_BUCKET_SPEC = (
     ("lt_3", "Меньше 3 мес."),
@@ -76,7 +92,11 @@ def _rolling_months(n: int) -> List[Tuple[int, int]]:
 def _get_override_dict(db: Session, metric: str, year: int) -> Dict[str, Any]:
     row = (
         db.query(CeoMetricOverride)
-        .filter(CeoMetricOverride.metric == metric, CeoMetricOverride.year == year)
+        .filter(
+            CeoMetricOverride.metric == metric,
+            CeoMetricOverride.year == year,
+            CeoMetricOverride.company_slug == get_request_company(),
+        )
         .first()
     )
     if not row or not row.data:
@@ -207,7 +227,9 @@ def received_payments_cashflow(
         .filter(
             Payment.is_archived == False,
             Payment.trashed_at.is_(None),
+            Payment.company_slug == get_request_company(),
             Partner.trashed_at.is_(None),
+            Partner.company_slug == get_request_company(),
             PaymentMonth.status == "paid",
             PaymentMonth.paid_at.isnot(None),
             func.date(PaymentMonth.paid_at) >= start_date,
@@ -245,7 +267,9 @@ def received_payments_cashflow(
         .filter(
             Payment.is_archived == False,
             Payment.trashed_at.is_(None),
+            Payment.company_slug == get_request_company(),
             Partner.trashed_at.is_(None),
+            Partner.company_slug == get_request_company(),
             Payment.status == "paid",
             Payment.paid_at.isnot(None),
             ~Payment.id.in_(has_months_sq),
@@ -490,7 +514,9 @@ def get_ceo_stats(
         q = db.query(Payment).filter(Payment.is_archived == False)
         return filter_payments_query(q, db, current_user)
 
-    total_projects = base_q().count()
+    total_projects = base_q().filter(
+        (Payment.project_category.is_(None)) | (Payment.project_category != "hosting_domain")
+    ).count()
     web_projects = base_q().filter(Payment.project_category == "smm").count()
     seo_projects = base_q().filter(Payment.project_category == "target").count()
     ppc_projects = base_q().filter(Payment.project_category == "personal_brand").count()
@@ -731,13 +757,24 @@ def put_ceo_override(
 
     row = (
         db.query(CeoMetricOverride)
-        .filter(CeoMetricOverride.metric == body.metric, CeoMetricOverride.year == body.year)
+        .filter(
+            CeoMetricOverride.metric == body.metric,
+            CeoMetricOverride.year == body.year,
+            CeoMetricOverride.company_slug == get_request_company(),
+        )
         .first()
     )
     if row:
         row.data = body.data
     else:
-        db.add(CeoMetricOverride(metric=body.metric, year=body.year, data=body.data))
+        db.add(
+            CeoMetricOverride(
+                company_slug=get_request_company(),
+                metric=body.metric,
+                year=body.year,
+                data=body.data,
+            )
+        )
     db.commit()
     return {"ok": True}
 
@@ -753,10 +790,114 @@ def delete_ceo_override(
         raise HTTPException(status_code=400, detail="Неизвестный metric")
     row = (
         db.query(CeoMetricOverride)
-        .filter(CeoMetricOverride.metric == metric, CeoMetricOverride.year == year)
+        .filter(
+            CeoMetricOverride.metric == metric,
+            CeoMetricOverride.year == year,
+            CeoMetricOverride.company_slug == get_request_company(),
+        )
         .first()
     )
     if row:
         db.delete(row)
         db.commit()
     return {"ok": True}
+
+
+def _ceo_layout_response(db: Session) -> CeoLayoutOut:
+    slug = get_request_company()
+    ensure_ceo_layout_defaults(db, slug)
+    rows = (
+        db.query(CeoDashboardBlock)
+        .filter(CeoDashboardBlock.company_slug == slug)
+        .order_by(CeoDashboardBlock.sort_order.asc(), CeoDashboardBlock.id.asc())
+        .all()
+    )
+    if not rows:
+        # Редкий сбой или пустая таблица после миграции — пересоздаём дефолтную раскладку
+        db.query(CeoDashboardBlock).filter(CeoDashboardBlock.company_slug == slug).delete()
+        db.commit()
+        ensure_ceo_layout_defaults(db, slug)
+        rows = (
+            db.query(CeoDashboardBlock)
+            .filter(CeoDashboardBlock.company_slug == slug)
+            .order_by(CeoDashboardBlock.sort_order.asc(), CeoDashboardBlock.id.asc())
+            .all()
+        )
+    return CeoLayoutOut(
+        blocks=[
+            CeoLayoutBlockOut(
+                id=r.id,
+                kind=r.kind,
+                title=r.title,
+                pl_row_id=r.pl_row_id,
+                sort_order=r.sort_order,
+            )
+            for r in rows
+        ]
+    )
+
+
+def _persist_ceo_layout(db: Session, body: CeoLayoutPut) -> None:
+    if not body.blocks:
+        raise HTTPException(status_code=400, detail="Нужен хотя бы один блок")
+    err = validate_layout_blocks([b.model_dump() for b in body.blocks])
+    if err:
+        raise HTTPException(status_code=400, detail=err)
+    slug = get_request_company()
+    db.query(CeoDashboardBlock).filter(CeoDashboardBlock.company_slug == slug).delete()
+    for i, b in enumerate(body.blocks):
+        title = (b.title or "").strip() or None
+        pid = (b.pl_row_id or "").strip() or None
+        if b.kind != "pl_row":
+            pid = None
+        db.add(
+            CeoDashboardBlock(
+                company_slug=slug,
+                kind=b.kind,
+                pl_row_id=pid,
+                title=title,
+                sort_order=i,
+            )
+        )
+    db.commit()
+
+
+@router.get("/ceo/layout", response_model=CeoLayoutOut)
+def get_ceo_layout(
+    db: Session = Depends(get_db),
+    _: User = Depends(require_admin_or_accountant),
+):
+    """Порядок и состав блоков CEO Dashboard для текущей компании (дефолт — как на странице до настройки)."""
+    return _ceo_layout_response(db)
+
+
+@router.put("/ceo/layout", response_model=CeoLayoutOut)
+def put_ceo_layout(
+    body: CeoLayoutPut,
+    db: Session = Depends(get_db),
+    _: User = Depends(require_admin_or_accountant),
+):
+    _persist_ceo_layout(db, body)
+    return _ceo_layout_response(db)
+
+
+# Если nginx отрезает префикс /api (как для /finance/...), клиент должен достучаться до тех же ручек.
+router_dashboard_no_api_prefix = APIRouter(prefix="/dashboard", tags=["dashboard"])
+
+
+@router_dashboard_no_api_prefix.get("/ceo/layout", response_model=CeoLayoutOut, include_in_schema=False)
+def get_ceo_layout_no_api_prefix(
+    db: Session = Depends(get_db),
+    _: User = Depends(require_admin_or_accountant),
+):
+    return _ceo_layout_response(db)
+
+
+@router_dashboard_no_api_prefix.put("/ceo/layout", response_model=CeoLayoutOut, include_in_schema=False)
+def put_ceo_layout_no_api_prefix(
+    body: CeoLayoutPut,
+    db: Session = Depends(get_db),
+    _: User = Depends(require_admin_or_accountant),
+):
+    _persist_ceo_layout(db, body)
+    return _ceo_layout_response(db)

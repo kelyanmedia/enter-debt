@@ -4,7 +4,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query
 from starlette.responses import Response
 from sqlalchemy.orm import Session
 
-from app.db.database import get_db
+from app.db.database import get_db, get_request_company
 from app.models.subscription_item import SubscriptionItem
 from app.models.user import User
 from app.schemas.schemas import SubscriptionItemCreate, SubscriptionItemOut, SubscriptionItemUpdate
@@ -77,6 +77,7 @@ def create_item(
         raise HTTPException(status_code=400, detail="Кто платит: KM или WW")
 
     row = SubscriptionItem(
+        company_slug=get_request_company(),
         category=data.category,
         name=data.name.strip(),
         status=data.status,
@@ -110,7 +111,14 @@ def update_item(
     current_user: User = Depends(get_current_user),
 ):
     _ensure_subscriptions_access(current_user)
-    row = db.query(SubscriptionItem).filter(SubscriptionItem.id == item_id).first()
+    row = (
+        db.query(SubscriptionItem)
+        .filter(
+            SubscriptionItem.id == item_id,
+            SubscriptionItem.company_slug == get_request_company(),
+        )
+        .first()
+    )
     if not row:
         raise HTTPException(status_code=404, detail="Запись не найдена")
     upd = data.model_dump(exclude_unset=True)
@@ -166,7 +174,14 @@ def delete_item(
     current_user: User = Depends(get_current_user),
 ):
     _ensure_subscriptions_access(current_user)
-    row = db.query(SubscriptionItem).filter(SubscriptionItem.id == item_id).first()
+    row = (
+        db.query(SubscriptionItem)
+        .filter(
+            SubscriptionItem.id == item_id,
+            SubscriptionItem.company_slug == get_request_company(),
+        )
+        .first()
+    )
     if not row:
         raise HTTPException(status_code=404, detail="Запись не найдена")
     db.delete(row)

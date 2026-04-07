@@ -1,18 +1,14 @@
-import { useCallback, useEffect, useMemo, useState } from 'react'
-import dynamic from 'next/dynamic'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import Link from 'next/link'
 import { useRouter } from 'next/router'
 import Layout from '@/components/Layout'
-import { PageHeader, Card } from '@/components/ui'
+import { PageHeader, Card, Modal, BtnPrimary, BtnOutline, Input } from '@/components/ui'
 import { CeoEditPencil, CeoMetricEditModal } from '@/components/CeoMetricEditor'
 import { useAuth } from '@/context/AuthContext'
 import api from '@/lib/api'
-import { buildNetProfitSeriesFromPl, type PLReportForNet } from '@/lib/plNetProfitSeries'
-
-const CeoTurnoverChart = dynamic(() => import('@/components/CeoTurnoverChart'), { ssr: false })
-const CeoNetProfitChart = dynamic(() => import('@/components/CeoNetProfitChart'), { ssr: false })
-const CeoLtvChart = dynamic(() => import('@/components/CeoLtvChart'), { ssr: false })
-const CeoClientHistoryChart = dynamic(() => import('@/components/CeoClientHistoryChart'), { ssr: false })
+import { fetchCeoLayout, saveCeoLayout } from '@/lib/ceoLayoutApi'
+import type { PLReportForNet } from '@/lib/plNetProfitSeries'
+import CeoDashboardBlocks, { type CeoLayoutBlock } from '@/components/CeoDashboardBlocks'
 
 interface CeoStats {
   total_projects: number
@@ -217,10 +213,47 @@ function CeoCard({
 
 const YEAR_OPTIONS = Array.from({ length: 8 }, (_, i) => new Date().getFullYear() - i)
 
+/** Совпадает с backend DEFAULT_CEO_BLOCKS — показ графиков, если API раскладки недоступен. */
+const DEFAULT_CEO_LAYOUT_BLOCKS: CeoLayoutBlock[] = [
+  { id: -1, kind: 'client_history', title: null, pl_row_id: null, sort_order: 0 },
+  { id: -2, kind: 'turnover', title: null, pl_row_id: null, sort_order: 1 },
+  { id: -3, kind: 'pl_row', title: null, pl_row_id: 'operating_profit', sort_order: 2 },
+  { id: -4, kind: 'ltv', title: null, pl_row_id: null, sort_order: 3 },
+]
+
+function formatApiError(e: unknown): string {
+  const err = e as { response?: { status?: number; data?: { detail?: unknown } }; message?: string }
+  const st = err.response?.status
+  if (st === 401) return 'Сессия истекла — войдите снова.'
+  if (st === 403) return 'Недостаточно прав для раскладки CEO (нужны администратор, бухгалтерия или финансист).'
+  if (st === 404) {
+    const d = err.response?.data?.detail
+    if (typeof d === 'string' && /not found/i.test(d)) {
+      return 'Раскладка CEO на сервере не найдена (404). Перезапустите backend с актуальной версией (маршруты /api/dashboard/ceo/layout). После обновления очистите кэш: в папке frontend выполните npm run dev:clean'
+    }
+    if (typeof d === 'string') return d
+  }
+  if (st === 503) {
+    const d = err.response?.data?.detail
+    if (typeof d === 'string') return d
+  }
+  const d = err.response?.data?.detail
+  if (typeof d === 'string') return d
+  if (Array.isArray(d)) {
+    return d.map((x: { msg?: string }) => x.msg || JSON.stringify(x)).filter(Boolean).join(', ')
+  }
+  if (d != null && typeof d === 'object') return JSON.stringify(d)
+  return err.message || 'Ошибка запроса'
+}
+
 export default function CeoDashboardPage() {
-  const { user, loading } = useAuth()
+  const { user, loading, companySlug } = useAuth()
   const router = useRouter()
   const isAdmin = user?.role === 'admin'
+  /** Те же роли, что GET /ceo/layout — могут сохранять раскладку и восстанавливать блоки */
+  const canConfigureCeoLayout =
+    user?.role === 'admin' || user?.role === 'accountant' || user?.role === 'financier'
+  const ceoLayoutAutoRestoreDone = useRef(false)
 
   useEffect(() => {
     if (!loading && user && (user.role === 'manager' || user.role === 'administration')) router.replace('/debitor')
@@ -235,15 +268,72 @@ export default function CeoDashboardPage() {
   const [clientPoints, setClientPoints] = useState<ClientHistoryPoint[]>([])
 
   const [netProfitYear, setNetProfitYear] = useState(() => new Date().getFullYear())
-  const [netProfitPoints, setNetProfitPoints] = useState<
-    { month: string; label: string; amount: number; previous_year_amount: number }[]
-  >([])
+  const [plCurrent, setPlCurrent] = useState<PLReportForNet | null>(null)
+  const [plPrev, setPlPrev] = useState<PLReportForNet | null>(null)
   const [netProfitLoading, setNetProfitLoading] = useState(false)
   const [netProfitError, setNetProfitError] = useState<string | null>(null)
+
+  const [layoutBlocks, setLayoutBlocks] = useState<CeoLayoutBlock[]>([])
+  const [layoutLoading, setLayoutLoading] = useState(true)
+  const [layoutSaving, setLayoutSaving] = useState(false)
+  const [layoutEdit, setLayoutEdit] = useState(false)
+  const [addOpen, setAddOpen] = useState(false)
+  const [addKind, setAddKind] = useState<'client_history' | 'turnover' | 'pl_row' | 'ltv'>('pl_row')
+  const [addPlRowId, setAddPlRowId] = useState('operating_profit')
+  const [addTitle, setAddTitle] = useState('')
+  const [layoutError, setLayoutError] = useState('')
+  const [addModalError, setAddModalError] = useState('')
+  /** GET /ceo/layout успешен; при false — ещё не было ответа. */
+  const [layoutReady, setLayoutReady] = useState(false)
+  /** Раскладка только локально (API GET/PUT недоступны) — кнопки настройки отключены. */
+  const [layoutSyncBroken, setLayoutSyncBroken] = useState(false)
 
   const [editMetric, setEditMetric] = useState<null | 'client_history' | 'turnover' | 'ltv'>(null)
   const [dataTick, setDataTick] = useState(0)
   const bumpData = useCallback(() => setDataTick(t => t + 1), [])
+
+  const projectCards = useMemo(
+    () =>
+      [
+        {
+          title: 'SMM',
+          value: stats?.web_projects ?? 0,
+          href: '/payments?category=smm',
+          hint: 'Соцсети и SMM',
+        },
+        {
+          title: 'Таргет',
+          value: stats?.seo_projects ?? 0,
+          href: '/payments?category=target',
+          hint: 'Таргетированная реклама',
+        },
+        {
+          title: 'Личный бренд',
+          value: stats?.ppc_projects ?? 0,
+          href: '/payments?category=personal_brand',
+          hint: 'Личный бренд',
+        },
+        {
+          title: 'Контент',
+          value: stats?.mobile_app_projects ?? 0,
+          href: '/payments?category=content',
+          hint: 'Контент',
+        },
+        {
+          title: 'Техподдержка (legacy)',
+          value: stats?.tech_support_projects ?? 0,
+          href: '/payments?category=tech_support',
+          hint: 'Старые проекты с линией «Тех сопровождение»',
+        },
+        {
+          title: 'Хостинг и домены',
+          value: stats?.hosting_domain_projects ?? 0,
+          href: '/payments?category=hosting_domain',
+          hint: 'Хостинг, домены, инфраструктура',
+        },
+      ].filter((card) => card.value > 0),
+    [stats],
+  )
 
   useEffect(() => {
     api.get<CeoStats>('dashboard/ceo').then(r => setStats(r.data)).catch(() => setStats(null))
@@ -289,10 +379,12 @@ export default function CeoDashboardPage() {
           }
         }
         if (cancelled) return
-        setNetProfitPoints(buildNetProfitSeriesFromPl(y, cur.data, prevReport))
+        setPlCurrent(cur.data)
+        setPlPrev(prevReport)
       } catch {
         if (!cancelled) {
-          setNetProfitPoints([])
+          setPlCurrent(null)
+          setPlPrev(null)
           setNetProfitError('Не удалось загрузить P&L. Раздел «P&L» в меню Финансы.')
         }
       } finally {
@@ -304,6 +396,133 @@ export default function CeoDashboardPage() {
       cancelled = true
     }
   }, [netProfitYear])
+
+  useEffect(() => {
+    ceoLayoutAutoRestoreDone.current = false
+  }, [companySlug])
+
+  useEffect(() => {
+    setLayoutLoading(true)
+    setLayoutReady(false)
+    setLayoutError('')
+    fetchCeoLayout()
+      .then((data) => {
+        setLayoutBlocks(data.blocks || [])
+        setLayoutSyncBroken(false)
+        setLayoutReady(true)
+      })
+      .catch((e) => {
+        setLayoutBlocks(DEFAULT_CEO_LAYOUT_BLOCKS)
+        setLayoutSyncBroken(true)
+        setLayoutError(formatApiError(e))
+        setLayoutReady(true)
+      })
+      .finally(() => setLayoutLoading(false))
+  }, [companySlug])
+
+  const persistLayout = useCallback(
+    async (next: CeoLayoutBlock[], opts?: { skipLayoutBanner?: boolean }) => {
+      if (next.length === 0) return
+      setLayoutSaving(true)
+      if (!opts?.skipLayoutBanner) setLayoutError('')
+      try {
+        const data = await saveCeoLayout({
+          blocks: next.map((b) => {
+            const pid =
+              b.kind === 'pl_row' ? (b.pl_row_id && String(b.pl_row_id).trim()) || 'operating_profit' : null
+            return {
+              kind: b.kind,
+              title: b.title || null,
+              pl_row_id: pid,
+            }
+          }),
+        })
+        setLayoutBlocks(data.blocks || [])
+        setLayoutSyncBroken(false)
+      } catch (e) {
+        const msg = formatApiError(e)
+        if (!opts?.skipLayoutBanner) setLayoutError(msg)
+        throw new Error(msg)
+      } finally {
+        setLayoutSaving(false)
+      }
+    },
+    [],
+  )
+
+  /** Тот же набор, что в backend `DEFAULT_CEO_BLOCKS` — если раскладка пуста или сброшена. */
+  const restoreDefaultLayout = useCallback(async () => {
+    try {
+      await persistLayout(DEFAULT_CEO_LAYOUT_BLOCKS)
+      setLayoutSyncBroken(false)
+    } catch {
+      setLayoutBlocks(DEFAULT_CEO_LAYOUT_BLOCKS)
+      setLayoutSyncBroken(true)
+    }
+  }, [persistLayout])
+
+  /** Один раз за сессию компании: если блоков нет — подставляем стандартный набор (тот же, что «Восстановить…»). */
+  useEffect(() => {
+    if (layoutLoading || !layoutReady || layoutSyncBroken || !canConfigureCeoLayout || layoutBlocks.length > 0) return
+    if (ceoLayoutAutoRestoreDone.current) return
+    ceoLayoutAutoRestoreDone.current = true
+    void restoreDefaultLayout()
+  }, [
+    layoutLoading,
+    layoutReady,
+    layoutSyncBroken,
+    canConfigureCeoLayout,
+    layoutBlocks.length,
+    restoreDefaultLayout,
+  ])
+
+  const moveBlock = useCallback(
+    (index: number, delta: number) => {
+      const j = index + delta
+      if (j < 0 || j >= layoutBlocks.length) return
+      const next = [...layoutBlocks]
+      const t = next[index]!
+      next[index] = next[j]!
+      next[j] = t
+      void persistLayout(next).catch(() => {})
+    },
+    [layoutBlocks, persistLayout],
+  )
+
+  const removeBlock = useCallback(
+    (index: number) => {
+      if (layoutBlocks.length <= 1) return
+      const next = layoutBlocks.filter((_, i) => i !== index)
+      void persistLayout(next).catch(() => {})
+    },
+    [layoutBlocks, persistLayout],
+  )
+
+  const addBlock = useCallback(async () => {
+    const title = addTitle.trim() || null
+    const row = addKind === 'pl_row' ? addPlRowId.trim() || 'operating_profit' : null
+    const next: CeoLayoutBlock[] = [
+      ...layoutBlocks,
+      {
+        id: -Date.now(),
+        kind: addKind,
+        title,
+        pl_row_id: row,
+        sort_order: layoutBlocks.length,
+      },
+    ]
+    setAddModalError('')
+    try {
+      await persistLayout(next, { skipLayoutBanner: true })
+      setLayoutError('')
+      setAddOpen(false)
+      setAddTitle('')
+      setAddKind('pl_row')
+      setAddPlRowId('operating_profit')
+    } catch (e) {
+      setAddModalError(e instanceof Error ? e.message : formatApiError(e))
+    }
+  }, [layoutBlocks, addKind, addPlRowId, addTitle, persistLayout])
 
   const editInitialMonths = useMemo(() => {
     if (editMetric === 'client_history') return buildMonthRecord(clientPoints, 'count')
@@ -347,9 +566,63 @@ export default function CeoDashboardPage() {
       {!loading && user && user.role !== 'manager' && user.role !== 'administration' && <>
       <PageHeader
         title="CEO Dashboard"
-        subtitle="Проекты по линиям, активные партнёры по месяцам, оборот, операционный результат по P&L (без Агаси Д) и LTV."
+        subtitle="Карточки по линиям; ниже — блоки графиков. Администратор: «Настроить блоки» — порядок, удаление; «+ Добавить блок»; карандаш на графике — ручной ввод метрик; P&L — ссылка на отчёт. Если блоков нет — «Восстановить стандартные блоки»."
       />
-      <div style={{ padding: '22px 24px', overflowY: 'auto', flex: 1 }}>
+      {layoutError ? (
+        <div
+          style={{
+            margin: '0 24px',
+            padding: '10px 14px',
+            borderRadius: 10,
+            background: '#fef2f2',
+            border: '1px solid #fecaca',
+            color: '#991b1b',
+            fontSize: 13,
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'space-between',
+            gap: 12,
+            flexWrap: 'wrap',
+          }}
+        >
+          <span>
+            {layoutError}
+            {layoutSyncBroken ? (
+              <span style={{ display: 'block', marginTop: 8, fontSize: 12, color: '#7f1d1d', lineHeight: 1.45 }}>
+                Ниже — стандартные графики; сохранение раскладки на сервер может не работать, пока API{' '}
+                <code style={{ fontSize: 11 }}>/api/dashboard/ceo/layout</code> недоступен (часто помогает перезапуск
+                backend с актуальной версией или правка nginx). Кнопки «Настроить блоки» и «+ Добавить блок» доступны —
+                при ошибке сохранения проверьте ответ сервера.
+              </span>
+            ) : null}
+          </span>
+          <button
+            type="button"
+            onClick={() => setLayoutError('')}
+            style={{
+              border: 'none',
+              background: 'transparent',
+              color: '#991b1b',
+              textDecoration: 'underline',
+              cursor: 'pointer',
+              fontSize: 13,
+              fontFamily: 'inherit',
+            }}
+          >
+            Закрыть
+          </button>
+        </div>
+      ) : null}
+      <div
+        style={{
+          padding: '22px 24px',
+          overflowY: 'auto',
+          flex: 1,
+          minHeight: 0,
+          width: '100%',
+          boxSizing: 'border-box',
+        }}
+      >
         <div
           style={{
             display: 'grid',
@@ -367,285 +640,46 @@ export default function CeoDashboardPage() {
             href="/payments"
             hint="Все неархивные проекты в вашей зоне доступа"
           />
-          <CeoCard
-            title="SMM"
-            value={stats?.web_projects ?? 0}
-            href="/payments?category=smm"
-            hint="Соцсети и SMM"
-          />
-          <CeoCard
-            title="Таргет"
-            value={stats?.seo_projects ?? 0}
-            href="/payments?category=target"
-            hint="Таргетированная реклама"
-          />
-          <CeoCard
-            title="Личный бренд"
-            value={stats?.ppc_projects ?? 0}
-            href="/payments?category=personal_brand"
-            hint="Личный бренд"
-          />
-          <CeoCard
-            title="Контент"
-            value={stats?.mobile_app_projects ?? 0}
-            href="/payments?category=content"
-            hint="Контент"
-          />
-          <CeoCard
-            title="Техподдержка (legacy)"
-            value={stats?.tech_support_projects ?? 0}
-            href="/payments?category=tech_support"
-            hint="Старые проекты с линией «Тех сопровождение»"
-          />
-          <CeoCard
-            title="Хостинг и домены"
-            value={stats?.hosting_domain_projects ?? 0}
-            href="/payments?category=hosting_domain"
-            hint="Хостинг, домены, инфраструктура"
-          />
+          {projectCards.map((card) => (
+            <CeoCard
+              key={card.href}
+              title={card.title}
+              value={card.value}
+              href={card.href}
+              hint={card.hint}
+            />
+          ))}
         </div>
 
-        <Card style={{ marginBottom: 20, padding: '4px 4px 8px' }}>
-          <div
-            style={{
-              padding: '16px 18px 8px',
-              display: 'flex',
-              flexWrap: 'wrap',
-              alignItems: 'flex-start',
-              justifyContent: 'space-between',
-              gap: 12,
-            }}
-          >
-            <div style={{ flex: 1, minWidth: 200 }}>
-              <div style={{ fontSize: 15, fontWeight: 700, color: '#1a1d23' }}>
-                Активные партнёры · {clientYear}
-              </div>
-              <div style={{ fontSize: 12, color: '#8a8fa8', marginTop: 4, lineHeight: 1.5 }}>
-                Новые партнёры по месяцу добавления, у которых есть неархивный проект в линиях SMM, Таргет, личный бренд,
-                контент или старых линиях (как на карточках выше; хостинг и домены не учитываются).
-                Наведите на график — число за месяц.
-              </div>
-            </div>
-            <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>
-              <label style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 13, color: '#6b7280' }}>
-                <span style={{ fontWeight: 600 }}>Год</span>
-                <select
-                  value={clientYear}
-                  onChange={e => setClientYear(Number(e.target.value))}
-                  style={{
-                    border: '1px solid #e8e9ef',
-                    borderRadius: 9,
-                    padding: '8px 12px',
-                    fontSize: 13,
-                    fontFamily: 'inherit',
-                    color: '#1a1d23',
-                    background: '#fff',
-                    cursor: 'pointer',
-                  }}
-                >
-                  {YEAR_OPTIONS.map(y => (
-                    <option key={y} value={y}>
-                      {y}
-                    </option>
-                  ))}
-                </select>
-              </label>
-              {isAdmin && (
-                <CeoEditPencil
-                  onClick={() => setEditMetric('client_history')}
-                  title="Ручной ввод: активные партнёры по месяцам"
-                />
-              )}
-            </div>
-          </div>
-          <CeoClientHistoryChart data={clientPoints} year={clientYear} />
-        </Card>
-
-        <Card style={{ marginBottom: 20, padding: '4px 4px 8px' }}>
-          <div
-            style={{
-              padding: '16px 18px 8px',
-              display: 'flex',
-              flexWrap: 'wrap',
-              alignItems: 'flex-start',
-              justifyContent: 'space-between',
-              gap: 12,
-            }}
-          >
-            <div style={{ flex: 1, minWidth: 220 }}>
-              <div style={{ fontSize: 15, fontWeight: 700, color: '#1a1d23' }}>Динамика оборота</div>
-              <div style={{ fontSize: 12, color: '#8a8fa8', marginTop: 4, lineHeight: 1.5 }}>
-                {turnoverYear === null
-                  ? 'Сумма оплаченных по месяцу оплаты — скользящие 12 месяцев. Пунктир — тот же месяц год назад.'
-                  : `Календарный год ${turnoverYear}: суммы по месяцам. Пунктир — ${turnoverYear - 1}. Ручной ввод доступен для выбранного года.`}{' '}
-                Наведите курсор на график для сумм.
-              </div>
-            </div>
-            <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>
-              <label style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 13, color: '#6b7280' }}>
-                <span style={{ fontWeight: 600 }}>Период</span>
-                <select
-                  value={turnoverYear === null ? '' : turnoverYear}
-                  onChange={e => {
-                    const v = e.target.value
-                    setTurnoverYear(v === '' ? null : Number(v))
-                  }}
-                  style={{
-                    border: '1px solid #e8e9ef',
-                    borderRadius: 9,
-                    padding: '8px 12px',
-                    fontSize: 13,
-                    fontFamily: 'inherit',
-                    color: '#1a1d23',
-                    background: '#fff',
-                    cursor: 'pointer',
-                    minWidth: 160,
-                  }}
-                >
-                  <option value="">Последние 12 месяцев</option>
-                  {YEAR_OPTIONS.map(y => (
-                    <option key={y} value={y}>
-                      Календарный {y}
-                    </option>
-                  ))}
-                </select>
-              </label>
-              {isAdmin && turnoverYear !== null && (
-                <CeoEditPencil
-                  onClick={() => setEditMetric('turnover')}
-                  title="Ручной ввод оборота по месяцам за год"
-                />
-              )}
-            </div>
-          </div>
-          <CeoTurnoverChart
-            data={turnover.map(p => ({
-              month: p.month,
-              label: p.label,
-              amount: Number(p.amount),
-              previous_year_amount: Number(p.previous_year_amount),
-            }))}
-          />
-        </Card>
-
-        <Card style={{ marginBottom: 20, padding: '4px 4px 8px' }}>
-          <div
-            style={{
-              padding: '16px 18px 8px',
-              display: 'flex',
-              flexWrap: 'wrap',
-              alignItems: 'flex-start',
-              justifyContent: 'space-between',
-              gap: 12,
-            }}
-          >
-            <div style={{ flex: 1, minWidth: 220 }}>
-              <div style={{ fontSize: 15, fontWeight: 700, color: '#1a1d23' }}>Операционный результат (P&L)</div>
-              <div style={{ fontSize: 12, color: '#8a8fa8', marginTop: 4, lineHeight: 1.5 }}>
-                Выручка минус расходы по P&L, без строки «Агаси Д» (дивиденды). В сумах. Пунктир — тот же месяц{' '}
-                {netProfitYear - 1} года. Наведите курсор на график для сумм.
-                {isAdmin && (
-                  <>
-                    {' '}
-                    <Link href="/finance/pl" style={{ color: '#1a6b3c', fontWeight: 600 }}>
-                      Открыть P&L →
-                    </Link>
-                  </>
-                )}
-              </div>
-              {netProfitError && (
-                <div style={{ marginTop: 8, fontSize: 12, color: '#b91c1c' }}>{netProfitError}</div>
-              )}
-            </div>
-            <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>
-              <label style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 13, color: '#6b7280' }}>
-                <span style={{ fontWeight: 600 }}>Год</span>
-                <select
-                  value={netProfitYear}
-                  onChange={e => setNetProfitYear(Number(e.target.value))}
-                  style={{
-                    border: '1px solid #e8e9ef',
-                    borderRadius: 9,
-                    padding: '8px 12px',
-                    fontSize: 13,
-                    fontFamily: 'inherit',
-                    color: '#1a1d23',
-                    background: '#fff',
-                    cursor: 'pointer',
-                    minWidth: 120,
-                  }}
-                >
-                  {YEAR_OPTIONS.map(y => (
-                    <option key={y} value={y}>
-                      {y}
-                    </option>
-                  ))}
-                </select>
-              </label>
-              {netProfitLoading && <span style={{ fontSize: 12, color: '#94a3b8' }}>Загрузка…</span>}
-            </div>
-          </div>
-          <CeoNetProfitChart data={netProfitPoints} />
-        </Card>
-
-        <Card style={{ marginBottom: 20, padding: '4px 4px 12px', overflow: 'hidden' }}>
-          <div
-            style={{
-              padding: '16px 18px 4px',
-              display: 'flex',
-              flexWrap: 'wrap',
-              alignItems: 'flex-start',
-              justifyContent: 'space-between',
-              gap: 12,
-            }}
-          >
-            <div style={{ flex: 1, minWidth: 220 }}>
-              <div style={{ fontSize: 15, fontWeight: 700, color: '#1a1d23' }}>LTV · срок сотрудничества</div>
-              <div style={{ fontSize: 12, color: '#8a8fa8', marginTop: 4, lineHeight: 1.5 }}>
-                {ltvYear === null
-                  ? 'Распределение активных компаний по длительности сотрудничества — расчёт из базы сейчас.'
-                  : ltvYear === new Date().getFullYear()
-                    ? 'Текущий год: те же данные, что и «из базы», плюс можно задать ручной срез.'
-                    : `Год ${ltvYear}: показываются только ручные значения, если вы их задали; иначе нули.`}{' '}
-                Наведите на столбец — число компаний.
-              </div>
-            </div>
-            <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>
-              <label style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 13, color: '#6b7280' }}>
-                <span style={{ fontWeight: 600 }}>Год</span>
-                <select
-                  value={ltvYear === null ? '' : ltvYear}
-                  onChange={e => {
-                    const v = e.target.value
-                    setLtvYear(v === '' ? null : Number(v))
-                  }}
-                  style={{
-                    border: '1px solid #e8e9ef',
-                    borderRadius: 9,
-                    padding: '8px 12px',
-                    fontSize: 13,
-                    fontFamily: 'inherit',
-                    color: '#1a1d23',
-                    background: '#fff',
-                    cursor: 'pointer',
-                    minWidth: 140,
-                  }}
-                >
-                  <option value="">Сейчас (из базы)</option>
-                  {YEAR_OPTIONS.map(y => (
-                    <option key={y} value={y}>
-                      {y}
-                    </option>
-                  ))}
-                </select>
-              </label>
-              {isAdmin && ltvYear !== null && (
-                <CeoEditPencil onClick={() => setEditMetric('ltv')} title="Ручной ввод LTV по корзинам" />
-              )}
-            </div>
-          </div>
-          <CeoLtvChart data={ltvBuckets} />
-        </Card>
+        <CeoDashboardBlocks
+          layoutBlocks={layoutBlocks}
+          layoutLoading={layoutLoading}
+          layoutEdit={layoutEdit}
+          setLayoutEdit={setLayoutEdit}
+          layoutSaving={layoutSaving}
+          isAdmin={isAdmin}
+          canConfigureLayout={canConfigureCeoLayout}
+          onRestoreDefaults={canConfigureCeoLayout ? restoreDefaultLayout : undefined}
+          moveBlock={moveBlock}
+          removeBlock={removeBlock}
+          setAddOpen={setAddOpen}
+          clientYear={clientYear}
+          setClientYear={setClientYear}
+          clientPoints={clientPoints}
+          turnoverYear={turnoverYear}
+          setTurnoverYear={setTurnoverYear}
+          turnover={turnover}
+          netProfitYear={netProfitYear}
+          setNetProfitYear={setNetProfitYear}
+          plCurrent={plCurrent}
+          plPrev={plPrev}
+          netProfitLoading={netProfitLoading}
+          netProfitError={netProfitError}
+          ltvYear={ltvYear}
+          setLtvYear={setLtvYear}
+          ltvBuckets={ltvBuckets}
+          setEditMetric={setEditMetric}
+        />
 
         <div
           style={{
@@ -663,6 +697,109 @@ export default function CeoDashboardPage() {
           только в «Всего проектов».
         </div>
       </div>
+
+      {canConfigureCeoLayout && (
+        <Modal
+          open={addOpen}
+          onClose={() => {
+            setAddOpen(false)
+            setAddModalError('')
+          }}
+          title="Новый блок"
+          width={520}
+          footer={
+            <>
+              <BtnOutline
+                type="button"
+                onClick={() => {
+                  setAddOpen(false)
+                  setAddModalError('')
+                }}
+              >
+                Отмена
+              </BtnOutline>
+              <BtnPrimary type="button" disabled={layoutSaving} onClick={() => void addBlock()}>
+                {layoutSaving ? 'Сохранение…' : 'Добавить'}
+              </BtnPrimary>
+            </>
+          }
+        >
+          <div style={{ marginBottom: 14, fontSize: 13, color: '#64748b', lineHeight: 1.45 }}>
+            Порядок блоков свой для каждой компании. Для графика P&L выберите строку из текущего отчёта (год для P&L —
+            переключатель на графике после добавления).
+          </div>
+          {addModalError ? (
+            <div
+              style={{
+                marginBottom: 12,
+                padding: '10px 12px',
+                borderRadius: 8,
+                background: '#fef2f2',
+                border: '1px solid #fecaca',
+                color: '#991b1b',
+                fontSize: 13,
+              }}
+            >
+              {addModalError}
+            </div>
+          ) : null}
+          <div style={{ marginBottom: 12 }}>
+            <div style={{ fontSize: 12, fontWeight: 600, color: '#64748b', marginBottom: 6 }}>Тип блока</div>
+            <select
+              value={addKind}
+              onChange={e => setAddKind(e.target.value as typeof addKind)}
+              style={{
+                width: '100%',
+                borderRadius: 9,
+                border: '1px solid #e8e9ef',
+                padding: '8px 12px',
+                fontSize: 13,
+                fontFamily: 'inherit',
+              }}
+            >
+              <option value="client_history">Активные партнёры</option>
+              <option value="turnover">Динамика оборота</option>
+              <option value="pl_row">График по строке P&L</option>
+              <option value="ltv">LTV · срок сотрудничества</option>
+            </select>
+          </div>
+          {addKind === 'pl_row' && (
+            <div style={{ marginBottom: 12 }}>
+              <div style={{ fontSize: 12, fontWeight: 600, color: '#64748b', marginBottom: 6 }}>Строка P&L (row_id)</div>
+              {plCurrent?.rows?.length ? (
+                <select
+                  value={addPlRowId}
+                  onChange={e => setAddPlRowId(e.target.value)}
+                  style={{
+                    width: '100%',
+                    borderRadius: 9,
+                    border: '1px solid #e8e9ef',
+                    padding: '8px 12px',
+                    fontSize: 13,
+                    fontFamily: 'inherit',
+                  }}
+                >
+                  {plCurrent.rows.map(r => (
+                    <option key={r.row_id} value={r.row_id}>
+                      {r.label || r.row_id}
+                    </option>
+                  ))}
+                </select>
+              ) : (
+                <Input
+                  value={addPlRowId}
+                  onChange={e => setAddPlRowId(e.target.value)}
+                  placeholder="например operating_profit или rev_web"
+                />
+              )}
+            </div>
+          )}
+          <div>
+            <div style={{ fontSize: 12, fontWeight: 600, color: '#64748b', marginBottom: 6 }}>Свой заголовок (по желанию)</div>
+            <Input value={addTitle} onChange={e => setAddTitle(e.target.value)} placeholder="Пусто — подпись по умолчанию" />
+          </div>
+        </Modal>
+      )}
 
       {editMetric && (
         <CeoMetricEditModal

@@ -5,7 +5,7 @@ import Link from 'next/link'
 import { useAuth } from '@/context/AuthContext'
 import { NotificationBell } from '@/components/NotificationDrawer'
 import { EmployeeQaDrawer } from '@/components/EmployeeSidebarGuide'
-import { companyDisplayName } from '@/lib/company'
+import { companyDisplayName, getCompanySlug, getTokenForSlug } from '@/lib/company'
 
 type NavItem = {
   href: string
@@ -91,6 +91,7 @@ const NAV_SECTIONS: NavSection[] = [
       { href: '/staff', label: 'Команда', icon: '👷', adminOnly: true },
       { href: '/notifications', label: 'Уведомления', icon: '🔔' },
       { href: '/archive', label: 'Архив', icon: '🗄️', adminOnly: true },
+      { href: '/settings/payments-ui', label: 'Подписи проектов', icon: '🏷️', adminOnly: true },
     ],
   },
 ]
@@ -105,14 +106,14 @@ const sectionHeadingStyle: CSSProperties = {
 }
 
 function CompanyWorkspaceSelect({ readOnly }: { readOnly?: boolean }) {
-  const { companies, companySlug, switchCompany } = useAuth()
+  const { workspaceCompanies, companySlug, switchCompany } = useAuth()
   const onChange = useCallback(
     (e: ChangeEvent<HTMLSelectElement>) => {
       void switchCompany(e.target.value)
     },
     [switchCompany]
   )
-  const label = companies.find((c) => c.slug === companySlug)?.name ?? companyDisplayName(companySlug)
+  const label = workspaceCompanies.find((c) => c.slug === companySlug)?.name ?? companyDisplayName(companySlug)
   if (readOnly) {
     return (
       <div
@@ -156,7 +157,7 @@ function CompanyWorkspaceSelect({ readOnly }: { readOnly?: boolean }) {
         fontFamily: 'inherit',
       }}
     >
-      {companies.map((c) => (
+      {workspaceCompanies.map((c) => (
         <option key={c.slug} value={c.slug}>
           {c.name}
         </option>
@@ -166,12 +167,15 @@ function CompanyWorkspaceSelect({ readOnly }: { readOnly?: boolean }) {
 }
 
 export default function Layout({ children }: { children: ReactNode }) {
-  const { user, loading, logout } = useAuth()
+  const { user, loading, logout, authBootstrapFailed, retryAuthBootstrap } = useAuth()
   const router = useRouter()
   const [employeeQaOpen, setEmployeeQaOpen] = useState(false)
 
   useEffect(() => {
-    if (!loading && !user) router.push('/login')
+    if (loading || user) return
+    const slug = getCompanySlug()
+    if (getTokenForSlug(slug)) return
+    router.push('/login')
   }, [user, loading, router])
 
   useEffect(() => {
@@ -185,6 +189,47 @@ export default function Layout({ children }: { children: ReactNode }) {
       router.replace('/my-work')
     }
   }, [loading, user, router.pathname, router])
+
+  if (authBootstrapFailed && !user) {
+    return (
+      <div style={{ minHeight: '100vh', display: 'flex', alignItems: 'center', justifyContent: 'center', background: '#f5f6fa', padding: 24 }}>
+        <div
+          style={{
+            maxWidth: 420,
+            background: '#fff',
+            border: '1px solid #e8e9ef',
+            borderRadius: 16,
+            padding: '28px 24px',
+            boxShadow: '0 4px 24px rgba(0,0,0,.06)',
+          }}
+        >
+          <div style={{ fontSize: 16, fontWeight: 700, color: '#1a1d23', marginBottom: 10 }}>Не удалось восстановить сессию</div>
+          <p style={{ margin: 0, fontSize: 14, color: '#64748b', lineHeight: 1.55, marginBottom: 18 }}>
+            Часто это краткий сбой сети или бэкенд ещё не поднялся после обновления страницы. Сессия не сброшена — нажмите «Повторить» или обновите страницу ещё раз.
+          </p>
+          <button
+            type="button"
+            onClick={() => void retryAuthBootstrap()}
+            disabled={loading}
+            style={{
+              padding: '10px 18px',
+              borderRadius: 10,
+              border: 'none',
+              background: '#1a6b3c',
+              color: '#fff',
+              fontWeight: 600,
+              fontSize: 14,
+              cursor: loading ? 'wait' : 'pointer',
+              fontFamily: 'inherit',
+              opacity: loading ? 0.7 : 1,
+            }}
+          >
+            {loading ? 'Загрузка…' : 'Повторить'}
+          </button>
+        </div>
+      </div>
+    )
+  }
 
   if (loading || !user) return (
     <div style={{ minHeight: '100vh', display: 'flex', alignItems: 'center', justifyContent: 'center', background: '#f5f6fa' }}>

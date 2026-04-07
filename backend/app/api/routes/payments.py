@@ -4,7 +4,7 @@ from sqlalchemy.orm import Session, joinedload
 from typing import List, Optional
 from datetime import date, datetime, timezone
 from calendar import monthrange
-from app.db.database import get_db
+from app.db.database import get_db, get_request_company
 from app.models.payment import Payment, PaymentMonth
 from app.models.partner import Partner
 from app.schemas.schemas import PaymentOut, PaymentCreate, PaymentUpdate, PaymentConfirm
@@ -124,7 +124,7 @@ def load_payment(db: Session, payment_id: int) -> Payment:
         joinedload(Payment.partner).joinedload(Partner.manager),
         joinedload(Payment.confirmed_by_user),
         joinedload(Payment.months),
-    ).filter(Payment.id == payment_id).first()
+    ).filter(Payment.id == payment_id, Payment.company_slug == get_request_company()).first()
 
 
 def enrich(p: Payment) -> PaymentOut:
@@ -330,11 +330,7 @@ def list_payments(
 
 @router.get("/{payment_id}", response_model=PaymentOut)
 def get_payment(payment_id: int, db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
-    p = db.query(Payment).options(
-        joinedload(Payment.partner),
-        joinedload(Payment.confirmed_by_user),
-        joinedload(Payment.months),
-    ).filter(Payment.id == payment_id).first()
+    p = load_payment(db, payment_id)
     p = _require_payment_not_trashed(p)
     assert_partner_access(db, current_user, p.partner_id)
     return enrich(p)
@@ -347,7 +343,9 @@ def create_payment(
     current_user: User = Depends(require_payment_write),
 ):
     assert_partner_access(db, current_user, data.partner_id)
-    payment = Payment(**data.model_dump())
+    dump = data.model_dump()
+    dump["company_slug"] = get_request_company()
+    payment = Payment(**dump)
     sync_hosting_fields(payment)
     _require_hosting_has_renewal_anchor(payment)
     db.add(payment)
@@ -375,7 +373,7 @@ def update_payment(
     db: Session = Depends(get_db),
     current_user: User = Depends(require_payment_write),
 ):
-    p = db.query(Payment).filter(Payment.id == payment_id).first()
+    p = load_payment(db, payment_id)
     p = _require_payment_not_trashed(p)
     assert_partner_access(db, current_user, p.partner_id)
     upd = data.model_dump(exclude_unset=True)
@@ -383,6 +381,14 @@ def update_payment(
         assert_partner_access(db, current_user, upd["partner_id"])
     for field, value in upd.items():
         setattr(p, field, value)
+    if "partner_id" in upd:
+        pr = (
+            db.query(Partner)
+            .filter(Partner.id == p.partner_id, Partner.company_slug == get_request_company())
+            .first()
+        )
+        if pr:
+            p.company_slug = pr.company_slug
     sync_hosting_fields(p)
     _require_hosting_has_renewal_anchor(p)
     db.commit()
@@ -397,7 +403,7 @@ def confirm_payment(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
-    p = db.query(Payment).filter(Payment.id == payment_id).first()
+    p = load_payment(db, payment_id)
     p = _require_payment_not_trashed(p)
     assert_partner_access(db, current_user, p.partner_id)
     if data.postpone_days and data.postpone_days > 0:
@@ -421,7 +427,7 @@ def delete_payment(
     db: Session = Depends(get_db),
     current_user: User = Depends(require_payment_write),
 ):
-    p = db.query(Payment).filter(Payment.id == payment_id).first()
+    p = load_payment(db, payment_id)
     if not p:
         raise HTTPException(status_code=404, detail="Payment not found")
     if p.trashed_at is not None:
