@@ -114,6 +114,21 @@ async def _fetch_administration_chats() -> list[dict]:
         return []
 
 
+async def _fetch_administration_status() -> list[dict]:
+    try:
+        async with httpx.AsyncClient(timeout=8) as client:
+            r = await client.get(
+                f"{API_URL}/api/users/internal/administration-status",
+                headers=_api_headers(),
+            )
+            if r.status_code != 200:
+                return []
+            data = r.json()
+            return data if isinstance(data, list) else []
+    except Exception:
+        return []
+
+
 @dp.message(Command("start"))
 async def cmd_start(message: types.Message, state: FSMContext):
     await state.set_state(Auth.waiting_password)
@@ -229,6 +244,29 @@ async def cmd_pay(message: types.Message, command: CommandObject):
 
     recipients = await _fetch_administration_chats()
     if not recipients:
+        status_rows = await _fetch_administration_status()
+        if not status_rows:
+            await message.answer(
+                "⚠️ В этой компании нет активных пользователей роли «Администрация»."
+            )
+            return
+        missing_chat = [u for u in status_rows if not u.get("has_telegram_chat")]
+        if missing_chat:
+            lines = []
+            for u in missing_chat[:6]:
+                uname = u.get("telegram_username")
+                suffix = f" (@{uname})" if uname else ""
+                lines.append(f"• {u.get('name', '—')}{suffix}")
+            more = ""
+            if len(missing_chat) > 6:
+                more = f"\n…и ещё {len(missing_chat) - 6}"
+            await message.answer(
+                "⚠️ Заявку некому доставить: у пользователей администрации не привязан Telegram Chat ID.\n\n"
+                "Найдены пользователи:\n"
+                f"{chr(10).join(lines)}{more}\n\n"
+                "Нужно, чтобы они зашли в бота через /start и были одобрены, либо чтобы Chat ID был указан в их карточке."
+            )
+            return
         await message.answer("⚠️ Не найдено пользователей администрации с привязанным Telegram.")
         return
 

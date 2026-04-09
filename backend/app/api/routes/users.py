@@ -506,3 +506,28 @@ def internal_administration(db: Session = Depends(get_db)):
         {"id": u.id, "name": u.name, "telegram_chat_id": int(u.telegram_chat_id)}
         for u in rows
     ]
+
+
+@router.get("/internal/administration-status")
+def internal_administration_status(db: Session = Depends(get_db)):
+    """Для диагностики бота: все активные administration текущей компании, даже без Chat ID."""
+    rows = (
+        db.query(User)
+        .filter(
+            User.role == "administration",
+            User.is_active == True,
+            User.company_slug == get_request_company(),
+        )
+        .order_by(User.id.asc())
+        .all()
+    )
+    return [
+        {
+            "id": u.id,
+            "name": u.name,
+            "telegram_chat_id": int(u.telegram_chat_id) if u.telegram_chat_id is not None else None,
+            "telegram_username": u.telegram_username,
+            "has_telegram_chat": bool(u.telegram_chat_id),
+        }
+        for u in rows
+    ]
