@@ -125,6 +125,18 @@ function debt(c: Commission) {
   return d > 0 ? d : 0
 }
 
+/** Минимальные ширины колонок — таблица шире экрана, удобно листать вправо. */
+const COM_COL = {
+  project: 228,
+  linkPay: 200,
+  manager: 132,
+  num: 124,
+  numMd: 118,
+  pct: 92,
+  status: 120,
+  actions: 252,
+} as const
+
 function formatApiError(e: unknown): string {
   const err = e as { response?: { status?: number; data?: { detail?: unknown } }; message?: string }
   const d = err.response?.data?.detail
@@ -424,24 +436,49 @@ export default function CommissionsPage() {
         )}
       </div>
 
+      <p style={{ margin: '0 0 12px', fontSize: 12, color: '#94a3b8', lineHeight: 1.45 }}>
+        Таблица широкая: при необходимости прокручивайте её вправо — все суммы и кнопки останутся читаемыми.
+      </p>
+
       {/* Table */}
       <Card>
-        <div style={{ overflowX: 'auto' }}>
-          <table style={{ width: '100%', borderCollapse: 'collapse', minWidth: 980 }}>
+        <div
+          style={{
+            overflowX: 'auto',
+            overflowY: 'visible',
+            WebkitOverflowScrolling: 'touch',
+            maxWidth: '100%',
+          }}
+        >
+          <table
+            style={{
+              width: '100%',
+              borderCollapse: 'collapse',
+              minWidth: showManagerScope ? 1540 : 1400,
+              tableLayout: 'fixed',
+            }}
+          >
             <thead>
               <tr style={{ borderBottom: '2px solid #f1f5f9' }}>
-                <Th>Проект (комиссия)</Th>
-                <Th style={{ maxWidth: 200 }}>Проект «Проекты»</Th>
-                {showManagerScope && <Th>Менеджер</Th>}
-                <Th style={{ textAlign: 'right' }}>Стоимость</Th>
-                <Th style={{ textAlign: 'right' }}>Прибыль</Th>
-                <Th style={{ textAlign: 'center', whiteSpace: 'nowrap' }} title="Доля менеджера от прибыли">% менедж.</Th>
-                <Th style={{ textAlign: 'right' }}>Общий доход</Th>
-                <Th style={{ textAlign: 'right' }}>Доход (факт)</Th>
-                <Th style={{ textAlign: 'right' }}>Получено</Th>
-                <Th style={{ textAlign: 'right' }}>Долг</Th>
-                <Th style={{ textAlign: 'center' }}>Статус</Th>
-                <Th />
+                <Th style={{ width: COM_COL.project, minWidth: COM_COL.project }}>Проект (комиссия)</Th>
+                <Th style={{ width: COM_COL.linkPay, minWidth: COM_COL.linkPay }}>Проект «Проекты»</Th>
+                {showManagerScope && (
+                  <Th style={{ width: COM_COL.manager, minWidth: COM_COL.manager }}>Менеджер</Th>
+                )}
+                <Th style={{ textAlign: 'right', width: COM_COL.num, minWidth: COM_COL.num }}>Стоимость</Th>
+                <Th style={{ textAlign: 'right', width: COM_COL.num, minWidth: COM_COL.num }}>Прибыль</Th>
+                <Th
+                  style={{ textAlign: 'center', width: COM_COL.pct, minWidth: COM_COL.pct }}
+                  title="Доля менеджера от прибыли"
+                >
+                  % менедж.
+                </Th>
+                <Th style={{ textAlign: 'right', width: COM_COL.numMd, minWidth: COM_COL.numMd }}>Общий доход</Th>
+                <Th style={{ textAlign: 'right', width: COM_COL.numMd, minWidth: COM_COL.numMd }}>Доход (факт)</Th>
+                <Th style={{ textAlign: 'right', width: COM_COL.numMd, minWidth: COM_COL.numMd }}>Получено</Th>
+                <Th style={{ textAlign: 'right', width: COM_COL.numMd, minWidth: COM_COL.numMd }}>Долг</Th>
+                <Th style={{ textAlign: 'center', width: COM_COL.status, minWidth: COM_COL.status }}>Статус</Th>
+                <Th style={{ width: COM_COL.actions, minWidth: COM_COL.actions, textAlign: 'right' }}>Действия</Th>
               </tr>
             </thead>
             <tbody>
@@ -458,11 +495,11 @@ export default function CommissionsPage() {
                 <tr key={c.id} style={{ borderBottom: '1px solid #f1f5f9', transition: 'background .12s' }}
                   onMouseEnter={e => (e.currentTarget.style.background = '#f0fdf4')}
                   onMouseLeave={e => (e.currentTarget.style.background = '')}>
-                  <Td>
+                  <Td style={{ verticalAlign: 'top', wordBreak: 'break-word' }}>
                     <div style={{ fontWeight: 600, fontSize: 14, marginBottom: 3 }}>
                       {c.project_name}
                     </div>
-                    <div style={{ display: 'flex', gap: 6, alignItems: 'center' }}>
+                    <div style={{ display: 'flex', gap: 6, alignItems: 'center', flexWrap: 'wrap' }}>
                       {typeBadge(c.project_type)}
                       <span style={{ fontSize: 11, color: '#94a3b8' }}>
                         {new Date(c.project_date).toLocaleDateString('ru-RU', { day: '2-digit', month: 'short', year: 'numeric' })}
@@ -472,7 +509,7 @@ export default function CommissionsPage() {
                       <div style={{ fontSize: 11, color: '#94a3b8', marginTop: 2 }}>{c.note}</div>
                     )}
                   </Td>
-                  <Td style={{ fontSize: 12, color: '#475569', verticalAlign: 'top', lineHeight: 1.35 }}>
+                  <Td style={{ fontSize: 12, color: '#475569', verticalAlign: 'top', lineHeight: 1.35, wordBreak: 'break-word' }}>
                     {c.linked_payment_description ? (
                       <>
                         <div style={{ fontWeight: 600 }}>{c.linked_payment_description}</div>
@@ -485,65 +522,98 @@ export default function CommissionsPage() {
                     )}
                   </Td>
                   {showManagerScope && (
-                    <Td><span style={{ fontSize: 13 }}>{c.manager?.name || '—'}</span></Td>
+                    <Td style={{ verticalAlign: 'top' }}>
+                      <span style={{ fontSize: 13, lineHeight: 1.35 }}>{c.manager?.name || '—'}</span>
+                    </Td>
                   )}
-                  <Td style={{ textAlign: 'right', fontWeight: 600, whiteSpace: 'nowrap' }}>
+                  <Td style={{ textAlign: 'right', fontWeight: 600, whiteSpace: 'nowrap', verticalAlign: 'top' }}>
                     {formatMoneyNumber(c.project_cost)}
                   </Td>
-                  <Td style={{ textAlign: 'right', whiteSpace: 'nowrap' }}>
+                  <Td style={{ textAlign: 'right', whiteSpace: 'nowrap', verticalAlign: 'top' }}>
                     <span style={{ color: c.profit >= 0 ? '#059669' : '#ef4444', fontWeight: 600 }}>
                       {formatMoneyNumber(c.profit)}
                     </span>
                   </Td>
-                  <Td style={{ textAlign: 'center', whiteSpace: 'nowrap' }}>
+                  <Td style={{ textAlign: 'center', whiteSpace: 'nowrap', verticalAlign: 'top' }}>
                     <span style={{ fontWeight: 700, color: '#2563eb' }}>{c.manager_percent}%</span>
                   </Td>
-                  <Td style={{ textAlign: 'right', color: '#2563eb', fontWeight: 600, whiteSpace: 'nowrap' }}>
+                  <Td style={{ textAlign: 'right', color: '#2563eb', fontWeight: 600, whiteSpace: 'nowrap', verticalAlign: 'top' }}>
                     {formatMoneyNumber(c.total_manager_income)}
                   </Td>
-                  <Td style={{ textAlign: 'right', color: '#7c3aed' }}>
+                  <Td style={{ textAlign: 'right', color: '#7c3aed', whiteSpace: 'nowrap', verticalAlign: 'top' }}>
                     {fmtNum(c.manager_income_from_actual)}
                   </Td>
-                  <Td style={{ textAlign: 'right', color: '#059669' }}>
+                  <Td style={{ textAlign: 'right', color: '#059669', whiteSpace: 'nowrap', verticalAlign: 'top' }}>
                     {fmtNum(c.total_received)}
                   </Td>
-                  <Td style={{ textAlign: 'right' }}>
+                  <Td style={{ textAlign: 'right', verticalAlign: 'top', whiteSpace: 'nowrap' }}>
                     {debt(c) > 0
                       ? <span style={{ color: '#ef4444', fontWeight: 600 }}>{formatMoneyNumber(debt(c))}</span>
                       : <span style={{ color: '#059669' }}>—</span>
                     }
                   </Td>
-                  <Td style={{ textAlign: 'center' }}>{pctBadge(c.commission_paid_full)}</Td>
-                  <Td>
-                    <div style={{ display: 'flex', gap: 6, justifyContent: 'flex-end', flexWrap: 'wrap' }}>
-                      <BtnOutline
-                        type="button"
-                        title="Копия на следующий месяц (без полученных сумм)"
-                        onClick={async () => {
-                          await api.post(`commissions/${c.id}/duplicate-next-month`)
-                          await load()
-                        }}
-                        style={{ padding: '4px 8px', fontSize: 11 }}
-                      >
-                        +1 мес
-                      </BtnOutline>
-                      <BtnOutline
-                        type="button"
-                        title="Сдвинуть дату этой строки на следующий месяц"
-                        onClick={async () => {
-                          await api.post(`commissions/${c.id}/shift-next-month`)
-                          await load()
-                        }}
-                        style={{ padding: '4px 8px', fontSize: 11 }}
-                      >
-                        ⟳ дата
-                      </BtnOutline>
-                      <BtnIconEdit onClick={() => openEdit(c)} />
-                      <button
-                        onClick={() => setDeleteId(c.id)}
-                        style={{ padding: '4px 8px', borderRadius: 6, border: '1px solid #fecaca',
-                          background: '#fff5f5', color: '#ef4444', cursor: 'pointer', fontSize: 13 }}
-                      >✕</button>
+                  <Td style={{ textAlign: 'center', verticalAlign: 'top' }}>{pctBadge(c.commission_paid_full)}</Td>
+                  <Td style={{ verticalAlign: 'top' }}>
+                    <div
+                      style={{
+                        display: 'flex',
+                        flexDirection: 'column',
+                        alignItems: 'flex-end',
+                        gap: 10,
+                        minWidth: COM_COL.actions - 24,
+                      }}
+                    >
+                      <div style={{ display: 'flex', gap: 8, flexWrap: 'nowrap', justifyContent: 'flex-end' }}>
+                        <BtnOutline
+                          type="button"
+                          title="Копия на следующий месяц (без полученных сумм)"
+                          onClick={async () => {
+                            await api.post(`commissions/${c.id}/duplicate-next-month`)
+                            await load()
+                          }}
+                          style={{ padding: '7px 12px', fontSize: 12, fontWeight: 600, whiteSpace: 'nowrap' }}
+                        >
+                          +1 мес
+                        </BtnOutline>
+                        <BtnOutline
+                          type="button"
+                          title="Перенести дату этой строки на следующий месяц"
+                          onClick={async () => {
+                            await api.post(`commissions/${c.id}/shift-next-month`)
+                            await load()
+                          }}
+                          style={{ padding: '7px 12px', fontSize: 12, fontWeight: 600, whiteSpace: 'nowrap' }}
+                        >
+                          дата →
+                        </BtnOutline>
+                      </div>
+                      <div style={{ display: 'flex', gap: 10, alignItems: 'center', justifyContent: 'flex-end' }}>
+                        <BtnIconEdit title="Редактировать" onClick={() => openEdit(c)} style={{ width: 40, height: 40 }} />
+                        <button
+                          type="button"
+                          title="Удалить"
+                          aria-label="Удалить"
+                          onClick={() => setDeleteId(c.id)}
+                          style={{
+                            padding: 0,
+                            width: 40,
+                            height: 40,
+                            borderRadius: 8,
+                            border: '1px solid #fecaca',
+                            background: '#fff5f5',
+                            color: '#ef4444',
+                            cursor: 'pointer',
+                            fontSize: 16,
+                            lineHeight: 1,
+                            display: 'inline-flex',
+                            alignItems: 'center',
+                            justifyContent: 'center',
+                            boxSizing: 'border-box',
+                          }}
+                        >
+                          ✕
+                        </button>
+                      </div>
                     </div>
                   </Td>
                 </tr>
@@ -560,7 +630,21 @@ export default function CommissionsPage() {
             textTransform: 'uppercase', letterSpacing: 0.5 }}>
             Итого за период
           </div>
-          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(6, 1fr)', gap: 12 }}>
+          <div
+            style={{
+              overflowX: 'auto',
+              WebkitOverflowScrolling: 'touch',
+              paddingBottom: 4,
+            }}
+          >
+          <div
+            style={{
+              display: 'grid',
+              gridTemplateColumns: 'repeat(6, minmax(160px, 1fr))',
+              gap: 12,
+              minWidth: 1020,
+            }}
+          >
             {([
               { label: 'Проектов',               val: String(stats.total_projects),                   unit: '',     color: '#1e293b',  bg: '#fff',     featured: false },
               { label: 'Общая стоимость',         val: formatMoneyNumber(stats.total_cost),            unit: ' сум', color: '#1e293b',  bg: '#fff',     featured: false },
@@ -582,6 +666,7 @@ export default function CommissionsPage() {
                 </div>
               </div>
             ))}
+          </div>
           </div>
         </div>
       )}

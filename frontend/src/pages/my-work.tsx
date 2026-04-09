@@ -13,6 +13,12 @@ import {
   writeTaskSummaryCurrency,
   type TaskSummaryCurrency,
 } from '@/lib/taskSummaryCurrency'
+import {
+  exportStaffTasksPdf,
+  exportStaffTasksPng,
+  taskStatusRu,
+  type StaffExportOptions,
+} from '@/lib/staffTasksExport'
 interface TaskRow {
   id: number
   work_date: string
@@ -87,6 +93,7 @@ export default function MyWorkPage() {
   const [monthMenuOpen, setMonthMenuOpen] = useState(false)
   const monthMenuRef = useRef<HTMLDivElement>(null)
   const [actionBusyId, setActionBusyId] = useState<number | null>(null)
+  const [exportBusy, setExportBusy] = useState(false)
 
   const fetchMonthsWithTasks = useCallback(() => {
     return api
@@ -292,6 +299,91 @@ export default function MyWorkPage() {
     [tasks],
   )
 
+  const buildMyWorkExportOptions = useCallback((): StaffExportOptions | null => {
+    if (!user) return null
+    const monthLabel = MONTH_OPTIONS.find(m => m.v === month)?.l ?? String(month)
+    const summaryLines: string[] = []
+    summaryLines.push(
+      summaryCurrency === 'USD'
+        ? `Итого · USD: $${formatMoneyNumber(totals.usd)}`
+        : `Итого · UZS: ${formatMoneyNumber(totals.uzs)} сум`,
+    )
+    summaryLines.push(
+      `Часы (период): ${totals.h.toLocaleString('ru-RU', { maximumFractionDigits: 1 })}`,
+    )
+    if (summaryCurrency === 'UZS' && totals.usd > 0) {
+      summaryLines.push(`Также в USD: $${formatMoneyNumber(totals.usd)}`)
+    }
+    if (summaryCurrency === 'USD' && totals.uzs > 0) {
+      summaryLines.push(`Также в UZS: ${formatMoneyNumber(totals.uzs)} сум`)
+    }
+    const footerParts: string[] = []
+    if (totals.uzs > 0) footerParts.push(`${formatMoneyNumber(totals.uzs)} сум`)
+    if (totals.usd > 0) footerParts.push(`$${formatMoneyNumber(totals.usd)}`)
+    return {
+      periodTitle: `Задачи за ${monthLabel} ${year}`,
+      employeeName: user.name,
+      summaryLines,
+      paymentDetails: user.payment_details?.trim() || '— не заполнено в профиле',
+      rows: tasks.map(t => ({
+        date: formatDate(t.work_date),
+        project: t.project_name,
+        task: t.task_description,
+        hours: num(t.hours) != null ? String(num(t.hours)) : '—',
+        amount: (() => {
+          const a = num(t.amount)
+          const bud = num(t.budget_amount)
+          if (a == null && !(bud != null && bud > 0)) return '—'
+          const bits: string[] = []
+          if (a != null) {
+            bits.push(t.currency === 'UZS' ? `${formatMoneyNumber(a)} сум` : `$${formatMoneyNumber(a)}`)
+          }
+          if (bud != null && bud > 0) {
+            bits.push(
+              t.currency === 'UZS'
+                ? `+ ${formatMoneyNumber(bud)} сум бюджет`
+                : `+ $${formatMoneyNumber(bud)} бюджет`,
+            )
+          }
+          return bits.join('\n')
+        })(),
+        status: taskStatusRu(t.status),
+        paid: !!t.paid,
+      })),
+      footerHours:
+        totals.h > 0 ? totals.h.toLocaleString('ru-RU', { maximumFractionDigits: 1 }) : '—',
+      footerAmounts: footerParts.length ? footerParts.join(' · ') : '—',
+    }
+  }, [user, month, year, totals, summaryCurrency, tasks])
+
+  const runExportPng = async () => {
+    const opts = buildMyWorkExportOptions()
+    if (!opts) return
+    setExportBusy(true)
+    try {
+      const base = `zadachi_${user?.name ?? 'sotrudnik'}_${year}-${String(month).padStart(2, '0')}`
+      await exportStaffTasksPng(opts, base)
+    } catch {
+      /* */
+    } finally {
+      setExportBusy(false)
+    }
+  }
+
+  const runExportPdf = async () => {
+    const opts = buildMyWorkExportOptions()
+    if (!opts) return
+    setExportBusy(true)
+    try {
+      const base = `zadachi_${user?.name ?? 'sotrudnik'}_${year}-${String(month).padStart(2, '0')}`
+      await exportStaffTasksPdf(opts, base)
+    } catch {
+      /* */
+    } finally {
+      setExportBusy(false)
+    }
+  }
+
   if (loading || !user || user.role !== 'employee') return null
 
   return (
@@ -464,6 +556,41 @@ export default function MyWorkPage() {
         </div>
 
         <Card style={{ padding: 0, overflow: 'hidden' }}>
+          <div
+            style={{
+              padding: '14px 18px',
+              borderBottom: '1px solid #e8e9ef',
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'space-between',
+              gap: 12,
+              flexWrap: 'wrap',
+            }}
+          >
+            <div style={{ fontWeight: 700, fontSize: 15 }}>
+              Задачи за {MONTH_OPTIONS.find(m => m.v === month)?.l} {year}
+            </div>
+            <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+              <BtnOutline
+                type="button"
+                disabled={exportBusy || loadingData}
+                onClick={() => void runExportPng()}
+                style={{ fontSize: 12, padding: '6px 12px', fontWeight: 600 }}
+                title="Скачать сводку за месяц как PNG — удобно отправить в чат"
+              >
+                {exportBusy ? '…' : '🖼 Картинка'}
+              </BtnOutline>
+              <BtnOutline
+                type="button"
+                disabled={exportBusy || loadingData}
+                onClick={() => void runExportPdf()}
+                style={{ fontSize: 12, padding: '6px 12px', fontWeight: 600 }}
+                title="PDF на всю высоту таблицы — удобно листать с телефона"
+              >
+                {exportBusy ? '…' : '📄 PDF'}
+              </BtnOutline>
+            </div>
+          </div>
           <table style={{ width: '100%', borderCollapse: 'collapse' }}>
             <thead>
               <tr style={{ background: '#f8fafc' }}>

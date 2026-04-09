@@ -768,9 +768,11 @@ def pl_report(
         else:
             salary_uzs[m_idx - 1] += pl_amt
 
-    # --- Процент менеджера (раздел «Комиссия»): доход менеджера = прибыль × %, по месяцу даты проекта
-    # Процент менеджера в P&L — по факту выплаченных/полученных сумм из карточки «Комиссия»;
-    # месяц колонки: дата получения (received_amount_*_on) или, если пусто, дата проекта.
+    # --- Процент менеджера (раздел «Комиссия»)
+    # Обычный режим: P&L получает фактически выплаченные/полученные суммы по датам received_amount_*_on
+    # (или по дате проекта, если дата не указана).
+    # Если отмечено commission_paid_full, то всю сумму комиссии показываем в одной колонке:
+    # дата (2) -> дата (1) -> дата проекта.
     mgr_comm_uzs = [Decimal("0") for _ in range(n)]
     for c in (
         db.query(Commission)
@@ -779,6 +781,19 @@ def pl_report(
     ):
         r1 = Decimal(str(c.received_amount_1 or 0))
         r2 = Decimal(str(c.received_amount_2 or 0))
+        profit = Decimal(str((c.project_cost or 0))) - Decimal(str((c.production_cost or 0)))
+        full_commission = (profit * Decimal(str(c.manager_percent or 0)) / Decimal("100")).quantize(
+            Decimal("0.01")
+        )
+        if bool(getattr(c, "commission_paid_full", False)):
+            full_date = (
+                getattr(c, "received_amount_2_on", None)
+                or getattr(c, "received_amount_1_on", None)
+                or c.project_date
+            )
+            if full_commission > 0 and full_date.year == y and 1 <= int(full_date.month) <= 12:
+                mgr_comm_uzs[int(full_date.month) - 1] += full_commission
+            continue
         if r1 > 0:
             d1 = getattr(c, "received_amount_1_on", None) or c.project_date
             if d1.year == y and 1 <= int(d1.month) <= 12:
