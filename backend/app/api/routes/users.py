@@ -486,3 +486,23 @@ def internal_accountants(db: Session = Depends(get_db)):
         {"id": u.id, "name": u.name, "telegram_chat_id": int(u.telegram_chat_id)}
         for u in rows
     ]
+
+
+@router.get("/internal/administration")
+def internal_administration(db: Session = Depends(get_db)):
+    """Активные пользователи role=administration с Telegram — получатели команд /pay из бота."""
+    rows = (
+        db.query(User)
+        .filter(
+            User.role == "administration",
+            User.is_active == True,
+            User.telegram_chat_id.isnot(None),
+            User.company_slug == get_request_company(),
+        )
+        .order_by(User.id.asc())
+        .all()
+    )
+    return [
+        {"id": u.id, "name": u.name, "telegram_chat_id": int(u.telegram_chat_id)}
+        for u in rows
+    ]

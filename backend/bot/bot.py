@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 import asyncio
 import calendar
 import html
@@ -10,7 +12,7 @@ from zoneinfo import ZoneInfo
 
 import httpx
 from aiogram import Bot, Dispatcher, types, F
-from aiogram.filters import Command
+from aiogram.filters import Command, CommandObject
 from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import State, StatesGroup
 from aiogram.fsm.storage.memory import MemoryStorage
@@ -97,6 +99,21 @@ async def _fetch_telegram_cc_chats(route_manager_id: Optional[int]) -> list[int]
         return []
 
 
+async def _fetch_administration_chats() -> list[dict]:
+    try:
+        async with httpx.AsyncClient(timeout=8) as client:
+            r = await client.get(
+                f"{API_URL}/api/users/internal/administration",
+                headers=_api_headers(),
+            )
+            if r.status_code != 200:
+                return []
+            data = r.json()
+            return data if isinstance(data, list) else []
+    except Exception:
+        return []
+
+
 @dp.message(Command("start"))
 async def cmd_start(message: types.Message, state: FSMContext):
     await state.set_state(Auth.waiting_password)
@@ -160,6 +177,7 @@ async def cmd_help(message: types.Message):
         "📖 <b>Команды:</b>\n\n"
         "/start — ввести пароль и отправить заявку на доступ\n"
         "/id — показать Chat ID\n"
+        "/pay &lt;текст&gt; — админ отправляет заявку на оплату в Telegram администрации\n"
         "/help — справка\n\n"
         "После одобрения заявки менеджер получает ссылку и логин в панель; "
         "бухгалтерия работает через уведомления в этом чате.\n\n"
@@ -171,6 +189,64 @@ async def cmd_help(message: types.Message):
         "ответ уходит только автору.",
         parse_mode="HTML",
     )
+
+
+@dp.message(Command("pay"))
+async def cmd_pay(message: types.Message, command: CommandObject):
+    raw = (command.args or "").strip()
+    if not raw:
+        await message.answer(
+            "Напишите команду так: <code>/pay текст заявки</code>\n\n"
+            "Пример: <code>/pay Оплатить подрядчику 2 500 000 сум за апрель</code>",
+            parse_mode="HTML",
+        )
+        return
+
+    sender_chat_id = message.from_user.id
+    try:
+        async with httpx.AsyncClient(timeout=8) as client:
+            r = await client.get(f"{API_URL}/api/users/internal/by-chat/{sender_chat_id}", headers=_api_headers())
+            if r.status_code != 200:
+                await message.answer("⚠️ Вы не зарегистрированы. Используйте /start.")
+                return
+            sender = r.json()
+    except Exception:
+        await message.answer("⚠️ Не удалось проверить профиль. Попробуйте позже.")
+        return
+
+    if sender.get("role") != "admin":
+        await message.answer("⚠️ Команда /pay доступна только администратору.")
+        return
+
+    admins_request = (
+        f"💸 <b>Заявка на оплату</b>\n"
+        f"👤 <b>{html.escape(sender.get('name') or message.from_user.full_name or 'Администратор')}</b>\n"
+        f"🏢 Компания: <code>{html.escape(BOT_COMPANY_SLUG)}</code>\n\n"
+        f"{html.escape(raw)}"
+    )
+    if len(admins_request) > 3800:
+        admins_request = admins_request[:3700] + "\n\n<i>…текст обрезан (слишком длинный).</i>"
+
+    recipients = await _fetch_administration_chats()
+    if not recipients:
+        await message.answer("⚠️ Не найдено пользователей администрации с привязанным Telegram.")
+        return
+
+    ok = 0
+    for user in recipients:
+        cid = user.get("telegram_chat_id")
+        if not cid:
+            continue
+        try:
+            await bot.send_message(int(cid), admins_request, parse_mode="HTML")
+            ok += 1
+        except Exception as e:
+            logging.warning(f"/pay delivery to administration {cid} failed: {e}")
+
+    if ok:
+        await message.answer(f"✅ Заявка отправлена администрации ({ok}).")
+    else:
+        await message.answer("⚠️ Не удалось доставить заявку администрации.")
 
 
 @dp.callback_query(F.data.startswith("edtk:"))
