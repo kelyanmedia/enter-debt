@@ -18,7 +18,7 @@ from app.schemas.schemas import (
 )
 from app.core.security import get_password_hash, normalize_email, require_admin
 from app.core.config import settings
-from app.api.routes.users import _validate_visible_manager_ids
+from app.api.routes.users import _normalize_telegram_username, _transfer_telegram_chat_id, _validate_visible_manager_ids
 
 router = APIRouter(prefix="/api/telegram-join", tags=["telegram-join"])
 logger = logging.getLogger(__name__)
@@ -157,7 +157,7 @@ def _approve_link_telegram(db: Session, req: TelegramJoinRequest, data: Telegram
     expected = {
         "manager": ("manager", "admin"),
         "accountant": ("accountant",),
-        "administration": ("administration",),
+        "administration": ("administration", "admin"),
     }
     if u.role not in expected[data.role]:
         raise HTTPException(
@@ -165,34 +165,13 @@ def _approve_link_telegram(db: Session, req: TelegramJoinRequest, data: Telegram
             detail="Роль выбранного пользователя не совпадает с типом одобрения",
         )
 
-    other = (
-        db.query(User)
-        .filter(
-            User.telegram_chat_id == chat_id,
-            User.is_active == True,
-            User.id != uid,
-            User.company_slug == get_request_company(),
-        )
-        .first()
-    )
-    if other:
-        raise HTTPException(
-            status_code=400,
-            detail=f"Этот Chat ID уже привязан к пользователю «{other.name}»",
-        )
-
-    if u.telegram_chat_id is not None and int(u.telegram_chat_id) != int(chat_id):
-        raise HTTPException(
-            status_code=400,
-            detail="У пользователя уже другой Telegram. Снимите Chat ID в карточке или выберите другого пользователя.",
-        )
-
+    moved_username = _transfer_telegram_chat_id(db, u, int(chat_id))
     u.telegram_chat_id = chat_id
-    u.telegram_username = req.telegram_username
+    u.telegram_username = _normalize_telegram_username(req.telegram_username) or moved_username
     if data.name.strip():
         u.name = data.name.strip()
 
-    if data.role == "administration" and data.visible_manager_ids is not None:
+    if data.role == "administration" and u.role == "administration" and data.visible_manager_ids is not None:
         u.visible_manager_ids = json.dumps(_validate_visible_manager_ids(db, data.visible_manager_ids))
 
     db.delete(req)
@@ -214,6 +193,13 @@ def _approve_link_telegram(db: Session, req: TelegramJoinRequest, data: Telegram
         text = (
             f"✅ <b>Telegram привязан</b>\n\n"
             f"Уведомления о платежах и документы будут приходить <b>в этот чат</b>."
+        )
+    elif u.role == "admin":
+        text = (
+            f"✅ <b>Telegram привязан</b>\n\n"
+            f"Роль: <b>администратор</b> — уведомления и команды бота будут приходить сюда.\n\n"
+            f"🌐 Панель:\n<code>{url}</code>\n"
+            f"📧 Логин:\n<code>{u.email}</code>"
         )
     else:
         text = (

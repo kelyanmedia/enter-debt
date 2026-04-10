@@ -84,6 +84,36 @@ def _validate_notify_manager_ids(db: Session, ids: Optional[List[int]]) -> List[
     return uniq
 
 
+def _normalize_telegram_username(value: Optional[str]) -> Optional[str]:
+    if value is None:
+        return None
+    raw = str(value).strip()
+    if not raw:
+        return None
+    return raw[1:] if raw.startswith("@") else raw
+
+
+def _transfer_telegram_chat_id(
+    db: Session,
+    target_user: User,
+    chat_id: Optional[int],
+) -> Optional[str]:
+    """Передаёт chat_id целевому пользователю, снимая его с любой другой учётки."""
+    if chat_id is None:
+        return None
+    moved_username: Optional[str] = None
+    q = db.query(User).filter(User.telegram_chat_id == int(chat_id))
+    if target_user.id is not None:
+        q = q.filter(User.id != target_user.id)
+    holders = q.all()
+    for holder in holders:
+        if moved_username is None and holder.telegram_username:
+            moved_username = holder.telegram_username
+        holder.telegram_chat_id = None
+        holder.telegram_username = None
+    return moved_username
+
+
 @router.get("", response_model=List[UserOut])
 def list_users(db: Session = Depends(get_db), _=Depends(require_admin)):
     return (
@@ -190,6 +220,9 @@ def create_user(data: UserCreate, db: Session = Depends(get_db), _=Depends(requi
         admin_accessible_company_slugs=admin_access_json if data.role == "admin" else None,
         hashed_password=get_password_hash(plain),
     )
+    moved_username = _transfer_telegram_chat_id(db, user, data.telegram_chat_id)
+    user.telegram_chat_id = int(data.telegram_chat_id) if data.telegram_chat_id is not None else None
+    user.telegram_username = _normalize_telegram_username(data.telegram_username) or moved_username
     db.add(user)
     db.commit()
     db.refresh(user)
@@ -199,7 +232,7 @@ def create_user(data: UserCreate, db: Session = Depends(get_db), _=Depends(requi
 
 
 def _apply_update(user: User, data: UserUpdate):
-    for field, value in data.model_dump(exclude_none=True).items():
+    for field, value in data.model_dump(exclude_unset=True).items():
         if field == "visible_manager_ids":
             continue
         if field == "admin_telegram_notify_manager_ids":
@@ -209,6 +242,8 @@ def _apply_update(user: User, data: UserUpdate):
         if field == "admin_telegram_notify_all":
             continue
         if field == "can_enter_cash_flow":
+            continue
+        if field in ("telegram_chat_id", "telegram_username"):
             continue
         if field == "password":
             pv = (value or "").strip()
@@ -233,6 +268,28 @@ def _apply_update(user: User, data: UserUpdate):
                 user.is_ad_budget_employee = bool(value)
         else:
             setattr(user, field, value)
+
+
+def _sync_telegram_binding(user: User, data: UserUpdate, db: Session) -> None:
+    patch = data.model_dump(exclude_unset=True)
+    has_chat = "telegram_chat_id" in patch
+    has_username = "telegram_username" in patch
+    if not has_chat and not has_username:
+        return
+
+    moved_username: Optional[str] = None
+    if has_chat:
+        chat_id = patch.get("telegram_chat_id")
+        if chat_id is None:
+            user.telegram_chat_id = None
+        else:
+            moved_username = _transfer_telegram_chat_id(db, user, int(chat_id))
+            user.telegram_chat_id = int(chat_id)
+
+    if has_username:
+        user.telegram_username = _normalize_telegram_username(patch.get("telegram_username"))
+    elif moved_username and not user.telegram_username:
+        user.telegram_username = moved_username
 
 
 def _sync_visible_managers_after_user_update(db: Session, user: User, data: UserUpdate) -> None:
@@ -327,6 +384,7 @@ def update_user(user_id: int, data: UserUpdate, db: Session = Depends(get_db), _
     previous_role = user.role
     _check_email_change_tenant_unique(db, user, data)
     _apply_update(user, data)
+    _sync_telegram_binding(user, data, db)
     _sync_visible_managers_after_user_update(db, user, data)
     _sync_administration_cash_flow_input(db, user, data)
     _sync_admin_company_access(db, user, data, previous_role)
@@ -344,6 +402,7 @@ def patch_user(user_id: int, data: UserUpdate, db: Session = Depends(get_db), _=
     previous_role = user.role
     _check_email_change_tenant_unique(db, user, data)
     _apply_update(user, data)
+    _sync_telegram_binding(user, data, db)
     _sync_visible_managers_after_user_update(db, user, data)
     _sync_administration_cash_flow_input(db, user, data)
     _sync_admin_company_access(db, user, data, previous_role)

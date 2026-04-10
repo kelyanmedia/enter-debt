@@ -193,8 +193,8 @@ export default function UsersPage() {
           role: form.role,
           is_active: form.is_active === 'true',
           telegram_username: form.telegram_username || null,
+          telegram_chat_id: form.telegram_chat_id ? Number(form.telegram_chat_id) : null,
         }
-        if (form.telegram_chat_id) payload.telegram_chat_id = Number(form.telegram_chat_id)
         if (form.role === 'manager') payload.see_all_partners = form.see_all_partners === 'true'
         if (form.role === 'administration') payload.visible_manager_ids = visibleManagerIds
         if (form.role === 'administration') {
@@ -312,7 +312,7 @@ export default function UsersPage() {
   const approveLinkCandidates = users.filter((u) => {
     if (approveForm.role === 'manager') return u.role === 'manager' || u.role === 'admin'
     if (approveForm.role === 'accountant') return u.role === 'accountant'
-    return u.role === 'administration'
+    return u.role === 'administration' || u.role === 'admin'
   })
 
   const runRejectJoin = async () => {
@@ -877,7 +877,7 @@ export default function UsersPage() {
           </Field>
         </div>
         <div style={{ padding: '10px 12px', background: '#f5f6fa', borderRadius: 9, fontSize: 12, color: '#8a8fa8' }}>
-          💡 Chat ID можно узнать через @userinfobot в Telegram. Добавлять пользователей может только администратор.
+          💡 Chat ID можно узнать через @userinfobot в Telegram. Если этот ID уже был у другого пользователя, система автоматически перенесёт привязку.
         </div>
       </Modal>
 
@@ -949,12 +949,12 @@ export default function UsersPage() {
               {approveLinkCandidates.map((u) => (
                 <option key={u.id} value={u.id}>
                   {u.name} · {u.email}
-                  {u.telegram_chat_id ? ' (уже есть Telegram — снимите в карточке)' : ''}
+                  {u.telegram_chat_id ? ' (Telegram уже есть — будет перенесён автоматически)' : ''}
                 </option>
               ))}
             </Select>
             <div style={{ fontSize: 11, color: '#8a8fa8', marginTop: 6 }}>
-              Если у выбранного пользователя уже указан другой Chat ID, сначала очистите поле Telegram в его карточке.
+              Если у выбранного пользователя уже указан другой Chat ID, система автоматически перенесёт Telegram на эту учётную запись.
             </div>
           </Field>
         )}
