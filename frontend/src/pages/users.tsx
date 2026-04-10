@@ -88,6 +88,8 @@ export default function UsersPage() {
   const [adminCompanySlugs, setAdminCompanySlugs] = useState<string[]>([])
   const [managerOptions, setManagerOptions] = useState<User[]>([])
   const [userRoleFilter, setUserRoleFilter] = useState<UserRoleFilter>('all')
+  const [staleManagerHint, setStaleManagerHint] = useState('')
+  const [staleApproveManagerHint, setStaleApproveManagerHint] = useState('')
 
   const loadAll = () => {
     api.get('users').then(r => setUsers(r.data)).catch(() => setUsers([]))
@@ -178,6 +180,44 @@ export default function UsersPage() {
       .then(r => setManagerOptions(r.data.filter(x => x.role === 'manager')))
       .catch(() => setManagerOptions([]))
   }, [approveReq, approveForm.role])
+
+  useEffect(() => {
+    if (!modal || form.role !== 'administration') {
+      setStaleManagerHint('')
+      return
+    }
+    const allowed = new Set(managerOptions.map((m) => m.id))
+    if (!allowed.size) return
+    setVisibleManagerIds((prev) => {
+      const next = prev.filter((id) => allowed.has(id))
+      const removed = prev.length - next.length
+      setStaleManagerHint(
+        removed > 0
+          ? `Из списка автоматически убраны ${removed} неактуальных менеджера(ов), которых уже нет среди активных.`
+          : '',
+      )
+      return next
+    })
+  }, [modal, form.role, managerOptions])
+
+  useEffect(() => {
+    if (!approveReq || approveForm.role !== 'administration') {
+      setStaleApproveManagerHint('')
+      return
+    }
+    const allowed = new Set(managerOptions.map((m) => m.id))
+    if (!allowed.size) return
+    setApproveVisibleManagerIds((prev) => {
+      const next = prev.filter((id) => allowed.has(id))
+      const removed = prev.length - next.length
+      setStaleApproveManagerHint(
+        removed > 0
+          ? `Из заявки убраны ${removed} неактуальных менеджера(ов), которых уже нет среди активных.`
+          : '',
+      )
+      return next
+    })
+  }, [approveReq, approveForm.role, managerOptions])
 
   const save = async () => {
     if (!form.name || !form.email) { setError('Заполните имя и email'); return }
@@ -877,8 +917,13 @@ export default function UsersPage() {
           </Field>
         </div>
         <div style={{ padding: '10px 12px', background: '#f5f6fa', borderRadius: 9, fontSize: 12, color: '#8a8fa8' }}>
-          💡 Chat ID можно узнать через @userinfobot в Telegram. Если этот ID уже был у другого пользователя, система автоматически перенесёт привязку.
+          💡 Лучший вариант: пользователь сам пишет боту <code>/start</code> и проходит привязку по паролю. Если Chat ID нужно вписать вручную, система автоматически перенесёт его с другой учётной записи.
         </div>
+        {(form.role === 'administration' || form.role === 'admin') && staleManagerHint && (
+          <div style={{ marginTop: 10, padding: '10px 12px', background: '#fffbeb', borderRadius: 9, fontSize: 12, color: '#92400e' }}>
+            {staleManagerHint}
+          </div>
+        )}
       </Modal>
 
       <Modal
@@ -906,6 +951,9 @@ export default function UsersPage() {
         <div style={{ fontSize: 12, color: '#8a8fa8', marginBottom: 12 }}>
           Можно создать нового пользователя или <b>привязать этот Telegram</b> к уже заведённой учётной записи (без дубликата email).
           После одобрения в Telegram придёт сообщение: новому менеджеру/администрации — ссылка и пароль; при привязке — подтверждение; бухгалтерии — что пуши будут здесь.
+        </div>
+        <div style={{ fontSize: 12, color: '#8a8fa8', marginBottom: 12, lineHeight: 1.45 }}>
+          Лучший сценарий: пользователь сначала заходит в бота через <b>/start</b>, а администратор уже подтверждает заявку здесь. Если Telegram уже был привязан к другой учётке, система перенесёт Chat ID автоматически.
         </div>
         <div style={{ display: 'flex', gap: 10, marginBottom: 14, flexWrap: 'wrap' }}>
           <BtnOutline
@@ -1013,6 +1061,11 @@ export default function UsersPage() {
               ))}
             </div>
             <div style={{ fontSize: 11, color: '#8a8fa8', marginTop: 4 }}>Если никого не отметить — список в профиле не меняется.</div>
+          </div>
+        )}
+        {approveForm.role === 'administration' && staleApproveManagerHint && (
+          <div style={{ marginBottom: 12, padding: '10px 12px', background: '#fffbeb', borderRadius: 9, fontSize: 12, color: '#92400e' }}>
+            {staleApproveManagerHint}
           </div>
         )}
       </Modal>
