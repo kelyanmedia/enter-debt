@@ -1,4 +1,4 @@
-import { useEffect, useState, useCallback, useMemo, type CSSProperties } from 'react'
+import { useEffect, useState, useCallback, useMemo, useRef, type CSSProperties } from 'react'
 import Link from 'next/link'
 import { useRouter } from 'next/router'
 import { useAuth } from '@/context/AuthContext'
@@ -151,6 +151,22 @@ const PAYMENTS_CATEGORY_QUERY_VALUES = new Set([
   'hosting_domain',
 ])
 
+function parseCategoryQuery(raw: string | string[] | undefined): string[] {
+  const input = Array.isArray(raw) ? raw[0] : raw
+  if (typeof input !== 'string' || !input.trim()) return []
+  const seen = new Set<string>()
+  return input
+    .split(',')
+    .map((x) => x.trim())
+    .filter((x) => PAYMENTS_CATEGORY_QUERY_VALUES.has(x) && !seen.has(x) && (seen.add(x), true))
+}
+
+function formatCategoryFilterLabel(selected: string[], labels: Record<string, string>): string {
+  if (selected.length === 0) return 'Все линии'
+  if (selected.length === 1) return labels[selected[0]] || selected[0]
+  return `Линии: ${selected.length}`
+}
+
 function monthLabel(ym: string) {
   const [y, m] = ym.split('-')
   return `${MONTHS_RU[parseInt(m) - 1]} ${y}`
@@ -246,7 +262,7 @@ export default function PaymentsPage() {
   const [partners, setPartners] = useState<Partner[]>([])
   const [filterStatus, setFilterStatus] = useState('')
   const [filterType, setFilterType] = useState('')
-  const [filterCategory, setFilterCategory] = useState('')
+  const [filterCategories, setFilterCategories] = useState<string[]>([])
   const [filterManager, setFilterManager] = useState('')
   /** default — порядок с API; urgency — сначала просрочка (красные), затем ближайшие выплаты, в конце без даты и с большим запасом */
   const [sortByRemaining, setSortByRemaining] = useState<'default' | 'urgency'>('default')
@@ -258,6 +274,8 @@ export default function PaymentsPage() {
   const [form, setForm] = useState({ ...EMPTY_FORM })
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState('')
+  const [categoryMenuOpen, setCategoryMenuOpen] = useState(false)
+  const categoryMenuRef = useRef<HTMLDivElement>(null)
 
   // Drawer state
   const [drawer, setDrawer] = useState<Payment | null>(null)
@@ -296,7 +314,6 @@ export default function PaymentsPage() {
     const params = new URLSearchParams()
     if (filterStatus) params.append('status', filterStatus)
     if (filterType) params.append('payment_type', filterType)
-    if (filterCategory) params.append('project_category', filterCategory)
     try {
       const r = await api.get<Payment[]>(`payments?${params}`)
       let data = r.data
@@ -305,23 +322,17 @@ export default function PaymentsPage() {
     } catch {
       setPayments([])
     }
-  }, [filterStatus, filterType, filterCategory, filterManager])
+  }, [filterStatus, filterType, filterManager])
 
   useEffect(() => {
     if (!router.isReady) return
-    const raw = router.query.category
-    const c = Array.isArray(raw) ? raw[0] : raw
-    if (typeof c === 'string' && PAYMENTS_CATEGORY_QUERY_VALUES.has(c)) {
-      setFilterCategory(c)
-    } else if (!c) {
-      setFilterCategory('')
-    }
+    setFilterCategories(parseCategoryQuery(router.query.category))
   }, [router.isReady, router.query.category])
 
-  const setCategoryFilter = (v: string) => {
-    setFilterCategory(v)
+  const setCategoryFilter = (values: string[]) => {
+    setFilterCategories(values)
     const q: Record<string, string | string[] | undefined> = { ...router.query }
-    if (v) q.category = v
+    if (values.length > 0) q.category = values.join(',')
     else delete q.category
     router.replace({ pathname: '/payments', query: q }, undefined, { shallow: true })
   }
@@ -329,6 +340,27 @@ export default function PaymentsPage() {
   const layoutUi = useMemo(() => effectiveCompanyUi(companyUiState), [companyUiState])
   const lineLabels = useMemo(() => lineLabelMap(layoutUi), [layoutUi])
   const segLabels = useMemo(() => segmentLabelMap(layoutUi), [layoutUi])
+  const categoryFilterLabel = useMemo(
+    () => formatCategoryFilterLabel(filterCategories, lineLabels),
+    [filterCategories, lineLabels],
+  )
+
+  useEffect(() => {
+    if (!categoryMenuOpen) return
+    const onDoc = (e: MouseEvent) => {
+      const el = categoryMenuRef.current
+      if (el && !el.contains(e.target as Node)) setCategoryMenuOpen(false)
+    }
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') setCategoryMenuOpen(false)
+    }
+    document.addEventListener('mousedown', onDoc)
+    document.addEventListener('keydown', onKey)
+    return () => {
+      document.removeEventListener('mousedown', onDoc)
+      document.removeEventListener('keydown', onKey)
+    }
+  }, [categoryMenuOpen])
 
   useEffect(() => {
     api
@@ -371,8 +403,15 @@ export default function PaymentsPage() {
   }, [payments, sortByRemaining])
 
   const visiblePayments = useMemo(
-    () => displayedPayments.filter((p) => passesPaymentsSegment(p, paymentsSegment)),
-    [displayedPayments, paymentsSegment],
+    () => {
+      let list = displayedPayments.filter((p) => passesPaymentsSegment(p, paymentsSegment))
+      if (filterCategories.length > 0) {
+        const selected = new Set(filterCategories)
+        list = list.filter((p) => selected.has(p.project_category || ''))
+      }
+      return list
+    },
+    [displayedPayments, paymentsSegment, filterCategories],
   )
 
   useEffect(() => {
@@ -795,14 +834,122 @@ export default function PaymentsPage() {
               <option value="one_time">Разовый</option>
               <option value="service_expiry">Сервисный</option>
             </Select>
-            <Select value={filterCategory} onChange={e => setCategoryFilter(e.target.value)} style={{ maxWidth: 200 }}>
-              <option value="">Все линии</option>
-              {visibleLinesSorted(layoutUi).map((l) => (
-                <option key={l.category_slug} value={l.category_slug}>
-                  {l.label}
-                </option>
-              ))}
-            </Select>
+            <div ref={categoryMenuRef} style={{ position: 'relative', width: 200, maxWidth: '100%' }}>
+              <button
+                type="button"
+                onClick={() => setCategoryMenuOpen((o) => !o)}
+                aria-expanded={categoryMenuOpen}
+                aria-haspopup="listbox"
+                style={{
+                  width: '100%',
+                  minHeight: 40,
+                  border: '1px solid #e8e9ef',
+                  borderRadius: 9,
+                  padding: '8px 12px',
+                  fontSize: 14,
+                  background: '#fff',
+                  color: '#1a1d23',
+                  cursor: 'pointer',
+                  fontFamily: 'inherit',
+                  display: 'flex',
+                  alignItems: 'center',
+                  justifyContent: 'space-between',
+                  gap: 8,
+                  boxSizing: 'border-box',
+                }}
+                title={categoryFilterLabel}
+              >
+                <span
+                  style={{
+                    overflow: 'hidden',
+                    textOverflow: 'ellipsis',
+                    whiteSpace: 'nowrap',
+                    color: filterCategories.length > 0 ? '#1a1d23' : '#4b5563',
+                  }}
+                >
+                  {categoryFilterLabel}
+                </span>
+                <span style={{ fontSize: 11, color: '#8a8fa8' }} aria-hidden>
+                  ▾
+                </span>
+              </button>
+              {categoryMenuOpen && (
+                <div
+                  role="listbox"
+                  style={{
+                    position: 'absolute',
+                    left: 0,
+                    top: 'calc(100% + 6px)',
+                    width: '100%',
+                    maxHeight: 320,
+                    overflowY: 'auto',
+                    background: '#fff',
+                    border: '1px solid #e8e9ef',
+                    borderRadius: 14,
+                    boxShadow: '0 18px 40px rgba(15,23,42,.16)',
+                    padding: 8,
+                    zIndex: 80,
+                    boxSizing: 'border-box',
+                  }}
+                >
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setCategoryFilter([])
+                      setCategoryMenuOpen(false)
+                    }}
+                    style={{
+                      width: '100%',
+                      textAlign: 'left',
+                      padding: '10px 12px',
+                      border: 'none',
+                      borderRadius: 10,
+                      background: filterCategories.length === 0 ? '#b455b8' : '#fff',
+                      color: filterCategories.length === 0 ? '#fff' : '#1a1d23',
+                      cursor: 'pointer',
+                      fontFamily: 'inherit',
+                      fontSize: 13,
+                      fontWeight: 700,
+                      marginBottom: 4,
+                    }}
+                  >
+                    {filterCategories.length === 0 ? '✓ ' : ''}Все линии
+                  </button>
+                  {visibleLinesSorted(layoutUi).map((l) => {
+                    const active = filterCategories.includes(l.category_slug)
+                    return (
+                      <label
+                        key={l.category_slug}
+                        style={{
+                          display: 'flex',
+                          alignItems: 'center',
+                          gap: 10,
+                          padding: '9px 12px',
+                          borderRadius: 10,
+                          cursor: 'pointer',
+                          fontSize: 13,
+                          color: '#1a1d23',
+                          userSelect: 'none',
+                        }}
+                      >
+                        <input
+                          type="checkbox"
+                          checked={active}
+                          onChange={() => {
+                            setCategoryFilter(
+                              active
+                                ? filterCategories.filter((x) => x !== l.category_slug)
+                                : [...filterCategories, l.category_slug],
+                            )
+                          }}
+                        />
+                        <span>{l.label}</span>
+                      </label>
+                    )
+                  })}
+                </div>
+              )}
+            </div>
             <Select
               value={sortByRemaining}
               onChange={e => setSortByRemaining(e.target.value as 'default' | 'urgency')}
