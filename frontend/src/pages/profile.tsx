@@ -18,6 +18,12 @@ const roleLabel: Record<string, string> = {
   employee: 'Сотрудник',
 }
 
+type TelegramCcSettings = {
+  notify_all: boolean
+  manager_ids: number[]
+  managers: { id: number; name: string }[]
+}
+
 export default function ProfilePage() {
   const { user, loading, refreshUser } = useAuth()
   const [email, setEmail] = useState('')
@@ -33,6 +39,12 @@ export default function ProfilePage() {
   const [tgPingMsg, setTgPingMsg] = useState('')
   const [paymentDetails, setPaymentDetails] = useState('')
   const [requisitesHintOpen, setRequisitesHintOpen] = useState(false)
+  const [ccBusy, setCcBusy] = useState(false)
+  const [ccSaving, setCcSaving] = useState(false)
+  const [ccMsg, setCcMsg] = useState('')
+  const [ccNotifyAll, setCcNotifyAll] = useState(false)
+  const [ccManagerIds, setCcManagerIds] = useState<number[]>([])
+  const [ccManagers, setCcManagers] = useState<{ id: number; name: string }[]>([])
 
   useEffect(() => {
     if (user?.email) setEmail(user.email)
@@ -41,6 +53,32 @@ export default function ProfilePage() {
   useEffect(() => {
     if (user?.role === 'employee') setPaymentDetails(user.payment_details ?? '')
   }, [user?.role, user?.payment_details])
+
+  useEffect(() => {
+    if (user?.role !== 'admin') return
+    let cancelled = false
+    setCcBusy(true)
+    setCcMsg('')
+    api
+      .get<TelegramCcSettings>('auth/me/telegram-cc-settings')
+      .then(({ data }) => {
+        if (cancelled) return
+        setCcNotifyAll(Boolean(data.notify_all))
+        setCcManagerIds(Array.isArray(data.manager_ids) ? data.manager_ids : [])
+        setCcManagers(Array.isArray(data.managers) ? data.managers : [])
+      })
+      .catch((e: unknown) => {
+        if (cancelled) return
+        const ax = e as { response?: { data?: { detail?: string } } }
+        setCcMsg(`Ошибка загрузки настроек: ${ax.response?.data?.detail || 'сеть или сервер'}`)
+      })
+      .finally(() => {
+        if (!cancelled) setCcBusy(false)
+      })
+    return () => {
+      cancelled = true
+    }
+  }, [user?.role])
 
   const submit = async (e: React.FormEvent) => {
     e.preventDefault()
@@ -190,9 +228,117 @@ export default function ProfilePage() {
                 {user.role === 'admin'
                   ? 'Как администратору: так вы проверяете, что до вашего чата доходят сервисные сообщения и отчёты.'
                   : 'Проверка доставки сообщений бота в ваш Telegram.'}
+                <div style={{ marginTop: 8 }}>
+                  Горячие команды бота: <code>/pay текст</code> — заявка администрации,{' '}
+                  <code>/d сумма [комментарий]</code> — фиксирует, сколько вы забрали из прибыли (добавляется в
+                  ДДС как расход в строку «Изъятие прибыли (/d)», категория «Дивиденды»).
+                </div>
               </div>
             )}
           </div>
+
+          {user.role === 'admin' && (
+            <div
+              style={{
+                marginBottom: 20,
+                padding: '14px 16px',
+                background: '#f8f9fc',
+                borderRadius: 10,
+                border: '1px solid #eceef2',
+              }}
+            >
+              <div style={{ fontSize: 13, fontWeight: 700, color: '#1a1d23', marginBottom: 8 }}>
+                Telegram: чьи пуши и активность видеть
+              </div>
+              <div style={{ fontSize: 12, color: '#6b7280', lineHeight: 1.5, marginBottom: 12 }}>
+                Эти настройки влияют на копии переписки менеджер ↔ бухгалтерия и файлы из бота.
+              </div>
+              {ccMsg && (
+                <div
+                  style={{
+                    marginBottom: 10,
+                    padding: '8px 10px',
+                    borderRadius: 8,
+                    fontSize: 12,
+                    background: ccMsg.startsWith('Ошибка') ? '#fef0f0' : '#e8f5ee',
+                    color: ccMsg.startsWith('Ошибка') ? '#b91c1c' : '#1a6b3c',
+                  }}
+                >
+                  {ccMsg}
+                </div>
+              )}
+              <label style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 10, fontSize: 13, color: '#1a1d23' }}>
+                <input
+                  type="checkbox"
+                  checked={ccNotifyAll}
+                  onChange={e => setCcNotifyAll(e.target.checked)}
+                  disabled={ccBusy || ccSaving}
+                />
+                Видеть активность всех менеджеров
+              </label>
+              {!ccNotifyAll && (
+                <div
+                  style={{
+                    border: '1px solid #e5e7eb',
+                    borderRadius: 8,
+                    padding: '8px 10px',
+                    maxHeight: 180,
+                    overflowY: 'auto',
+                    marginBottom: 10,
+                    background: '#fff',
+                  }}
+                >
+                  {ccManagers.length === 0 && (
+                    <div style={{ fontSize: 12, color: '#8a8fa8' }}>Нет активных менеджеров в этой компании.</div>
+                  )}
+                  {ccManagers.map(m => (
+                    <label
+                      key={m.id}
+                      style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 8, fontSize: 13, color: '#1a1d23' }}
+                    >
+                      <input
+                        type="checkbox"
+                        checked={ccManagerIds.includes(m.id)}
+                        disabled={ccBusy || ccSaving}
+                        onChange={e => {
+                          setCcManagerIds(prev =>
+                            e.target.checked ? [...prev, m.id] : prev.filter(x => x !== m.id),
+                          )
+                        }}
+                      />
+                      {m.name}
+                    </label>
+                  ))}
+                </div>
+              )}
+              <BtnOutline
+                type="button"
+                disabled={ccBusy || ccSaving}
+                onClick={async () => {
+                  setCcMsg('')
+                  setCcSaving(true)
+                  try {
+                    const payload = {
+                      notify_all: ccNotifyAll,
+                      manager_ids: ccNotifyAll ? [] : ccManagerIds,
+                    }
+                    const { data } = await api.put<TelegramCcSettings>('auth/me/telegram-cc-settings', payload)
+                    setCcNotifyAll(Boolean(data.notify_all))
+                    setCcManagerIds(Array.isArray(data.manager_ids) ? data.manager_ids : [])
+                    setCcManagers(Array.isArray(data.managers) ? data.managers : [])
+                    setCcMsg('Сохранено.')
+                  } catch (e: unknown) {
+                    const ax = e as { response?: { data?: { detail?: string } } }
+                    setCcMsg(`Ошибка: ${ax.response?.data?.detail || 'не удалось сохранить'}`)
+                  } finally {
+                    setCcSaving(false)
+                  }
+                }}
+              >
+                {ccSaving ? 'Сохранение…' : 'Сохранить настройки Telegram-активности'}
+              </BtnOutline>
+            </div>
+          )}
 
           <form onSubmit={submit}>
             <Field label="Email (логин)">

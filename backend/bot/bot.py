@@ -7,6 +7,7 @@ import logging
 import os
 import re
 from datetime import datetime
+from decimal import Decimal, InvalidOperation
 from typing import Optional
 from zoneinfo import ZoneInfo
 
@@ -129,6 +130,46 @@ async def _fetch_administration_status() -> list[dict]:
         return []
 
 
+def _parse_decimal_amount(raw: str) -> Decimal:
+    txt = (raw or "").strip().replace(" ", "")
+    if "," in txt and "." not in txt:
+        txt = txt.replace(",", ".")
+    else:
+        txt = txt.replace(",", "")
+    return Decimal(txt)
+
+
+def _parse_d_command(raw: str) -> tuple[Decimal, Decimal, str]:
+    """
+    Формат:
+      /d 2500000
+      /d 2500000 аванс себе
+      /d 120 usd
+      /d 120$ на личные расходы
+    """
+    text = (raw or "").strip()
+    m = re.match(r"^\s*([\d\s.,]+)\s*([a-zA-Z$а-яА-Я]*)\s*(.*)$", text)
+    if not m:
+        raise ValueError("Не удалось распознать сумму.")
+    amount_raw = (m.group(1) or "").strip()
+    currency_raw = (m.group(2) or "").strip().lower()
+    note = (m.group(3) or "").strip()
+    if not amount_raw:
+        raise ValueError("Не указана сумма.")
+    try:
+        amount = _parse_decimal_amount(amount_raw)
+    except (InvalidOperation, ValueError):
+        raise ValueError("Сумма указана в неверном формате.")
+    if amount <= 0:
+        raise ValueError("Сумма должна быть больше нуля.")
+
+    usd_markers = {"usd", "$", "дол", "доллар", "доллара", "долларов"}
+    is_usd = any(currency_raw.startswith(x) for x in usd_markers)
+    if is_usd:
+        return Decimal("0"), amount, note
+    return amount, Decimal("0"), note
+
+
 @dp.message(Command("start"))
 async def cmd_start(message: types.Message, state: FSMContext):
     await state.set_state(Auth.waiting_password)
@@ -193,6 +234,7 @@ async def cmd_help(message: types.Message):
         "/start — ввести пароль и отправить заявку на доступ\n"
         "/id — показать Chat ID\n"
         "/pay &lt;текст&gt; — админ отправляет заявку на оплату в Telegram администрации\n"
+        "/d &lt;сумма&gt; [&lt;комментарий&gt;] — зафиксировать, сколько забрали из прибыли (запись в ДДС)\n"
         "/help — справка\n\n"
         "После одобрения заявки менеджер получает ссылку и логин в панель; "
         "бухгалтерия работает через уведомления в этом чате.\n\n"
@@ -285,6 +327,85 @@ async def cmd_pay(message: types.Message, command: CommandObject):
         await message.answer(f"✅ Заявка отправлена администрации ({ok}).")
     else:
         await message.answer("⚠️ Не удалось доставить заявку администрации.")
+
+
+@dp.message(Command("d"))
+async def cmd_dividend(message: types.Message, command: CommandObject):
+    raw = (command.args or "").strip()
+    if not raw:
+        await message.answer(
+            "Напишите команду так: <code>/d сумма [комментарий]</code>\n\n"
+            "Примеры:\n"
+            "• <code>/d 2500000 Забрал из прибыли</code>\n"
+            "• <code>/d 120 usd Личные расходы</code>",
+            parse_mode="HTML",
+        )
+        return
+
+    sender_chat_id = message.from_user.id
+    try:
+        async with httpx.AsyncClient(timeout=8) as client:
+            r = await client.get(f"{API_URL}/api/users/internal/by-chat/{sender_chat_id}", headers=_api_headers())
+            if r.status_code != 200:
+                await message.answer("⚠️ Вы не зарегистрированы. Используйте /start.")
+                return
+            sender = r.json()
+    except Exception:
+        await message.answer("⚠️ Не удалось проверить профиль. Попробуйте позже.")
+        return
+
+    if sender.get("role") not in ("admin", "financier"):
+        await message.answer("⚠️ Команда /d доступна только администратору или финансисту.")
+        return
+
+    try:
+        amount_uzs, amount_usd, note = _parse_d_command(raw)
+    except ValueError as e:
+        await message.answer(
+            "⚠️ " + str(e) + "\n\n"
+            "Пример: <code>/d 2500000 Забрал из прибыли</code> или <code>/d 120 usd</code>",
+            parse_mode="HTML",
+        )
+        return
+
+    payload = {
+        "chat_id": sender_chat_id,
+        "amount_uzs": str(amount_uzs),
+        "amount_usd": str(amount_usd),
+        "note": note or None,
+        "payment_method": "transfer",
+        "entry_date": datetime.now(TASK_REMINDER_TZ).date().isoformat(),
+    }
+    secret = _internal_secret()
+    try:
+        async with httpx.AsyncClient(timeout=10) as client:
+            r = await client.post(
+                f"{API_URL}/api/users/internal/telegram-dividend",
+                headers=_api_headers({"X-Internal-Secret": secret}),
+                json=payload,
+            )
+            if r.status_code >= 400:
+                try:
+                    detail = r.json().get("detail")
+                except Exception:
+                    detail = None
+                await message.answer(f"⚠️ Не удалось записать операцию: {detail or 'ошибка сервера'}")
+                return
+            created = r.json() if r.status_code == 200 else {}
+    except Exception:
+        await message.answer("⚠️ Не удалось связаться с сервером. Попробуйте позже.")
+        return
+
+    uzs_text = f"{amount_uzs:,.2f}".replace(",", " ") if amount_uzs > 0 else "0.00"
+    usd_text = f"{amount_usd:,.2f}".replace(",", " ") if amount_usd > 0 else "0.00"
+    await message.answer(
+        "✅ Зафиксировано в ДДС.\n"
+        f"Категория: <b>Дивиденды</b>\n"
+        f"Строка: <b>{html.escape(created.get('label') or 'Изъятие прибыли (/d)')}</b>\n"
+        f"Месяц: <code>{html.escape(created.get('period_month') or '—')}</code>\n"
+        f"Сумма: <code>{uzs_text} UZS</code> / <code>{usd_text} USD</code>",
+        parse_mode="HTML",
+    )
 
 
 @dp.callback_query(F.data.startswith("edtk:"))
@@ -518,7 +639,87 @@ async def handle_file_from_accountant(message: types.Message):
         await message.answer("⚠️ Не удалось проверить роль. Попробуйте позже.")
         return
 
-    if sender.get("role") not in ("accountant", "admin"):
+    role = sender.get("role")
+    sender_id = int(sender.get("id", 0) or 0)
+    sender_name = sender.get("name") or message.from_user.full_name or "—"
+    if role not in ("accountant", "admin", "manager"):
+        return
+
+    # Менеджер (или админ без reply) -> бухгалтерия + копии администраторам по настройкам
+    if role == "manager" or (role == "admin" and not message.reply_to_message):
+        try:
+            async with httpx.AsyncClient(timeout=8) as client:
+                r = await client.get(f"{API_URL}/api/users/internal/accountants", headers=_api_headers())
+                if r.status_code != 200:
+                    await message.answer("⚠️ Список бухгалтерии недоступен.")
+                    return
+                accountants = r.json()
+        except Exception:
+            await message.answer("⚠️ Не удалось связаться с сервером.")
+            return
+
+        if not accountants:
+            await message.answer("⚠️ В системе нет бухгалтеров с привязанным Telegram.")
+            return
+
+        contract_hint = (
+            "📌 Если это договор/контракт для Didox — бухгалтерия может ответить <b>файлом цитатой</b> "
+            "на это сообщение, и файл уйдёт обратно только этому менеджеру."
+        )
+        caption = (
+            f"📎 <b>Файл от менеджера</b>\n"
+            f"👤 <b>{html.escape(sender_name)}</b> · user id <code>{sender_id}</code>\n"
+            f"<code>ed_reply_to_manager:{sender_id}</code>\n\n"
+            f"{contract_hint}"
+        )
+        delivered = 0
+        for acc in accountants:
+            cid = acc.get("telegram_chat_id")
+            if not cid:
+                continue
+            try:
+                if message.document:
+                    await bot.send_document(
+                        chat_id=int(cid),
+                        document=message.document.file_id,
+                        caption=caption,
+                        parse_mode="HTML",
+                    )
+                elif message.photo:
+                    await bot.send_photo(
+                        chat_id=int(cid),
+                        photo=message.photo[-1].file_id,
+                        caption=caption,
+                        parse_mode="HTML",
+                    )
+                delivered += 1
+            except Exception as e:
+                logging.warning(f"manager file to accountant {cid} failed: {e}")
+
+        cc_caption = "📨 <i>Копия (контроль)</i>\n\n" + caption
+        for cid in await _fetch_telegram_cc_chats(sender_id):
+            try:
+                if message.document:
+                    await bot.send_document(
+                        chat_id=cid,
+                        document=message.document.file_id,
+                        caption=cc_caption,
+                        parse_mode="HTML",
+                    )
+                elif message.photo:
+                    await bot.send_photo(
+                        chat_id=cid,
+                        photo=message.photo[-1].file_id,
+                        caption=cc_caption,
+                        parse_mode="HTML",
+                    )
+            except Exception as ce:
+                logging.warning(f"telegram cc manager file to {cid} failed: {ce}")
+
+        if delivered:
+            await message.answer(f"✅ Файл отправлен бухгалтерии ({delivered}) и в контрольные копии по настройкам.")
+        else:
+            await message.answer("⚠️ Не удалось доставить файл бухгалтерии.")
         return
 
     try:
@@ -554,13 +755,15 @@ async def handle_file_from_accountant(message: types.Message):
         forward_caption += f"\n{caption_text}"
 
     route_uid = _extract_route_user_id(reply_msg)
+    reply_manager_uid = _extract_reply_manager_id(reply_msg)
     target_chats: list[int] = []
     mode = "broadcast"
 
-    if route_uid is not None:
+    direct_uid = route_uid or reply_manager_uid
+    if direct_uid is not None:
         try:
             async with httpx.AsyncClient(timeout=5) as client:
-                r = await client.get(f"{API_URL}/api/users/internal/telegram-chat-by-user/{route_uid}", headers=_api_headers())
+                r = await client.get(f"{API_URL}/api/users/internal/telegram-chat-by-user/{direct_uid}", headers=_api_headers())
                 if r.status_code == 200:
                     data = r.json()
                     cid = data.get("telegram_chat_id")
@@ -608,7 +811,7 @@ async def handle_file_from_accountant(message: types.Message):
         except Exception as e:
             logging.warning(f"Failed to forward to {mgr_chat_id}: {e}")
 
-    cc_route = route_uid if mode == "single" else None
+    cc_route = direct_uid if mode == "single" else None
     cc_cap = "📨 <i>Копия (контроль)</i>\n\n" + forward_caption
     for cid in await _fetch_telegram_cc_chats(cc_route):
         try:

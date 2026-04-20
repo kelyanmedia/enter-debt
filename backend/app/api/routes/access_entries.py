@@ -31,7 +31,7 @@ def list_access_entries(
     current_user: User = Depends(get_current_user),
 ):
     _ensure_access(current_user)
-    q = db.query(AccessEntry)
+    q = db.query(AccessEntry).filter(AccessEntry.company_slug == get_request_company())
     if current_user.role == "administration":
         q = q.filter(AccessEntry.shared_with_administration == True)
     rows = q.order_by(

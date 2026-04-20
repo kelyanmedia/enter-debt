@@ -1,3 +1,4 @@
+import json
 from datetime import datetime, timezone
 from typing import List
 
@@ -20,6 +21,17 @@ router = APIRouter(prefix="/api/auth", tags=["auth"])
 class CompanyOut(BaseModel):
     slug: str
     name: str
+
+
+class TelegramCcSettingsOut(BaseModel):
+    notify_all: bool
+    manager_ids: List[int]
+    managers: List[dict]
+
+
+class TelegramCcSettingsPut(BaseModel):
+    notify_all: bool = False
+    manager_ids: List[int] = []
 
 
 def compute_companies_list() -> List[CompanyOut]:
@@ -225,3 +237,85 @@ def patch_me(
     db.commit()
     db.refresh(user)
     return UserOut.model_validate(user)
+
+
+@router.get("/me/telegram-cc-settings", response_model=TelegramCcSettingsOut)
+def get_me_telegram_cc_settings(
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    if current_user.role != "admin":
+        raise HTTPException(status_code=403, detail="Настройки доступны только администратору")
+    user = (
+        db.query(User)
+        .filter(User.id == current_user.id, User.company_slug == get_request_company())
+        .first()
+    )
+    if not user:
+        raise HTTPException(status_code=404, detail="User not found")
+    mids: List[int] = []
+    raw = user.admin_telegram_notify_manager_ids
+    if isinstance(raw, str) and raw.strip():
+        try:
+            mids = [int(x) for x in json.loads(raw)]
+        except (TypeError, ValueError, json.JSONDecodeError):
+            mids = []
+    manager_rows = (
+        db.query(User)
+        .filter(
+            User.role == "manager",
+            User.is_active == True,
+            User.company_slug == get_request_company(),
+        )
+        .order_by(User.name.asc(), User.id.asc())
+        .all()
+    )
+    return TelegramCcSettingsOut(
+        notify_all=bool(user.admin_telegram_notify_all),
+        manager_ids=mids,
+        managers=[{"id": int(m.id), "name": m.name} for m in manager_rows],
+    )
+
+
+@router.put("/me/telegram-cc-settings", response_model=TelegramCcSettingsOut)
+def put_me_telegram_cc_settings(
+    body: TelegramCcSettingsPut,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    if current_user.role != "admin":
+        raise HTTPException(status_code=403, detail="Настройки доступны только администратору")
+    user = (
+        db.query(User)
+        .filter(User.id == current_user.id, User.company_slug == get_request_company())
+        .first()
+    )
+    if not user:
+        raise HTTPException(status_code=404, detail="User not found")
+
+    valid_manager_ids = {
+        int(r[0])
+        for r in db.query(User.id)
+        .filter(
+            User.role == "manager",
+            User.is_active == True,
+            User.company_slug == get_request_company(),
+        )
+        .all()
+    }
+    unique_ids: List[int] = []
+    seen = set()
+    for raw_id in body.manager_ids:
+        mid = int(raw_id)
+        if mid in seen:
+            continue
+        seen.add(mid)
+        if mid not in valid_manager_ids:
+            raise HTTPException(status_code=400, detail=f"Менеджер {mid} не найден или неактивен")
+        unique_ids.append(mid)
+
+    user.admin_telegram_notify_all = bool(body.notify_all)
+    user.admin_telegram_notify_manager_ids = json.dumps(unique_ids)
+    db.commit()
+    db.refresh(user)
+    return get_me_telegram_cc_settings(db, current_user)

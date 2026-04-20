@@ -319,18 +319,6 @@ export default function CeoDashboardPage() {
           href: '/payments?category=content',
           hint: 'Контент',
         },
-        {
-          title: 'Техподдержка (legacy)',
-          value: stats?.tech_support_projects ?? 0,
-          href: '/payments?category=tech_support',
-          hint: 'Старые проекты с линией «Тех сопровождение»',
-        },
-        {
-          title: 'Хостинг и домены',
-          value: stats?.hosting_domain_projects ?? 0,
-          href: '/payments?category=hosting_domain',
-          hint: 'Хостинг, домены, инфраструктура',
-        },
       ].filter((card) => card.value > 0),
     [stats],
   )
@@ -638,7 +626,7 @@ export default function CeoDashboardPage() {
             title="Всего проектов"
             value={stats?.total_projects ?? 0}
             href="/payments"
-            hint="Все неархивные проекты в вашей зоне доступа"
+            hint="Активные проекты по выбранным рабочим линиям (без техподдержки и хостинга/доменов)"
           />
           {projectCards.map((card) => (
             <CeoCard

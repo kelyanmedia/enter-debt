@@ -1,18 +1,45 @@
 import json
-from datetime import datetime, timezone
+from datetime import date, datetime, timezone
+from decimal import Decimal
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, Header, HTTPException
+from pydantic import BaseModel, Field, model_validator
 from sqlalchemy.orm import Session
 from sqlalchemy import func
-from typing import List, Optional
+from typing import List, Literal, Optional
 from app.core.companies import normalize_company_slug
+from app.core.config import settings
 from app.db.database import get_db, get_request_company, is_registered_company_slug
+from app.models.cash_flow import CashFlowEntry
 from app.models.user import User
 from app.models.partner import Partner
 from app.schemas.schemas import UserOut, UserCreate, UserUpdate, AssignedPartnersBody
 from app.core.security import get_password_hash, get_current_user, require_admin, normalize_email
 
 router = APIRouter(prefix="/api/users", tags=["users"])
+
+
+def _verify_internal_secret(
+    x_internal_secret: Optional[str] = Header(None, alias="X-Internal-Secret"),
+):
+    if not settings.INTERNAL_API_SECRET or x_internal_secret != settings.INTERNAL_API_SECRET:
+        raise HTTPException(status_code=401, detail="Invalid internal secret")
+    return True
+
+
+class InternalTelegramDividendIn(BaseModel):
+    chat_id: int
+    amount_uzs: Decimal = Decimal("0")
+    amount_usd: Decimal = Decimal("0")
+    note: Optional[str] = Field(default=None, max_length=500)
+    payment_method: Literal["cash", "card", "transfer"] = "transfer"
+    entry_date: Optional[date] = None
+
+    @model_validator(mode="after")
+    def _validate_amount(self):
+        if self.amount_uzs <= 0 and self.amount_usd <= 0:
+            raise ValueError("Укажите сумму в UZS или USD больше нуля")
+        return self
 
 
 def _validate_visible_manager_ids(db: Session, ids: Optional[List[int]]) -> List[int]:
@@ -590,3 +617,64 @@ def internal_administration_status(db: Session = Depends(get_db)):
         }
         for u in rows
     ]
+
+
+@router.post("/internal/telegram-dividend")
+def internal_telegram_dividend(
+    body: InternalTelegramDividendIn,
+    db: Session = Depends(get_db),
+    _auth: bool = Depends(_verify_internal_secret),
+):
+    """Для бота: фиксирует изъятие прибыли через команду /d как расход в ДДС."""
+    user = (
+        db.query(User)
+        .filter(
+            User.telegram_chat_id == body.chat_id,
+            User.is_active == True,
+            User.company_slug == get_request_company(),
+        )
+        .first()
+    )
+    if not user:
+        raise HTTPException(status_code=404, detail="User not found")
+    if user.role not in ("admin", "financier"):
+        raise HTTPException(status_code=403, detail="Команда /d доступна только администратору или финансисту")
+
+    entry_date = body.entry_date or datetime.now(timezone.utc).date()
+    period_month = f"{entry_date.year:04d}-{entry_date.month:02d}"
+    note = (body.note or "").strip()
+    note_prefix = "Добавлено из Telegram командой /d"
+    if note:
+        note = f"{note_prefix}. {note}"
+    else:
+        note = note_prefix
+
+    row = CashFlowEntry(
+        company_slug=get_request_company(),
+        period_month=period_month,
+        entry_date=entry_date,
+        direction="expense",
+        label="Изъятие прибыли (/d)",
+        amount_uzs=body.amount_uzs,
+        amount_usd=body.amount_usd,
+        apply_fx_to_uzs=False,
+        payment_method=body.payment_method,
+        flow_category="dividends",
+        recipient=user.name,
+        payment_id=None,
+        notes=note,
+        template_line_id=None,
+    )
+    db.add(row)
+    db.commit()
+    db.refresh(row)
+    return {
+        "ok": True,
+        "entry_id": row.id,
+        "period_month": row.period_month,
+        "entry_date": str(row.entry_date) if row.entry_date else None,
+        "label": row.label,
+        "flow_category": row.flow_category,
+        "amount_uzs": str(row.amount_uzs),
+        "amount_usd": str(row.amount_usd),
+    }

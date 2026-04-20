@@ -44,7 +44,10 @@ def list_items(
         )
     rows = (
         db.query(SubscriptionItem)
-        .filter(SubscriptionItem.category == category)
+        .filter(
+            SubscriptionItem.category == category,
+            SubscriptionItem.company_slug == get_request_company(),
+        )
         .order_by(
             SubscriptionItem.next_deadline_at.asc().nullslast(),
             SubscriptionItem.next_due_date.asc().nullslast(),

@@ -49,7 +49,8 @@ _MONTHS_RU = (
     "дек.",
 )
 
-# Линии CEO-дашборда (карточки Web / SEO / PPC / приложения / техподдержка), без хостинга и доменов.
+# Линии CEO-дашборда для активных проектов.
+# В «активные» не включаем legacy техподдержку и хостинг/домены.
 _CEO_CORE_PROJECT_CATEGORIES = (
     "smm",
     "target",
@@ -59,7 +60,6 @@ _CEO_CORE_PROJECT_CATEGORIES = (
     "seo",
     "ppc",
     "mobile_app",
-    "tech_support",
     "events",
 )
 
@@ -497,7 +497,7 @@ def get_ceo_stats(
     db: Session = Depends(get_db),
     current_user: User = Depends(require_admin_or_accountant),
 ):
-    """Все неархивные проекты по линиям (SMM, Таргет, …) для CEO Dashboard."""
+    """Активные неархивные проекты по рабочим линиям для CEO Dashboard (без tech_support и hosting_domain)."""
     ids = accessible_partner_ids(db, current_user)
     if ids is not None and len(ids) == 0:
         return CeoStats(
@@ -514,9 +514,7 @@ def get_ceo_stats(
         q = db.query(Payment).filter(Payment.is_archived == False)
         return filter_payments_query(q, db, current_user)
 
-    total_projects = base_q().filter(
-        (Payment.project_category.is_(None)) | (Payment.project_category != "hosting_domain")
-    ).count()
+    total_projects = base_q().filter(Payment.project_category.in_(_CEO_CORE_PROJECT_CATEGORIES)).count()
     web_projects = base_q().filter(Payment.project_category == "smm").count()
     seo_projects = base_q().filter(Payment.project_category == "target").count()
     ppc_projects = base_q().filter(Payment.project_category == "personal_brand").count()
