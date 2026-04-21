@@ -24,6 +24,12 @@ type TelegramCcSettings = {
   managers: { id: number; name: string }[]
 }
 
+type TelegramDividendSettings = {
+  available_categories: { slug: string; label: string }[]
+  allowed_categories: string[]
+  default_category: string
+}
+
 export default function ProfilePage() {
   const { user, loading, refreshUser } = useAuth()
   const [email, setEmail] = useState('')
@@ -45,6 +51,12 @@ export default function ProfilePage() {
   const [ccNotifyAll, setCcNotifyAll] = useState(false)
   const [ccManagerIds, setCcManagerIds] = useState<number[]>([])
   const [ccManagers, setCcManagers] = useState<{ id: number; name: string }[]>([])
+  const [dividendBusy, setDividendBusy] = useState(false)
+  const [dividendSaving, setDividendSaving] = useState(false)
+  const [dividendMsg, setDividendMsg] = useState('')
+  const [dividendCategories, setDividendCategories] = useState<{ slug: string; label: string }[]>([])
+  const [dividendAllowed, setDividendAllowed] = useState<string[]>([])
+  const [dividendDefault, setDividendDefault] = useState('dividends')
 
   useEffect(() => {
     if (user?.email) setEmail(user.email)
@@ -74,6 +86,32 @@ export default function ProfilePage() {
       })
       .finally(() => {
         if (!cancelled) setCcBusy(false)
+      })
+    return () => {
+      cancelled = true
+    }
+  }, [user?.role])
+
+  useEffect(() => {
+    if (user?.role !== 'admin' && user?.role !== 'financier') return
+    let cancelled = false
+    setDividendBusy(true)
+    setDividendMsg('')
+    api
+      .get<TelegramDividendSettings>('auth/me/telegram-dividend-settings')
+      .then(({ data }) => {
+        if (cancelled) return
+        setDividendCategories(Array.isArray(data.available_categories) ? data.available_categories : [])
+        setDividendAllowed(Array.isArray(data.allowed_categories) ? data.allowed_categories : [])
+        setDividendDefault(typeof data.default_category === 'string' ? data.default_category : 'dividends')
+      })
+      .catch((e: unknown) => {
+        if (cancelled) return
+        const ax = e as { response?: { data?: { detail?: string } } }
+        setDividendMsg(`Ошибка загрузки настроек /d: ${ax.response?.data?.detail || 'сеть или сервер'}`)
+      })
+      .finally(() => {
+        if (!cancelled) setDividendBusy(false)
       })
     return () => {
       cancelled = true
@@ -518,6 +556,133 @@ export default function ProfilePage() {
             >
               {reportBusy ? 'Отправка…' : 'Отправить отчёт сейчас'}
             </BtnOutline>
+
+            <div style={{ marginTop: 18, paddingTop: 16, borderTop: '1px solid #e5e7eb' }}>
+              <div style={{ fontSize: 14, fontWeight: 700, color: '#1a1d23', marginBottom: 8 }}>
+                Команда <code style={{ fontSize: 12 }}>/d</code> в Telegram
+              </div>
+              <div style={{ fontSize: 13, color: '#6b7280', lineHeight: 1.55, marginBottom: 12 }}>
+                Команда <code style={{ fontSize: 12 }}>/d сумма комментарий</code> записывает расход в ДДС
+                <b> текущей датой</b>, а бот после ввода суммы спрашивает категорию P&amp;L кнопками. Здесь настраивается,
+                какие категории показывать и какая будет отмечена по умолчанию.
+              </div>
+              {dividendMsg && (
+                <div
+                  style={{
+                    marginBottom: 12,
+                    padding: '10px 12px',
+                    borderRadius: 9,
+                    fontSize: 13,
+                    background: dividendMsg.startsWith('Ошибка') ? '#fef0f0' : '#e8f5ee',
+                    color: dividendMsg.startsWith('Ошибка') ? '#b91c1c' : '#1a6b3c',
+                  }}
+                >
+                  {dividendMsg}
+                </div>
+              )}
+              {dividendBusy ? (
+                <div style={{ fontSize: 13, color: '#8a8fa8' }}>Загрузка настроек /d…</div>
+              ) : (
+                <>
+                  <div style={{ marginBottom: 12 }}>
+                    <div style={{ fontSize: 12, fontWeight: 600, color: '#475569', marginBottom: 8 }}>
+                      Категории, которые бот показывает после <code>/d</code>
+                    </div>
+                    <div style={{ display: 'grid', gap: 8 }}>
+                      {dividendCategories.map((row) => {
+                        const checked = dividendAllowed.includes(row.slug)
+                        return (
+                          <label
+                            key={row.slug}
+                            style={{
+                              display: 'flex',
+                              alignItems: 'center',
+                              gap: 10,
+                              fontSize: 13,
+                              color: '#334155',
+                              userSelect: 'none',
+                            }}
+                          >
+                            <input
+                              type="checkbox"
+                              checked={checked}
+                              onChange={() => {
+                                setDividendMsg('')
+                                setDividendAllowed((prev) =>
+                                  checked ? prev.filter((x) => x !== row.slug) : [...prev, row.slug],
+                                )
+                                if (!checked && !dividendDefault) setDividendDefault(row.slug)
+                                if (checked && dividendDefault === row.slug) {
+                                  const next = dividendAllowed.filter((x) => x !== row.slug)
+                                  setDividendDefault(next[0] || '')
+                                }
+                              }}
+                            />
+                            <span>{row.label}</span>
+                          </label>
+                        )
+                      })}
+                    </div>
+                  </div>
+
+                  <div style={{ marginBottom: 14 }}>
+                    <div style={{ fontSize: 12, fontWeight: 600, color: '#475569', marginBottom: 8 }}>
+                      Категория по умолчанию
+                    </div>
+                    <select
+                      value={dividendDefault}
+                      onChange={(e) => setDividendDefault(e.target.value)}
+                      style={{
+                        width: '100%',
+                        boxSizing: 'border-box',
+                        padding: '10px 12px',
+                        borderRadius: 10,
+                        border: '1px solid #cbd5e1',
+                        fontSize: 14,
+                        fontFamily: 'inherit',
+                        background: '#fff',
+                      }}
+                    >
+                      {dividendCategories
+                        .filter((row) => dividendAllowed.includes(row.slug))
+                        .map((row) => (
+                          <option key={row.slug} value={row.slug}>
+                            {row.label}
+                          </option>
+                        ))}
+                    </select>
+                  </div>
+
+                  <BtnPrimary
+                    type="button"
+                    disabled={dividendSaving}
+                    onClick={async () => {
+                      setDividendMsg('')
+                      setDividendSaving(true)
+                      try {
+                        const allowed = dividendAllowed.filter((x, i, arr) => arr.indexOf(x) === i)
+                        const fallbackDefault = dividendDefault || allowed[0] || 'dividends'
+                        const { data } = await api.put<TelegramDividendSettings>('auth/me/telegram-dividend-settings', {
+                          allowed_categories: allowed,
+                          default_category: fallbackDefault,
+                        })
+                        setDividendCategories(Array.isArray(data.available_categories) ? data.available_categories : [])
+                        setDividendAllowed(Array.isArray(data.allowed_categories) ? data.allowed_categories : [])
+                        setDividendDefault(typeof data.default_category === 'string' ? data.default_category : 'dividends')
+                        setDividendMsg('Настройки /d сохранены')
+                      } catch (e: unknown) {
+                        const ax = e as { response?: { data?: { detail?: string } } }
+                        setDividendMsg(`Ошибка: ${ax.response?.data?.detail || 'не удалось сохранить'}`)
+                      } finally {
+                        setDividendSaving(false)
+                      }
+                    }}
+                  >
+                    {dividendSaving ? 'Сохранение…' : 'Сохранить настройки /d'}
+                  </BtnPrimary>
+                </>
+              )}
+            </div>
           </Card>
         )}
       </div>

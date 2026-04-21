@@ -1,6 +1,6 @@
 import json
 from datetime import datetime, timezone
-from typing import List
+from typing import List, Optional
 
 from fastapi import APIRouter, Depends, HTTPException, status
 from fastapi.security import OAuth2PasswordRequestForm
@@ -10,6 +10,7 @@ from app.db.database import get_db, get_request_company
 from app.models.user import User
 from sqlalchemy import func
 import httpx
+from app.finance.cash_flow_catalog import expense_categories_for_api
 
 from app.core.config import settings
 from app.core.security import verify_password, create_access_token, get_current_user, normalize_email, get_password_hash
@@ -32,6 +33,17 @@ class TelegramCcSettingsOut(BaseModel):
 class TelegramCcSettingsPut(BaseModel):
     notify_all: bool = False
     manager_ids: List[int] = []
+
+
+class TelegramDividendSettingsOut(BaseModel):
+    available_categories: List[dict]
+    allowed_categories: List[str]
+    default_category: str
+
+
+class TelegramDividendSettingsPut(BaseModel):
+    allowed_categories: List[str] = []
+    default_category: str = "dividends"
 
 
 def compute_companies_list() -> List[CompanyOut]:
@@ -171,6 +183,65 @@ def post_me_telegram_ping(
             detail=f"Telegram отклонил сообщение: {r.text[:200]}",
         )
     return {"ok": True}
+
+
+def _telegram_dividend_available_categories() -> List[dict]:
+    return expense_categories_for_api()
+
+
+def _telegram_dividend_category_slugs() -> set[str]:
+    return {str(x["slug"]) for x in _telegram_dividend_available_categories()}
+
+
+def _decode_dividend_allowed_categories(raw: Optional[str]) -> List[str]:
+    if not raw or not str(raw).strip():
+        return ["dividends", "other"]
+    try:
+        data = json.loads(raw)
+    except (TypeError, ValueError, json.JSONDecodeError):
+        return ["dividends", "other"]
+    if not isinstance(data, list):
+        return ["dividends", "other"]
+    valid = _telegram_dividend_category_slugs()
+    out: List[str] = []
+    seen = set()
+    for item in data:
+        slug = str(item).strip()
+        if slug and slug in valid and slug not in seen:
+            seen.add(slug)
+            out.append(slug)
+    return out or ["dividends", "other"]
+
+
+def _normalize_dividend_settings(allowed_categories: List[str], default_category: str) -> tuple[List[str], str]:
+    valid = _telegram_dividend_category_slugs()
+    out: List[str] = []
+    seen = set()
+    for item in allowed_categories:
+        slug = str(item).strip()
+        if slug and slug in valid and slug not in seen:
+            seen.add(slug)
+            out.append(slug)
+    if not out:
+        raise HTTPException(status_code=400, detail="Выберите хотя бы одну категорию для команды /d")
+    default_slug = str(default_category or "").strip()
+    if default_slug not in valid:
+        raise HTTPException(status_code=400, detail="Категория по умолчанию не найдена")
+    if default_slug not in out:
+        raise HTTPException(status_code=400, detail="Категория по умолчанию должна входить в список доступных")
+    return out, default_slug
+
+
+def _get_me_dividend_settings_payload(user: User) -> TelegramDividendSettingsOut:
+    allowed = _decode_dividend_allowed_categories(user.telegram_dividend_allowed_categories)
+    default_category = (user.telegram_dividend_default_category or "").strip() or "dividends"
+    if default_category not in allowed:
+        default_category = allowed[0]
+    return TelegramDividendSettingsOut(
+        available_categories=_telegram_dividend_available_categories(),
+        allowed_categories=allowed,
+        default_category=default_category,
+    )
 
 
 @router.patch("/me", response_model=UserOut)
@@ -319,3 +390,43 @@ def put_me_telegram_cc_settings(
     db.commit()
     db.refresh(user)
     return get_me_telegram_cc_settings(db, current_user)
+
+
+@router.get("/me/telegram-dividend-settings", response_model=TelegramDividendSettingsOut)
+def get_me_telegram_dividend_settings(
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    if current_user.role not in ("admin", "financier"):
+        raise HTTPException(status_code=403, detail="Настройки /d доступны только администратору или финансисту")
+    user = (
+        db.query(User)
+        .filter(User.id == current_user.id, User.company_slug == get_request_company())
+        .first()
+    )
+    if not user:
+        raise HTTPException(status_code=404, detail="User not found")
+    return _get_me_dividend_settings_payload(user)
+
+
+@router.put("/me/telegram-dividend-settings", response_model=TelegramDividendSettingsOut)
+def put_me_telegram_dividend_settings(
+    body: TelegramDividendSettingsPut,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    if current_user.role not in ("admin", "financier"):
+        raise HTTPException(status_code=403, detail="Настройки /d доступны только администратору или финансисту")
+    user = (
+        db.query(User)
+        .filter(User.id == current_user.id, User.company_slug == get_request_company())
+        .first()
+    )
+    if not user:
+        raise HTTPException(status_code=404, detail="User not found")
+    allowed, default_slug = _normalize_dividend_settings(body.allowed_categories, body.default_category)
+    user.telegram_dividend_allowed_categories = json.dumps(allowed)
+    user.telegram_dividend_default_category = default_slug
+    db.commit()
+    db.refresh(user)
+    return _get_me_dividend_settings_payload(user)

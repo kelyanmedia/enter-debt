@@ -340,6 +340,8 @@ def _migrate():
         "ALTER TABLE users ADD COLUMN IF NOT EXISTS is_ad_budget_employee BOOLEAN NOT NULL DEFAULT FALSE",
         "ALTER TABLE users ADD COLUMN IF NOT EXISTS admin_telegram_notify_all BOOLEAN NOT NULL DEFAULT FALSE",
         "ALTER TABLE users ADD COLUMN IF NOT EXISTS admin_telegram_notify_manager_ids TEXT",
+        "ALTER TABLE users ADD COLUMN IF NOT EXISTS telegram_dividend_allowed_categories TEXT",
+        "ALTER TABLE users ADD COLUMN IF NOT EXISTS telegram_dividend_default_category VARCHAR(64)",
         "ALTER TABLE users ADD COLUMN IF NOT EXISTS admin_accessible_company_slugs TEXT",
         "ALTER TABLE users ADD COLUMN IF NOT EXISTS can_enter_cash_flow BOOLEAN NOT NULL DEFAULT FALSE",
         # Commissions table
@@ -633,6 +635,29 @@ def _migrate():
                 _slug,
                 e,
             )
+
+    # SQLite: добираем настройки Telegram /d отдельно, т.к. IF NOT EXISTS в ALTER TABLE может не поддерживаться.
+    for _slug, eng in iter_company_engines():
+        try:
+            cols = {c["name"] for c in inspect(eng).get_columns("users")}
+        except Exception:
+            continue
+        missing = []
+        if "telegram_dividend_allowed_categories" not in cols:
+            missing.append(
+                "ALTER TABLE users ADD COLUMN telegram_dividend_allowed_categories TEXT"
+            )
+        if "telegram_dividend_default_category" not in cols:
+            missing.append(
+                "ALTER TABLE users ADD COLUMN telegram_dividend_default_category VARCHAR(64)"
+            )
+        for sql in missing:
+            try:
+                with eng.connect() as conn:
+                    conn.execute(text(sql))
+                    conn.commit()
+            except Exception as e:
+                log.warning("Migration skipped [%s] (%s): %s", _slug, sql, e)
 
 
 _MASTER_ADMIN_EMAIL = "agasi@gmail.com"

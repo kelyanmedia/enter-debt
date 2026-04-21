@@ -9,6 +9,7 @@ from sqlalchemy import func
 from typing import List, Literal, Optional
 from app.core.companies import normalize_company_slug
 from app.core.config import settings
+from app.finance.cash_flow_catalog import EXPENSE_CATEGORY_LABELS, expense_categories_for_api
 from app.db.database import get_db, get_request_company, is_registered_company_slug
 from app.models.cash_flow import CashFlowEntry
 from app.models.user import User
@@ -31,6 +32,7 @@ class InternalTelegramDividendIn(BaseModel):
     chat_id: int
     amount_uzs: Decimal = Decimal("0")
     amount_usd: Decimal = Decimal("0")
+    flow_category: Optional[str] = Field(default=None, max_length=64)
     note: Optional[str] = Field(default=None, max_length=500)
     payment_method: Literal["cash", "card", "transfer"] = "transfer"
     entry_date: Optional[date] = None
@@ -118,6 +120,34 @@ def _normalize_telegram_username(value: Optional[str]) -> Optional[str]:
     if not raw:
         return None
     return raw[1:] if raw.startswith("@") else raw
+
+
+def _visible_dividend_categories() -> List[dict]:
+    return expense_categories_for_api()
+
+
+def _visible_dividend_category_slugs() -> set[str]:
+    return {str(x["slug"]) for x in _visible_dividend_categories()}
+
+
+def _decode_dividend_allowed_categories(raw: Optional[str]) -> List[str]:
+    if not raw or not str(raw).strip():
+        return ["dividends", "other"]
+    try:
+        data = json.loads(raw)
+    except (TypeError, ValueError, json.JSONDecodeError):
+        return ["dividends", "other"]
+    if not isinstance(data, list):
+        return ["dividends", "other"]
+    valid = _visible_dividend_category_slugs()
+    out: List[str] = []
+    seen = set()
+    for item in data:
+        slug = str(item).strip()
+        if slug and slug in valid and slug not in seen:
+            seen.add(slug)
+            out.append(slug)
+    return out or ["dividends", "other"]
 
 
 def _transfer_telegram_chat_id(
@@ -518,6 +548,35 @@ def get_user_by_chat(chat_id: int, db: Session = Depends(get_db)):
     return {"id": user.id, "name": user.name, "role": user.role, "telegram_chat_id": user.telegram_chat_id}
 
 
+@router.get("/internal/telegram-dividend-settings/{chat_id}")
+def get_internal_telegram_dividend_settings(
+    chat_id: int,
+    db: Session = Depends(get_db),
+    _auth: bool = Depends(_verify_internal_secret),
+):
+    user = (
+        db.query(User)
+        .filter(
+            User.telegram_chat_id == chat_id,
+            User.is_active == True,
+            User.company_slug == get_request_company(),
+        )
+        .first()
+    )
+    if not user:
+        raise HTTPException(status_code=404, detail="User not found")
+    allowed = _decode_dividend_allowed_categories(user.telegram_dividend_allowed_categories)
+    default_category = (user.telegram_dividend_default_category or "").strip() or "dividends"
+    if default_category not in allowed:
+        default_category = allowed[0]
+    visible = _visible_dividend_categories()
+    return {
+        "available_categories": visible,
+        "allowed_categories": [x for x in visible if x["slug"] in allowed],
+        "default_category": default_category,
+    }
+
+
 @router.get("/internal/managers")
 def get_managers(db: Session = Depends(get_db)):
     managers = db.query(User).filter(
@@ -640,6 +699,11 @@ def internal_telegram_dividend(
     if user.role not in ("admin", "financier"):
         raise HTTPException(status_code=403, detail="Команда /d доступна только администратору или финансисту")
 
+    chosen_category = (body.flow_category or "").strip() or (user.telegram_dividend_default_category or "").strip() or "dividends"
+    if chosen_category not in _visible_dividend_category_slugs():
+        raise HTTPException(status_code=400, detail="Категория /d не найдена")
+    category_label = EXPENSE_CATEGORY_LABELS.get(chosen_category, chosen_category)
+
     entry_date = body.entry_date or datetime.now(timezone.utc).date()
     period_month = f"{entry_date.year:04d}-{entry_date.month:02d}"
     note = (body.note or "").strip()
@@ -654,12 +718,12 @@ def internal_telegram_dividend(
         period_month=period_month,
         entry_date=entry_date,
         direction="expense",
-        label="Изъятие прибыли (/d)",
+        label="Изъятие прибыли (/d)" if chosen_category == "dividends" else f"{category_label} (/d)",
         amount_uzs=body.amount_uzs,
         amount_usd=body.amount_usd,
         apply_fx_to_uzs=False,
         payment_method=body.payment_method,
-        flow_category="dividends",
+        flow_category=chosen_category,
         recipient=user.name,
         payment_id=None,
         notes=note,
@@ -675,6 +739,7 @@ def internal_telegram_dividend(
         "entry_date": str(row.entry_date) if row.entry_date else None,
         "label": row.label,
         "flow_category": row.flow_category,
+        "flow_category_label": category_label,
         "amount_uzs": str(row.amount_uzs),
         "amount_usd": str(row.amount_usd),
     }

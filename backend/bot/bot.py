@@ -17,7 +17,7 @@ from aiogram.filters import Command, CommandObject
 from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import State, StatesGroup
 from aiogram.fsm.storage.memory import MemoryStorage
-from aiogram.types import ReplyKeyboardRemove
+from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup, ReplyKeyboardRemove
 
 logging.basicConfig(level=logging.INFO)
 
@@ -51,6 +51,10 @@ dp = Dispatcher(storage=storage)
 
 class Auth(StatesGroup):
     waiting_password = State()
+
+
+class DividendFlow(StatesGroup):
+    waiting_category = State()
 
 
 async def _submit_join_request(chat_id: int, username: str | None, full_name: str | None, access_password: str) -> dict:
@@ -170,6 +174,37 @@ def _parse_d_command(raw: str) -> tuple[Decimal, Decimal, str]:
     return amount, Decimal("0"), note
 
 
+async def _fetch_dividend_settings(chat_id: int) -> dict:
+    secret = _internal_secret()
+    try:
+        async with httpx.AsyncClient(timeout=10) as client:
+            r = await client.get(
+                f"{API_URL}/api/users/internal/telegram-dividend-settings/{chat_id}",
+                headers=_api_headers({"X-Internal-Secret": secret}),
+            )
+            if r.status_code >= 400:
+                try:
+                    detail = r.json().get("detail")
+                except Exception:
+                    detail = None
+                return {"error": detail or "Не удалось загрузить настройки /d"}
+            return r.json()
+    except Exception as e:
+        logging.exception("telegram dividend settings failed")
+        return {"error": str(e)}
+
+
+def _dividend_category_keyboard(rows: list[dict], default_slug: str) -> InlineKeyboardMarkup:
+    items = []
+    for row in rows:
+        slug = str(row.get("slug") or "")
+        label = str(row.get("label") or slug)
+        prefix = "✓ " if slug == default_slug else ""
+        items.append([InlineKeyboardButton(text=f"{prefix}{label}", callback_data=f"edd:{slug}")])
+    items.append([InlineKeyboardButton(text="Отмена", callback_data="edd:cancel")])
+    return InlineKeyboardMarkup(inline_keyboard=items)
+
+
 @dp.message(Command("start"))
 async def cmd_start(message: types.Message, state: FSMContext):
     await state.set_state(Auth.waiting_password)
@@ -234,7 +269,7 @@ async def cmd_help(message: types.Message):
         "/start — ввести пароль и отправить заявку на доступ\n"
         "/id — показать Chat ID\n"
         "/pay &lt;текст&gt; — админ отправляет заявку на оплату в Telegram администрации\n"
-        "/d &lt;сумма&gt; [&lt;комментарий&gt;] — зафиксировать, сколько забрали из прибыли (запись в ДДС)\n"
+        "/d &lt;сумма&gt; [&lt;комментарий&gt;] — зафиксировать расход в ДДС; бот спросит категорию P&amp;L\n"
         "/help — справка\n\n"
         "После одобрения заявки менеджер получает ссылку и логин в панель; "
         "бухгалтерия работает через уведомления в этом чате.\n\n"
@@ -330,14 +365,15 @@ async def cmd_pay(message: types.Message, command: CommandObject):
 
 
 @dp.message(Command("d"))
-async def cmd_dividend(message: types.Message, command: CommandObject):
+async def cmd_dividend(message: types.Message, command: CommandObject, state: FSMContext):
     raw = (command.args or "").strip()
     if not raw:
         await message.answer(
             "Напишите команду так: <code>/d сумма [комментарий]</code>\n\n"
             "Примеры:\n"
             "• <code>/d 2500000 Забрал из прибыли</code>\n"
-            "• <code>/d 120 usd Личные расходы</code>",
+            "• <code>/d 120 usd Личные расходы</code>\n\n"
+            "После этого бот спросит категорию P&amp;L. Дата записи — сегодняшняя.",
             parse_mode="HTML",
         )
         return
@@ -368,15 +404,61 @@ async def cmd_dividend(message: types.Message, command: CommandObject):
         )
         return
 
+    settings = await _fetch_dividend_settings(sender_chat_id)
+    if settings.get("error"):
+        await message.answer(f"⚠️ Не удалось загрузить настройки /d: {settings['error']}")
+        return
+
+    allowed_rows = settings.get("allowed_categories") or []
+    if not isinstance(allowed_rows, list) or not allowed_rows:
+        await message.answer("⚠️ Для команды /d не настроены доступные категории. Откройте «Профиль» в панели.")
+        return
+
+    default_slug = str(settings.get("default_category") or "dividends")
+    await state.set_state(DividendFlow.waiting_category)
+    await state.update_data(
+        dividend_amount_uzs=str(amount_uzs),
+        dividend_amount_usd=str(amount_usd),
+        dividend_note=note or None,
+    )
+    await message.answer(
+        "Выберите категорию P&amp;L для этой записи.\n"
+        f"Дата будет: <code>{datetime.now(TASK_REMINDER_TZ).date().isoformat()}</code>",
+        parse_mode="HTML",
+        reply_markup=_dividend_category_keyboard(allowed_rows, default_slug),
+    )
+
+
+@dp.callback_query(F.data.startswith("edd:"))
+async def dividend_category_callback(query: types.CallbackQuery, state: FSMContext):
+    data = await state.get_data()
+    if await state.get_state() != DividendFlow.waiting_category.state:
+        await query.answer("Уже неактуально.", show_alert=True)
+        return
+
+    payload_key = (query.data or "").split(":", 1)[1] if ":" in (query.data or "") else ""
+    if payload_key == "cancel":
+        await state.clear()
+        await query.answer("Отменено.")
+        try:
+            await query.message.edit_reply_markup(reply_markup=None)
+        except Exception:
+            pass
+        return
+
+    amount_uzs = str(data.get("dividend_amount_uzs") or "0")
+    amount_usd = str(data.get("dividend_amount_usd") or "0")
+    note = data.get("dividend_note")
+    secret = _internal_secret()
     payload = {
-        "chat_id": sender_chat_id,
-        "amount_uzs": str(amount_uzs),
-        "amount_usd": str(amount_usd),
+        "chat_id": query.from_user.id,
+        "amount_uzs": amount_uzs,
+        "amount_usd": amount_usd,
+        "flow_category": payload_key,
         "note": note or None,
         "payment_method": "transfer",
         "entry_date": datetime.now(TASK_REMINDER_TZ).date().isoformat(),
     }
-    secret = _internal_secret()
     try:
         async with httpx.AsyncClient(timeout=10) as client:
             r = await client.post(
@@ -389,19 +471,31 @@ async def cmd_dividend(message: types.Message, command: CommandObject):
                     detail = r.json().get("detail")
                 except Exception:
                     detail = None
-                await message.answer(f"⚠️ Не удалось записать операцию: {detail or 'ошибка сервера'}")
+                await query.answer("Ошибка записи", show_alert=True)
+                await query.message.answer(f"⚠️ Не удалось записать операцию: {detail or 'ошибка сервера'}")
                 return
             created = r.json() if r.status_code == 200 else {}
     except Exception:
-        await message.answer("⚠️ Не удалось связаться с сервером. Попробуйте позже.")
+        await query.answer("Ошибка связи", show_alert=True)
+        await query.message.answer("⚠️ Не удалось связаться с сервером. Попробуйте позже.")
         return
 
-    uzs_text = f"{amount_uzs:,.2f}".replace(",", " ") if amount_uzs > 0 else "0.00"
-    usd_text = f"{amount_usd:,.2f}".replace(",", " ") if amount_usd > 0 else "0.00"
-    await message.answer(
+    await state.clear()
+    try:
+        await query.message.edit_reply_markup(reply_markup=None)
+    except Exception:
+        pass
+
+    uzs_dec = Decimal(amount_uzs)
+    usd_dec = Decimal(amount_usd)
+    uzs_text = f"{uzs_dec:,.2f}".replace(",", " ") if uzs_dec > 0 else "0.00"
+    usd_text = f"{usd_dec:,.2f}".replace(",", " ") if usd_dec > 0 else "0.00"
+    await query.answer("Записано.")
+    await query.message.answer(
         "✅ Зафиксировано в ДДС.\n"
-        f"Категория: <b>Дивиденды</b>\n"
+        f"Категория: <b>{html.escape(created.get('flow_category_label') or payload_key)}</b>\n"
         f"Строка: <b>{html.escape(created.get('label') or 'Изъятие прибыли (/d)')}</b>\n"
+        f"Дата: <code>{html.escape(created.get('entry_date') or '—')}</code>\n"
         f"Месяц: <code>{html.escape(created.get('period_month') or '—')}</code>\n"
         f"Сумма: <code>{uzs_text} UZS</code> / <code>{usd_text} USD</code>",
         parse_mode="HTML",
@@ -494,7 +588,7 @@ def _extract_route_user_id(reply: Optional[types.Message]) -> Optional[int]:
 @dp.message(F.text)
 async def bridge_text_manager_accountant(message: types.Message, state: FSMContext):
     """Менеджер/админ → бухгалтерия; бухгалтерия (reply) → тот же менеджер."""
-    if await state.get_state() == Auth.waiting_password.state:
+    if await state.get_state() in (Auth.waiting_password.state, DividendFlow.waiting_category.state):
         return
 
     raw = (message.text or "").strip()
