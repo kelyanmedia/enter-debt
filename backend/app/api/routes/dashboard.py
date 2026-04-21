@@ -515,10 +515,12 @@ def get_ceo_stats(
         return filter_payments_query(q, db, current_user)
 
     total_projects = base_q().filter(Payment.project_category.in_(_CEO_CORE_PROJECT_CATEGORIES)).count()
-    web_projects = base_q().filter(Payment.project_category == "smm").count()
-    seo_projects = base_q().filter(Payment.project_category == "target").count()
-    ppc_projects = base_q().filter(Payment.project_category == "personal_brand").count()
-    mobile_app_projects = base_q().filter(Payment.project_category == "content").count()
+    # Совместимость: считаем и новые линии, и legacy slug (web/seo/ppc/mobile_app),
+    # чтобы карточки CEO работали на старых и новых данных одновременно.
+    web_projects = base_q().filter(Payment.project_category.in_(("smm", "web"))).count()
+    seo_projects = base_q().filter(Payment.project_category.in_(("target", "seo"))).count()
+    ppc_projects = base_q().filter(Payment.project_category.in_(("personal_brand", "ppc"))).count()
+    mobile_app_projects = base_q().filter(Payment.project_category.in_(("content", "mobile_app"))).count()
     tech_support_projects = base_q().filter(Payment.project_category == "tech_support").count()
     hosting_domain_projects = base_q().filter(Payment.project_category == "hosting_domain").count()
     return CeoStats(
