@@ -269,7 +269,7 @@ async def cmd_help(message: types.Message):
         "/start — ввести пароль и отправить заявку на доступ\n"
         "/id — показать Chat ID\n"
         "/pay &lt;текст&gt; — админ отправляет заявку на оплату в Telegram администрации\n"
-        "/d &lt;сумма&gt; [&lt;комментарий&gt;] — зафиксировать расход в ДДС; бот спросит категорию P&amp;L\n"
+        "/d &lt;сумма&gt; [&lt;комментарий&gt;] — только для администратора: расход в ДДС, бот спросит категорию P&amp;L\n"
         "/help — справка\n\n"
         "После одобрения заявки менеджер получает ссылку и логин в панель; "
         "бухгалтерия работает через уведомления в этом чате.\n\n"
@@ -390,8 +390,8 @@ async def cmd_dividend(message: types.Message, command: CommandObject, state: FS
         await message.answer("⚠️ Не удалось проверить профиль. Попробуйте позже.")
         return
 
-    if sender.get("role") not in ("admin", "financier"):
-        await message.answer("⚠️ Команда /d доступна только администратору или финансисту.")
+    if sender.get("role") != "admin":
+        await message.answer("⚠️ Команда /d доступна только администратору.")
         return
 
     try:

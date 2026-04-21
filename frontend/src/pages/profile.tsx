@@ -93,7 +93,7 @@ export default function ProfilePage() {
   }, [user?.role])
 
   useEffect(() => {
-    if (user?.role !== 'admin' && user?.role !== 'financier') return
+    if (user?.role !== 'admin') return
     let cancelled = false
     setDividendBusy(true)
     setDividendMsg('')
@@ -266,11 +266,13 @@ export default function ProfilePage() {
                 {user.role === 'admin'
                   ? 'Как администратору: так вы проверяете, что до вашего чата доходят сервисные сообщения и отчёты.'
                   : 'Проверка доставки сообщений бота в ваш Telegram.'}
-                <div style={{ marginTop: 8 }}>
-                  Горячие команды бота: <code>/pay текст</code> — заявка администрации,{' '}
-                  <code>/d сумма [комментарий]</code> — фиксирует, сколько вы забрали из прибыли (добавляется в
-                  ДДС как расход в строку «Изъятие прибыли (/d)», категория «Дивиденды»).
-                </div>
+                {user.role === 'admin' && (
+                  <div style={{ marginTop: 8 }}>
+                    Горячие команды бота: <code>/pay текст</code> — заявка администрации,{' '}
+                    <code>/d сумма [комментарий]</code> — только для администратора: фиксирует изъятие в ДДС (категорию
+                    P&amp;L выбираете кнопками после ввода суммы; настройки — ниже в блоке отчёта).
+                  </div>
+                )}
               </div>
             )}
           </div>
@@ -557,6 +559,7 @@ export default function ProfilePage() {
               {reportBusy ? 'Отправка…' : 'Отправить отчёт сейчас'}
             </BtnOutline>
 
+            {user.role === 'admin' && (
             <div style={{ marginTop: 18, paddingTop: 16, borderTop: '1px solid #e5e7eb' }}>
               <div style={{ fontSize: 14, fontWeight: 700, color: '#1a1d23', marginBottom: 8 }}>
                 Команда <code style={{ fontSize: 12 }}>/d</code> в Telegram
@@ -683,6 +686,7 @@ export default function ProfilePage() {
                 </>
               )}
             </div>
+            )}
           </Card>
         )}
       </div>

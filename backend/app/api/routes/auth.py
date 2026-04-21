@@ -397,8 +397,8 @@ def get_me_telegram_dividend_settings(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
-    if current_user.role not in ("admin", "financier"):
-        raise HTTPException(status_code=403, detail="Настройки /d доступны только администратору или финансисту")
+    if current_user.role != "admin":
+        raise HTTPException(status_code=403, detail="Настройки /d доступны только администратору")
     user = (
         db.query(User)
         .filter(User.id == current_user.id, User.company_slug == get_request_company())
@@ -415,8 +415,8 @@ def put_me_telegram_dividend_settings(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
-    if current_user.role not in ("admin", "financier"):
-        raise HTTPException(status_code=403, detail="Настройки /d доступны только администратору или финансисту")
+    if current_user.role != "admin":
+        raise HTTPException(status_code=403, detail="Настройки /d доступны только администратору")
     user = (
         db.query(User)
         .filter(User.id == current_user.id, User.company_slug == get_request_company())

@@ -565,6 +565,8 @@ def get_internal_telegram_dividend_settings(
     )
     if not user:
         raise HTTPException(status_code=404, detail="User not found")
+    if user.role != "admin":
+        raise HTTPException(status_code=403, detail="Команда /d доступна только администратору")
     allowed = _decode_dividend_allowed_categories(user.telegram_dividend_allowed_categories)
     default_category = (user.telegram_dividend_default_category or "").strip() or "dividends"
     if default_category not in allowed:
@@ -696,8 +698,8 @@ def internal_telegram_dividend(
     )
     if not user:
         raise HTTPException(status_code=404, detail="User not found")
-    if user.role not in ("admin", "financier"):
-        raise HTTPException(status_code=403, detail="Команда /d доступна только администратору или финансисту")
+    if user.role != "admin":
+        raise HTTPException(status_code=403, detail="Команда /d доступна только администратору")
 
     chosen_category = (body.flow_category or "").strip() or (user.telegram_dividend_default_category or "").strip() or "dividends"
     if chosen_category not in _visible_dividend_category_slugs():

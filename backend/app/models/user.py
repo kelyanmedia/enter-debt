@@ -32,7 +32,7 @@ class User(Base):
     # Только role=admin: копии Telegram по цепочке менеджер–бухгалтерия
     admin_telegram_notify_all = Column(Boolean, nullable=False, default=False)
     admin_telegram_notify_manager_ids = Column(Text, nullable=True)  # JSON [id, ...]
-    # Настройки Telegram-команды /d (персонально для admin/financier): доступные категории и дефолт
+    # Настройки Telegram-команды /d (только admin): доступные категории и дефолт
     telegram_dividend_allowed_categories = Column(Text, nullable=True)  # JSON ["dividends", ...]
     telegram_dividend_default_category = Column(String(64), nullable=True)
     # Только role=admin: в каких организациях виден переключатель (JSON ["slug", ...]); NULL = все (как раньше)
