@@ -248,8 +248,8 @@ def _accounting_telegram_route_user_id(actor: User, partner: Optional[Partner]) 
     return None
 
 
-def _skip_payment_line_telegram(actor: User) -> bool:
-    """Если платёжную строку отмечает администратор вручную — не шлём пуши (менеджер/администрация — шлём)."""
+def _skip_payment_confirmed_telegram(actor: User) -> bool:
+    """«Оплата прошла»: если отметил админ вручную — не шлём пуш менеджеру/CC (акты бухгалтерии — всегда)."""
     return actor.role == "admin"
 
 
@@ -294,7 +294,7 @@ async def mark_act_issued(
 
     payment = _require_payment_not_trashed(load_payment(db, payment_id))
 
-    if payment.notify_accounting and not already and not _skip_payment_line_telegram(current_user):
+    if payment.notify_accounting and not already:
         amount_val = pm.amount or payment.amount
         month_label = _month_label(pm.month)
         desc = pm.description or f"{payment.description} {month_label}"
@@ -399,7 +399,7 @@ async def confirm_month(
 
     payment = _require_payment_not_trashed(load_payment(db, payment_id))
 
-    if not already_paid and not _skip_payment_line_telegram(current_user):
+    if not already_paid and not _skip_payment_confirmed_telegram(current_user):
         amount_val = pm.amount or payment.amount
         month_label = _month_label(pm.month)
         desc = pm.description or f"{payment.description} {month_label}"
