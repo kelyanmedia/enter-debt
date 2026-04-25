@@ -86,6 +86,11 @@ def _sum_month_lines_amounts_except(db: Session, payment_id: int, payment: Payme
     return sum(_effective_month_amount(r.amount, payment.amount) for r in rows)
 
 
+def _payment_months_contract_cap_applies(payment: Payment) -> bool:
+    """Для хостинга/домена сумма в проекте — ориентир для новых строк, не потолок по всем годам."""
+    return getattr(payment, "project_category", None) != "hosting_domain"
+
+
 def _month_label(month_str: str) -> str:
     """Convert YYYY-MM to human label like 'Март 2026'."""
     months_ru = ["Январь", "Февраль", "Март", "Апрель", "Май", "Июнь",
@@ -155,16 +160,17 @@ def add_month(
     assert_payment_access(db, current_user, p)
 
     new_amt = _effective_month_amount(data.amount, p.amount)
-    existing_sum = _sum_month_lines_amounts(db, payment_id, p)
-    contract_amt = Decimal(str(p.amount)).quantize(Decimal("0.01"))
-    if (existing_sum + new_amt).quantize(Decimal("0.01")) > contract_amt:
-        raise HTTPException(
-            status_code=400,
-            detail=(
-                f"Сумма по строкам месяцев ({existing_sum + new_amt} сум) не может превышать сумму договора "
-                f"({contract_amt} сум). Укажите меньшие суммы по месяцам или увеличьте сумму проекта."
-            ),
-        )
+    if _payment_months_contract_cap_applies(p):
+        existing_sum = _sum_month_lines_amounts(db, payment_id, p)
+        contract_amt = Decimal(str(p.amount)).quantize(Decimal("0.01"))
+        if (existing_sum + new_amt).quantize(Decimal("0.01")) > contract_amt:
+            raise HTTPException(
+                status_code=400,
+                detail=(
+                    f"Сумма по строкам месяцев ({existing_sum + new_amt} сум) не может превышать сумму договора "
+                    f"({contract_amt} сум). Укажите меньшие суммы по месяцам или увеличьте сумму проекта."
+                ),
+            )
 
     due = resolve_payment_month_due_date(data.month, data.due_date, p)
     try:
@@ -235,16 +241,17 @@ def patch_payment_month(
         pm.amount = patch.get("amount")
 
     new_eff = _effective_month_amount(pm.amount, p.amount)
-    others = _sum_month_lines_amounts_except(db, payment_id, p, month_id)
-    contract_amt = Decimal(str(p.amount)).quantize(Decimal("0.01"))
-    if (others + new_eff).quantize(Decimal("0.01")) > contract_amt:
-        raise HTTPException(
-            status_code=400,
-            detail=(
-                f"Сумма по строкам месяцев ({others + new_eff} сум) не может превышать сумму договора "
-                f"({contract_amt} сум)."
-            ),
-        )
+    if _payment_months_contract_cap_applies(p):
+        others = _sum_month_lines_amounts_except(db, payment_id, p, month_id)
+        contract_amt = Decimal(str(p.amount)).quantize(Decimal("0.01"))
+        if (others + new_eff).quantize(Decimal("0.01")) > contract_amt:
+            raise HTTPException(
+                status_code=400,
+                detail=(
+                    f"Сумма по строкам месяцев ({others + new_eff} сум) не может превышать сумму договора "
+                    f"({contract_amt} сум)."
+                ),
+            )
 
     try:
         db.commit()
@@ -265,7 +272,8 @@ def duplicate_month_to_next_month(
 ):
     """
     Копия строки графика: обычно — следующий календарный месяц; для хостинга/домена — тот же месяц через год.
-    Та же сумма, новое описание с меткой периода, срок оплаты по правилам договора; акт и оплата сброшены.
+    Та же сумма (её можно потом изменить в строке), новое описание с меткой периода; акт и оплата сброшены.
+    Для хостинга/домена сумма строк не ограничивается полем amount проекта.
     """
     p = _require_payment_not_trashed(load_payment(db, payment_id))
     assert_payment_access(db, current_user, p)
@@ -279,16 +287,17 @@ def duplicate_month_to_next_month(
     nxt = _next_hosting_year_month(pm.month) if p.project_category == "hosting_domain" else _next_calendar_month(pm.month)
 
     new_amt = _effective_month_amount(pm.amount, p.amount)
-    existing_sum = _sum_month_lines_amounts(db, payment_id, p)
-    contract_amt = Decimal(str(p.amount)).quantize(Decimal("0.01"))
-    if (existing_sum + new_amt).quantize(Decimal("0.01")) > contract_amt:
-        raise HTTPException(
-            status_code=400,
-            detail=(
-                f"Сумма по строкам месяцев ({existing_sum + new_amt} сум) не может превышать сумму договора "
-                f"({contract_amt} сум). Увеличьте сумму проекта или уменьшите суммы по месяцам."
-            ),
-        )
+    if _payment_months_contract_cap_applies(p):
+        existing_sum = _sum_month_lines_amounts(db, payment_id, p)
+        contract_amt = Decimal(str(p.amount)).quantize(Decimal("0.01"))
+        if (existing_sum + new_amt).quantize(Decimal("0.01")) > contract_amt:
+            raise HTTPException(
+                status_code=400,
+                detail=(
+                    f"Сумма по строкам месяцев ({existing_sum + new_amt} сум) не может превышать сумму договора "
+                    f"({contract_amt} сум). Увеличьте сумму проекта или уменьшите суммы по месяцам."
+                ),
+            )
 
     due = resolve_payment_month_due_date(nxt, None, p)
     desc = f"{(p.description or '').strip()} {_month_label(nxt)} Акт/СФ".strip()

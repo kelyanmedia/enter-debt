@@ -390,7 +390,7 @@ export default function ArchivePage() {
                     <div style={{ fontSize: 12, color: '#64748b', marginTop: 4 }}>{d.partner.manager.name}</div>
                   ) : null}
                 </Ro>
-                <Ro label="Сумма по договору">
+                <Ro label={isHosting ? 'Тариф в карточке (ориентир за период)' : 'Сумма по договору'}>
                   <strong>{formatMoneyNumber(d.amount)} UZS</strong>
                 </Ro>
                 <Ro label="Тип">{statusBadge(d.payment_type)}</Ro>
@@ -420,7 +420,7 @@ export default function ArchivePage() {
                   {d.project_category ? <Ro label="Линия (категория)">{d.project_category}</Ro> : null}
                   {d.day_of_month != null ? <Ro label="День месяца по договору">{d.day_of_month}</Ro> : null}
                   {d.deadline_date ? <Ro label="Срок по договору">{formatDate(d.deadline_date)}</Ro> : null}
-                  {d.contract_months != null ? <Ro label="Месяцев по договору">{d.contract_months}</Ro> : null}
+                  {d.contract_months != null && !isHosting ? <Ro label="Месяцев по договору">{d.contract_months}</Ro> : null}
                   {d.remind_days_before != null ? <Ro label="Напомнить за (дней)">{d.remind_days_before}</Ro> : null}
                 </div>
               )}

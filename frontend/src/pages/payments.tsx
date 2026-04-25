@@ -1106,7 +1106,15 @@ export default function PaymentsPage() {
                 <Th>Услуга</Th>
                 <Th>Линия</Th>
                 <Th>Тип</Th>
-                <Th>Сумма</Th>
+                <Th
+                  title={
+                    paymentsSegment === 'hosting'
+                      ? 'Ориентир суммы за период; строки графика по годам могут иметь другие суммы'
+                      : undefined
+                  }
+                >
+                  {paymentsSegment === 'hosting' ? 'Платёж (период)' : 'Сумма'}
+                </Th>
                 <Th title="Дата ближайшего платежа по графику; если неоплаченных месяцев нет — окончание договора или день месяца">
                   Ближайший срок
                 </Th>
@@ -1272,10 +1280,17 @@ export default function PaymentsPage() {
                   <ProjectLineBadge cat={drawer.project_category} labels={lineLabels} />
                   {statusBadge(drawer.payment_type)}
                   {statusBadge(drawer.status)}
-                  <span style={{ fontWeight: 700, fontSize: 14, color: '#1a6b3c' }}>
-                    {formatAmount(drawer.amount)}
-                  </span>
-                  {drawer.contract_months && (
+                  {drawer.project_category === 'hosting_domain' ? (
+                    <div style={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
+                      <span style={{ fontSize: 10, fontWeight: 600, color: '#64748b', textTransform: 'uppercase', letterSpacing: '.04em' }}>
+                        Тариф за период (по умолчанию для строк)
+                      </span>
+                      <span style={{ fontWeight: 700, fontSize: 14, color: '#1a6b3c' }}>{formatAmount(drawer.amount)}</span>
+                    </div>
+                  ) : (
+                    <span style={{ fontWeight: 700, fontSize: 14, color: '#1a6b3c' }}>{formatAmount(drawer.amount)}</span>
+                  )}
+                  {drawer.contract_months && drawer.project_category !== 'hosting_domain' && (
                     <span style={{ fontSize: 12, background: '#eef2ff', color: '#4361ee', borderRadius: 6, padding: '2px 8px', fontWeight: 600 }}>
                       {drawer.contract_months} мес.
                     </span>
@@ -1535,7 +1550,13 @@ export default function PaymentsPage() {
                       </div>
                     </Field>
                   </div>
-                  <Field label="Сумма (если другая, иначе — полная сумма договора)">
+                  <Field
+                    label={
+                      drawerIsHosting
+                        ? 'Сумма за этот годовой период (пусто — подставится тариф из карточки проекта)'
+                        : 'Сумма (если другая, иначе — полная сумма договора)'
+                    }
+                  >
                     <MoneyInput
                       value={addMonthForm.amount}
                       placeholder={formatMoneyNumber(drawer.amount)}
@@ -1718,7 +1739,13 @@ export default function PaymentsPage() {
                               onChange={(e) => setEditMonthForm((f) => ({ ...f, due_date: e.target.value }))}
                             />
                           </Field>
-                          <Field label={`Сумма (пусто = ${formatMoneyNumber(drawer.amount)} UZS по договору)`}>
+                          <Field
+                            label={
+                              drawerIsHosting
+                                ? `Сумма за период (пусто = ${formatMoneyNumber(drawer.amount)} — тариф из карточки)`
+                                : `Сумма (пусто = ${formatMoneyNumber(drawer.amount)} UZS по договору)`
+                            }
+                          >
                             <MoneyInput
                               value={editMonthForm.amount}
                               placeholder={formatMoneyNumber(drawer.amount)}
@@ -1995,8 +2022,11 @@ export default function PaymentsPage() {
                 placeholder="Например: счёт на ИП, карта, перевод…"
               />
             </Field>
-            <Field label="Сумма (Uzs) *">
+            <Field label="Тариф за период (Uzs) *">
               <MoneyInput value={form.amount} onChange={(v) => setForm(f => ({ ...f, amount: v }))} placeholder="0" />
+              <div style={{ fontSize: 11, color: '#8a8fa8', marginTop: 6, lineHeight: 1.45 }}>
+                Это не «сумма договора на все годы»: ориентир для новых строк графика. Каждый год можно дублировать строку и менять сумму в строке — лимита по сумме проекта нет.
+              </div>
             </Field>
             <Field label="Комментарий">
               <textarea
