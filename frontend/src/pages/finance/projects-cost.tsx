@@ -8,6 +8,7 @@ import api from '@/lib/api'
 import { isFinanceTeamRole } from '@/lib/roles'
 
 interface ScheduleMonth {
+  month_id: number
   month: string
   amount: string
   status: string
@@ -86,6 +87,14 @@ const DEFAULT_COST_FIELD_LABELS: Record<CostFieldApi, string> = {
 }
 
 const COL_COUNT = 17
+
+function formatApiError(e: unknown): string {
+  const err = e as { response?: { data?: { detail?: unknown } }; message?: string }
+  const d = err.response?.data?.detail
+  if (typeof d === 'string') return d
+  if (Array.isArray(d)) return JSON.stringify(d)
+  return err.message || 'Ошибка'
+}
 
 const MONTHS_RU = [
   'Янв.', 'Февр.', 'Март', 'Апр.', 'Май', 'Июнь',
@@ -207,6 +216,7 @@ export default function FinanceProjectsCostPage() {
   const [labelEditField, setLabelEditField] = useState<CostFieldApi | null>(null)
   const [labelDraft, setLabelDraft] = useState('')
   const [labelSaving, setLabelSaving] = useState(false)
+  const [confirmingScheduleKey, setConfirmingScheduleKey] = useState<string | null>(null)
 
   const canEditCostLabels =
     user?.role === 'admin' || user?.role === 'accountant' || user?.role === 'financier'
@@ -314,6 +324,37 @@ export default function FinanceProjectsCostPage() {
       return n
     })
   }
+
+  const confirmScheduleMonth = useCallback(
+    async (row: ProjectCostRow, m: ScheduleMonth) => {
+      if (m.status === 'paid') return
+      const mid = m.month_id
+      if (mid == null || Number.isNaN(Number(mid))) {
+        alert('Нет id периода графика — обновите страницу после обновления сервера.')
+        return
+      }
+      if (
+        !window.confirm(
+          `Отметить «${ymLabel(m.month)}» как оплату прошла (${formatMoneyNumber(Number(m.amount))} UZS)? Учёт выручки и P&L обновятся по правилам оплаченных строк графика.`,
+        )
+      ) {
+        return
+      }
+      const key = `${row.payment_id}-${mid}`
+      setConfirmingScheduleKey(key)
+      try {
+        await api.post(`payments/${row.payment_id}/months/${mid}/confirm`, {
+          received_payment_method: 'transfer',
+        })
+        await load()
+      } catch (e) {
+        alert(formatApiError(e))
+      } finally {
+        setConfirmingScheduleKey(null)
+      }
+    },
+    [load],
+  )
 
   const cancelCostEdit = useCallback(() => {
     setCostEdit(null)
@@ -524,7 +565,7 @@ export default function FinanceProjectsCostPage() {
     <Layout>
       <PageHeader
         title="Projects Cost"
-        subtitle="Проекты из «Проекты» и график оплат. Раздел «Услуги» — все категории кроме «Хостинг/домен»; хостинг и домен вынесены в отдельный раздел и не смешиваются с итогами услуг. «Прибыль» — маржа после резерва под % менеджера из привязанной строки «Комиссия». Период — пересечение интервала работы с выбранными месяцами."
+        subtitle="Проекты из «Проекты» и график оплат. Раздел «Услуги» — все категории кроме «Хостинг/домен»; хостинг и домен вынесены в отдельный раздел и не смешиваются с итогами услуг. «Прибыль» — маржа после резерва под % менеджера из привязанной строки «Комиссия». Период — пересечение интервала работы с выбранными месяцами. «Показать всё» открывает статьи себестоимости и график; отметка периода «оплата прошла» здесь — то же действие, что в «Проекты» (влияет на выручку и P&L). Себестоимость по статьям вводите заранее в развёрнутом блоке."
       />
       <div style={{ padding: '22px 24px', display: 'flex', flexDirection: 'column', gap: 14, minHeight: 0 }}>
         <div style={{ display: 'flex', flexWrap: 'wrap', alignItems: 'center', gap: 10 }}>
@@ -804,29 +845,62 @@ export default function FinanceProjectsCostPage() {
                               ? `${formatMoneyNumber(Number(r.manager_commission_percent))} %`
                               : '—'}
                           </Td>
-                          <Td style={{ fontSize: 12, verticalAlign: 'middle' }}>{renderBreakdownCell(r, 'cost_design_uzs')}</Td>
-                          <Td style={{ fontSize: 12, verticalAlign: 'middle' }}>{renderBreakdownCell(r, 'cost_dev_uzs')}</Td>
-                          <Td style={{ fontSize: 12, verticalAlign: 'middle' }}>{renderBreakdownCell(r, 'cost_other_uzs')}</Td>
-                          <Td style={{ fontSize: 12, verticalAlign: 'middle' }}>{renderBreakdownCell(r, 'cost_seo_uzs')}</Td>
+                          {open ? (
+                            <>
+                              <Td style={{ fontSize: 12, verticalAlign: 'middle' }}>{renderBreakdownCell(r, 'cost_design_uzs')}</Td>
+                              <Td style={{ fontSize: 12, verticalAlign: 'middle' }}>{renderBreakdownCell(r, 'cost_dev_uzs')}</Td>
+                              <Td style={{ fontSize: 12, verticalAlign: 'middle' }}>{renderBreakdownCell(r, 'cost_other_uzs')}</Td>
+                              <Td style={{ fontSize: 12, verticalAlign: 'middle' }}>{renderBreakdownCell(r, 'cost_seo_uzs')}</Td>
+                            </>
+                          ) : (
+                            <Td colSpan={4} style={{ verticalAlign: 'middle', padding: '8px 10px' }}>
+                              <button
+                                type="button"
+                                onClick={() => toggle(r.payment_id)}
+                                title="Статьи себестоимости (4 колонки) и порядок оплат по месяцам"
+                                style={{
+                                  fontSize: 11,
+                                  fontWeight: 600,
+                                  color: '#1a6b3c',
+                                  background: '#fff',
+                                  border: '1px solid #c3e6d0',
+                                  borderRadius: 6,
+                                  padding: '5px 10px',
+                                  cursor: 'pointer',
+                                  fontFamily: 'inherit',
+                                  display: 'inline-flex',
+                                  alignItems: 'center',
+                                  gap: 6,
+                                }}
+                              >
+                                Показать всё
+                                <span style={{ fontWeight: 500, color: '#64748b' }}>({r.schedule_months.length})</span>
+                              </button>
+                            </Td>
+                          )}
                           <Td style={{ fontSize: 13 }}>{formatStart(r.project_start)}</Td>
                           <Td>
-                            <button
-                              type="button"
-                              onClick={() => toggle(r.payment_id)}
-                              style={{
-                                fontSize: 11,
-                                fontWeight: 600,
-                                color: '#1a6b3c',
-                                background: '#fff',
-                                border: '1px solid #c3e6d0',
-                                borderRadius: 6,
-                                padding: '4px 8px',
-                                cursor: 'pointer',
-                                fontFamily: 'inherit',
-                              }}
-                            >
-                              {open ? 'Скрыть' : 'Показать'} ({r.schedule_months.length})
-                            </button>
+                            {open ? (
+                              <button
+                                type="button"
+                                onClick={() => toggle(r.payment_id)}
+                                style={{
+                                  fontSize: 11,
+                                  fontWeight: 600,
+                                  color: '#1a6b3c',
+                                  background: '#fff',
+                                  border: '1px solid #c3e6d0',
+                                  borderRadius: 6,
+                                  padding: '4px 8px',
+                                  cursor: 'pointer',
+                                  fontFamily: 'inherit',
+                                }}
+                              >
+                                Скрыть ({r.schedule_months.length})
+                              </button>
+                            ) : (
+                              <span style={{ fontSize: 12, color: '#94a3b8' }}>—</span>
+                            )}
                           </Td>
                           <Td style={{ fontSize: 13 }}>{r.pm_name?.trim() || '—'}</Td>
                         </tr>
@@ -837,25 +911,63 @@ export default function FinanceProjectsCostPage() {
                                 Порядок оплат по месяцам (как в графике проекта)
                               </div>
                               <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8 }}>
-                                {r.schedule_months.map((m) => (
-                                  <div
-                                    key={m.month}
-                                    style={{
-                                      padding: '6px 10px',
-                                      borderRadius: 8,
-                                      fontSize: 12,
-                                      border: '1px solid #e2e8f0',
-                                      background: m.status === 'paid' ? '#ecfdf5' : '#fff',
-                                      color: m.status === 'paid' ? '#166534' : '#64748b',
-                                    }}
-                                    title={m.description?.trim() || undefined}
-                                  >
-                                    <strong>{ymLabel(m.month)}</strong>
-                                    {' · '}
-                                    {formatMoneyNumber(Number(m.amount))}
-                                    {m.status === 'paid' ? ' ✓' : ' · ожидается'}
-                                  </div>
-                                ))}
+                                {r.schedule_months.map((m) => {
+                                  const ck = `${r.payment_id}-${m.month_id}`
+                                  const busy = confirmingScheduleKey === ck
+                                  const isPaid = m.status === 'paid'
+                                  const chip = (
+                                    <>
+                                      <strong>{ymLabel(m.month)}</strong>
+                                      {' · '}
+                                      {formatMoneyNumber(Number(m.amount))}
+                                      {isPaid ? ' ✓' : ' · ожидается'}
+                                    </>
+                                  )
+                                  if (isPaid) {
+                                    return (
+                                      <div
+                                        key={ck}
+                                        style={{
+                                          padding: '6px 10px',
+                                          borderRadius: 8,
+                                          fontSize: 12,
+                                          border: '1px solid #bbf7d0',
+                                          background: '#ecfdf5',
+                                          color: '#166534',
+                                        }}
+                                        title={m.description?.trim() || undefined}
+                                      >
+                                        {chip}
+                                      </div>
+                                    )
+                                  }
+                                  return (
+                                    <button
+                                      key={ck}
+                                      type="button"
+                                      disabled={busy || m.month_id == null}
+                                      onClick={() => void confirmScheduleMonth(r, m)}
+                                      title={
+                                        (m.description?.trim() || 'Нажмите, чтобы отметить оплату прошла (как в «Проекты»).') +
+                                        (m.month_id == null ? ' Обновите страницу.' : '')
+                                      }
+                                      style={{
+                                        padding: '6px 10px',
+                                        borderRadius: 8,
+                                        fontSize: 12,
+                                        border: '1px solid #e2e8f0',
+                                        background: '#fff',
+                                        color: '#64748b',
+                                        cursor: busy ? 'wait' : 'pointer',
+                                        fontFamily: 'inherit',
+                                        textAlign: 'left',
+                                        opacity: busy ? 0.75 : 1,
+                                      }}
+                                    >
+                                      {busy ? '…' : chip}
+                                    </button>
+                                  )
+                                })}
                               </div>
                             </Td>
                           </tr>
@@ -903,7 +1015,9 @@ export default function FinanceProjectsCostPage() {
           Себестоимость по проекту = сумма четырёх колонок (каждая показывает итог: ваш ручной ввод в ячейке плюс распределение
           из задач «Команда», где строка привязана к этому проекту и статье). Редактирование ячейки меняет только ручную часть.
           Для USD-задач в сводку попадают суммы по курсу месяца даты задачи из «Доступные средства». Строка «Итого» относится
-          только к текущему разделу («Услуги» или «Хостинг/домен»); при поиске суммируются видимые строки.
+          только к текущему разделу («Услуги» или «Хостинг/домен»); при поиске суммируются видимые строки. В свёрнутой строке
+          колонки статей скрыты; «Показать всё» раскрывает их и график. Фиксация «оплата прошла» по периоду здесь совпадает с
+          действием в карточке проекта; отдельный учёт выплат сотрудникам по задачам — в «Команда» и связанных отчётах.
         </div>
       </div>
       <Modal

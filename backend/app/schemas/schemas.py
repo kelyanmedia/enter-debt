@@ -627,6 +627,7 @@ class PaymentOut(PaymentBase):
 class ProjectCostScheduleMonthOut(BaseModel):
     """Одна строка графика оплат по проекту (payment_months)."""
 
+    month_id: int
     month: str  # YYYY-MM
     amount: Decimal
     status: str

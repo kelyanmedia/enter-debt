@@ -248,6 +248,7 @@ def _payment_to_project_cost_row(
             sum_paid += amt
         schedule_items.append(
             ProjectCostScheduleMonthOut(
+                month_id=int(pm.id),
                 month=pm.month,
                 amount=amt,
                 status=pm.status,
