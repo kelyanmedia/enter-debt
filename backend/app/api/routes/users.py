@@ -267,6 +267,7 @@ def create_user(data: UserCreate, db: Session = Depends(get_db), _=Depends(requi
         can_view_subscriptions=bool(getattr(data, "can_view_subscriptions", False)) if data.role == "administration" else False,
         can_view_accesses=bool(getattr(data, "can_view_accesses", False)) if data.role == "administration" else False,
         can_enter_cash_flow=bool(getattr(data, "can_enter_cash_flow", False)) if data.role == "administration" else False,
+        can_view_sales=bool(getattr(data, "can_view_sales", False)) if data.role == "manager" else False,
         see_all_partners=data.see_all_partners if data.role == "manager" else False,
         visible_manager_ids=vm_json,
         payment_details=pd,
@@ -299,6 +300,8 @@ def _apply_update(user: User, data: UserUpdate):
         if field == "admin_telegram_notify_all":
             continue
         if field == "can_enter_cash_flow":
+            continue
+        if field == "can_view_sales":
             continue
         if field in ("telegram_chat_id", "telegram_username"):
             continue
@@ -433,6 +436,14 @@ def _sync_admin_telegram_prefs(db: Session, user: User, data: UserUpdate) -> Non
         user.admin_telegram_notify_manager_ids = json.dumps(_validate_notify_manager_ids(db, data.admin_telegram_notify_manager_ids))
 
 
+def _sync_manager_sales_access(user: User, data: UserUpdate) -> None:
+    if user.role != "manager":
+        user.can_view_sales = False
+        return
+    if data.can_view_sales is not None:
+        user.can_view_sales = bool(data.can_view_sales)
+
+
 @router.put("/{user_id}", response_model=UserOut)
 def update_user(user_id: int, data: UserUpdate, db: Session = Depends(get_db), _=Depends(require_admin)):
     user = db.query(User).filter(User.id == user_id, User.company_slug == get_request_company()).first()
@@ -446,6 +457,7 @@ def update_user(user_id: int, data: UserUpdate, db: Session = Depends(get_db), _
     _sync_administration_cash_flow_input(db, user, data)
     _sync_admin_company_access(db, user, data, previous_role)
     _sync_admin_telegram_prefs(db, user, data)
+    _sync_manager_sales_access(user, data)
     db.commit()
     db.refresh(user)
     return user
@@ -464,6 +476,7 @@ def patch_user(user_id: int, data: UserUpdate, db: Session = Depends(get_db), _=
     _sync_administration_cash_flow_input(db, user, data)
     _sync_admin_company_access(db, user, data, previous_role)
     _sync_admin_telegram_prefs(db, user, data)
+    _sync_manager_sales_access(user, data)
     db.commit()
     db.refresh(user)
     return user

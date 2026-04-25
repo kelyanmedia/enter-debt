@@ -769,6 +769,33 @@ def pl_report(
         else:
             salary_uzs[m_idx - 1] += pl_amt
 
+    # Факт выплат из «Команда»: если задачу привязали к проекту/статье Projects Cost и отметили «оплачено»,
+    # она попадает в P&L по месяцу оплаты. Ручные записи из «История выплат» остаются отдельным способом учёта.
+    for t in (
+        db.query(EmployeeTask)
+        .filter(
+            EmployeeTask.company_slug == get_request_company(),
+            EmployeeTask.paid == True,
+            EmployeeTask.allocated_payment_id.isnot(None),
+            EmployeeTask.cost_category.isnot(None),
+        )
+        .all()
+    ):
+        paid_dt = t.paid_at.date() if isinstance(t.paid_at, datetime) else t.paid_at
+        d = paid_dt or t.work_date
+        if d.year != y:
+            continue
+        amt = Decimal(str(t.amount or 0))
+        bud = Decimal(str(t.budget_amount or 0))
+        pl_amt = amt - bud
+        if pl_amt <= 0:
+            continue
+        cur = (t.currency or "USD").upper()
+        if cur == "USD":
+            salary_usd[d.month - 1] += pl_amt
+        else:
+            salary_uzs[d.month - 1] += pl_amt
+
     # --- Процент менеджера (раздел «Комиссия»)
     # Обычный режим: P&L получает фактически выплаченные/полученные суммы по датам received_amount_*_on
     # (или по дате проекта, если дата не указана).

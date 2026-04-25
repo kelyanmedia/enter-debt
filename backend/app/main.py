@@ -29,7 +29,7 @@ from app.models import user, partner, payment
 import app.models.telegram_join  # noqa: F401 — таблица telegram_join_requests
 import app.models.feed_notification  # noqa: F401 — лента событий
 import app.models.ceo_metric_override  # noqa: F401 — ручные значения CEO dashboard
-from app.api.routes import auth, users, partners, payments, dashboard, notifications, archive, payment_months, telegram_join, feed_notifications, contract_requests, employee_tasks, employee_payment_records, finance_projects_cost, finance_cash_flow, trash
+from app.api.routes import auth, users, partners, payments, dashboard, notifications, archive, payment_months, telegram_join, feed_notifications, contract_requests, employee_tasks, employee_payment_records, finance_projects_cost, finance_cash_flow, finance_lending, sales_companies, trash
 from app.api.routes import commissions, subscription_items, access_entries, company_ui
 import app.models.commission  # noqa: F401
 import app.models.employee_task  # noqa: F401
@@ -41,6 +41,8 @@ import app.models.company_ui  # noqa: F401 — подписи разделов/�
 import app.models.ceo_dashboard_block  # noqa: F401 — блоки CEO Dashboard по компании
 import app.models.pl_manual_line  # noqa: F401 — ручные строки P&L по компании
 import app.models.available_funds_manual  # noqa: F401
+import app.models.lending_record  # noqa: F401 — кредитование
+import app.models.sales_company  # noqa: F401 — продажи / CRM-lite
 from app.core.config import settings
 from app.core.security import get_current_user, get_password_hash, normalize_email
 from app.models.user import User
@@ -202,6 +204,8 @@ app.include_router(employee_payment_records.router)
 app.include_router(finance_projects_cost.router)
 app.include_router(finance_projects_cost.router_finance_no_api_prefix)
 app.include_router(finance_cash_flow.router)
+app.include_router(finance_lending.router)
+app.include_router(sales_companies.router)
 app.include_router(commissions.router)
 app.include_router(subscription_items.router)
 app.include_router(access_entries.router)
@@ -296,6 +300,7 @@ def _migrate():
         "ALTER TABLE users ADD COLUMN IF NOT EXISTS web_access BOOLEAN DEFAULT TRUE",
         "ALTER TABLE users ADD COLUMN IF NOT EXISTS can_view_subscriptions BOOLEAN NOT NULL DEFAULT FALSE",
         "ALTER TABLE users ADD COLUMN IF NOT EXISTS can_view_accesses BOOLEAN NOT NULL DEFAULT FALSE",
+        "ALTER TABLE users ADD COLUMN IF NOT EXISTS can_view_sales BOOLEAN NOT NULL DEFAULT FALSE",
         "UPDATE users SET web_access = TRUE WHERE web_access IS NULL",
         "ALTER TABLE users ADD COLUMN IF NOT EXISTS see_all_partners BOOLEAN DEFAULT FALSE",
         "UPDATE users SET see_all_partners = FALSE WHERE see_all_partners IS NULL",
@@ -344,6 +349,7 @@ def _migrate():
         "ALTER TABLE users ADD COLUMN IF NOT EXISTS telegram_dividend_default_category VARCHAR(64)",
         "ALTER TABLE users ADD COLUMN IF NOT EXISTS admin_accessible_company_slugs TEXT",
         "ALTER TABLE users ADD COLUMN IF NOT EXISTS can_enter_cash_flow BOOLEAN NOT NULL DEFAULT FALSE",
+        "ALTER TABLE users ADD COLUMN IF NOT EXISTS can_view_sales BOOLEAN NOT NULL DEFAULT FALSE",
         # Commissions table
         """CREATE TABLE IF NOT EXISTS commissions (
             id SERIAL PRIMARY KEY,
@@ -489,6 +495,112 @@ def _migrate():
         "ALTER TABLE payments ADD COLUMN IF NOT EXISTS hosting_prepaid_years INTEGER NOT NULL DEFAULT 0",
         """UPDATE payments SET hosting_renewal_anchor = deadline_date, hosting_prepaid_years = 0
            WHERE project_category = 'hosting_domain' AND hosting_renewal_anchor IS NULL AND deadline_date IS NOT NULL""",
+        """CREATE TABLE IF NOT EXISTS lending_records (
+            id SERIAL PRIMARY KEY,
+            company_slug VARCHAR(32) NOT NULL DEFAULT 'kelyanmedia',
+            entity_name VARCHAR(500) NOT NULL,
+            record_type VARCHAR(32) NOT NULL,
+            issued_on DATE NOT NULL DEFAULT CURRENT_DATE,
+            principal_uzs NUMERIC(15,2) NOT NULL,
+            monthly_rate_percent NUMERIC(10,4),
+            total_repayment_uzs NUMERIC(15,2) NOT NULL DEFAULT 0,
+            deadline_date DATE,
+            period_note VARCHAR(500),
+            note TEXT,
+            created_at TIMESTAMP WITH TIME ZONE DEFAULT now(),
+            updated_at TIMESTAMP WITH TIME ZONE
+        )""",
+        "ALTER TABLE lending_records ADD COLUMN IF NOT EXISTS company_slug VARCHAR(32) NOT NULL DEFAULT 'kelyanmedia'",
+        "ALTER TABLE lending_records ADD COLUMN IF NOT EXISTS payment_id INTEGER REFERENCES payments(id) ON DELETE SET NULL",
+        "ALTER TABLE lending_records ADD COLUMN IF NOT EXISTS issued_on DATE NOT NULL DEFAULT CURRENT_DATE",
+        "ALTER TABLE lending_records ALTER COLUMN deadline_date DROP NOT NULL",
+        "CREATE INDEX IF NOT EXISTS ix_lending_records_company_slug ON lending_records (company_slug)",
+        "CREATE INDEX IF NOT EXISTS ix_lending_records_payment_id ON lending_records (payment_id)",
+        """CREATE TABLE IF NOT EXISTS sales_company_groups (
+            id SERIAL PRIMARY KEY,
+            company_slug VARCHAR(32) NOT NULL DEFAULT 'kelyanmedia',
+            name VARCHAR(120) NOT NULL,
+            note TEXT,
+            created_by_user_id INTEGER REFERENCES users(id) ON DELETE SET NULL,
+            created_at TIMESTAMP WITH TIME ZONE DEFAULT now()
+        )""",
+        "CREATE INDEX IF NOT EXISTS ix_sales_company_groups_company_slug ON sales_company_groups (company_slug)",
+        """CREATE TABLE IF NOT EXISTS sales_companies (
+            id SERIAL PRIMARY KEY,
+            company_slug VARCHAR(32) NOT NULL DEFAULT 'kelyanmedia',
+            company_name VARCHAR(300) NOT NULL,
+            brand_name VARCHAR(220),
+            client_type VARCHAR(1),
+            status VARCHAR(120),
+            comment TEXT,
+            group_id INTEGER REFERENCES sales_company_groups(id) ON DELETE SET NULL,
+            assigned_manager_id INTEGER REFERENCES users(id) ON DELETE SET NULL,
+            brought_by_manager_id INTEGER REFERENCES users(id) ON DELETE SET NULL,
+            position VARCHAR(220),
+            contact_name VARCHAR(220),
+            phone VARCHAR(80),
+            email VARCHAR(220),
+            contact_actuality_date DATE,
+            contact TEXT,
+            lpr_name VARCHAR(220),
+            lpr_role VARCHAR(160),
+            lvr_name VARCHAR(220),
+            lvr_role VARCHAR(160),
+            previous_jobs TEXT,
+            created_by_user_id INTEGER REFERENCES users(id) ON DELETE SET NULL,
+            created_at TIMESTAMP WITH TIME ZONE DEFAULT now(),
+            updated_at TIMESTAMP WITH TIME ZONE
+        )""",
+        "ALTER TABLE sales_companies ADD COLUMN IF NOT EXISTS client_type VARCHAR(1)",
+        "ALTER TABLE sales_companies ADD COLUMN IF NOT EXISTS brand_name VARCHAR(220)",
+        "ALTER TABLE sales_companies ADD COLUMN IF NOT EXISTS group_id INTEGER REFERENCES sales_company_groups(id) ON DELETE SET NULL",
+        "ALTER TABLE sales_companies ADD COLUMN IF NOT EXISTS brought_by_manager_id INTEGER REFERENCES users(id) ON DELETE SET NULL",
+        "ALTER TABLE sales_companies ADD COLUMN IF NOT EXISTS brought_by_name VARCHAR(220)",
+        "ALTER TABLE sales_companies ADD COLUMN IF NOT EXISTS contact_name VARCHAR(220)",
+        "ALTER TABLE sales_companies ADD COLUMN IF NOT EXISTS phone VARCHAR(80)",
+        "ALTER TABLE sales_companies ADD COLUMN IF NOT EXISTS email VARCHAR(220)",
+        "ALTER TABLE sales_companies ADD COLUMN IF NOT EXISTS contact_actuality_date DATE",
+        "ALTER TABLE sales_companies ADD COLUMN IF NOT EXISTS lpr_name VARCHAR(220)",
+        "ALTER TABLE sales_companies ADD COLUMN IF NOT EXISTS lpr_role VARCHAR(160)",
+        "ALTER TABLE sales_companies ADD COLUMN IF NOT EXISTS lvr_name VARCHAR(220)",
+        "ALTER TABLE sales_companies ADD COLUMN IF NOT EXISTS lvr_role VARCHAR(160)",
+        "ALTER TABLE sales_companies ADD COLUMN IF NOT EXISTS trashed_at TIMESTAMP WITH TIME ZONE",
+        "CREATE INDEX IF NOT EXISTS ix_sales_companies_company_slug ON sales_companies (company_slug)",
+        "CREATE INDEX IF NOT EXISTS ix_sales_companies_group_id ON sales_companies (group_id)",
+        "CREATE INDEX IF NOT EXISTS ix_sales_companies_assigned_manager_id ON sales_companies (assigned_manager_id)",
+        "CREATE INDEX IF NOT EXISTS ix_sales_companies_brought_by_manager_id ON sales_companies (brought_by_manager_id)",
+        "CREATE INDEX IF NOT EXISTS ix_sales_companies_trashed_at ON sales_companies (trashed_at) WHERE trashed_at IS NOT NULL",
+        """CREATE TABLE IF NOT EXISTS sales_company_interactions (
+            id SERIAL PRIMARY KEY,
+            company_slug VARCHAR(32) NOT NULL DEFAULT 'kelyanmedia',
+            sales_company_id INTEGER NOT NULL REFERENCES sales_companies(id) ON DELETE CASCADE,
+            interaction_date DATE NOT NULL,
+            project_name VARCHAR(300),
+            status VARCHAR(120),
+            note TEXT,
+            created_by_user_id INTEGER REFERENCES users(id) ON DELETE SET NULL,
+            created_at TIMESTAMP WITH TIME ZONE DEFAULT now()
+        )""",
+        "CREATE INDEX IF NOT EXISTS ix_sales_company_interactions_company_id ON sales_company_interactions (sales_company_id)",
+        "CREATE INDEX IF NOT EXISTS ix_sales_company_interactions_company_slug ON sales_company_interactions (company_slug)",
+        """CREATE TABLE IF NOT EXISTS sales_wishlist_items (
+            id SERIAL PRIMARY KEY,
+            company_slug VARCHAR(32) NOT NULL DEFAULT 'kelyanmedia',
+            company_name VARCHAR(300) NOT NULL,
+            potential_entry VARCHAR(300),
+            reason TEXT,
+            comment TEXT,
+            offer TEXT,
+            assigned_manager_id INTEGER REFERENCES users(id) ON DELETE SET NULL,
+            created_by_user_id INTEGER REFERENCES users(id) ON DELETE SET NULL,
+            activated_company_id INTEGER REFERENCES sales_companies(id) ON DELETE SET NULL,
+            activated_at TIMESTAMP WITH TIME ZONE,
+            created_at TIMESTAMP WITH TIME ZONE DEFAULT now(),
+            updated_at TIMESTAMP WITH TIME ZONE
+        )""",
+        "CREATE INDEX IF NOT EXISTS ix_sales_wishlist_items_company_slug ON sales_wishlist_items (company_slug)",
+        "CREATE INDEX IF NOT EXISTS ix_sales_wishlist_items_assigned_manager_id ON sales_wishlist_items (assigned_manager_id)",
+        "CREATE INDEX IF NOT EXISTS ix_sales_wishlist_items_activated_company_id ON sales_wishlist_items (activated_company_id)",
         # ── Multi-tenant: одна БД, колонка company_slug ─────────────────────────
         "ALTER TABLE users ADD COLUMN IF NOT EXISTS company_slug VARCHAR(32) NOT NULL DEFAULT 'kelyanmedia'",
         "ALTER TABLE partners ADD COLUMN IF NOT EXISTS company_slug VARCHAR(32) NOT NULL DEFAULT 'kelyanmedia'",
@@ -651,6 +763,10 @@ def _migrate():
             missing.append(
                 "ALTER TABLE users ADD COLUMN telegram_dividend_default_category VARCHAR(64)"
             )
+        if "can_view_sales" not in cols:
+            missing.append(
+                "ALTER TABLE users ADD COLUMN can_view_sales BOOLEAN NOT NULL DEFAULT FALSE"
+            )
         for sql in missing:
             try:
                 with eng.connect() as conn:
@@ -658,6 +774,47 @@ def _migrate():
                     conn.commit()
             except Exception as e:
                 log.warning("Migration skipped [%s] (%s): %s", _slug, sql, e)
+
+    # SQLite/local dev: новые CRM/кредитные поля. На PostgreSQL их уже закрывают IF NOT EXISTS выше,
+    # а SQLite старых версий пропускает эти ALTER, поэтому добавляем недостающие колонки вручную.
+    sqlite_column_migrations = {
+        "lending_records": [
+            ("payment_id", "ALTER TABLE lending_records ADD COLUMN payment_id INTEGER REFERENCES payments(id) ON DELETE SET NULL"),
+            ("issued_on", "ALTER TABLE lending_records ADD COLUMN issued_on DATE NOT NULL DEFAULT CURRENT_DATE"),
+        ],
+        "sales_companies": [
+            ("client_type", "ALTER TABLE sales_companies ADD COLUMN client_type VARCHAR(1)"),
+            ("brand_name", "ALTER TABLE sales_companies ADD COLUMN brand_name VARCHAR(220)"),
+            ("group_id", "ALTER TABLE sales_companies ADD COLUMN group_id INTEGER REFERENCES sales_company_groups(id) ON DELETE SET NULL"),
+            ("brought_by_manager_id", "ALTER TABLE sales_companies ADD COLUMN brought_by_manager_id INTEGER REFERENCES users(id) ON DELETE SET NULL"),
+            ("brought_by_name", "ALTER TABLE sales_companies ADD COLUMN brought_by_name VARCHAR(220)"),
+            ("contact_name", "ALTER TABLE sales_companies ADD COLUMN contact_name VARCHAR(220)"),
+            ("phone", "ALTER TABLE sales_companies ADD COLUMN phone VARCHAR(80)"),
+            ("email", "ALTER TABLE sales_companies ADD COLUMN email VARCHAR(220)"),
+            ("contact_actuality_date", "ALTER TABLE sales_companies ADD COLUMN contact_actuality_date DATE"),
+            ("lpr_name", "ALTER TABLE sales_companies ADD COLUMN lpr_name VARCHAR(220)"),
+            ("lpr_role", "ALTER TABLE sales_companies ADD COLUMN lpr_role VARCHAR(160)"),
+            ("lvr_name", "ALTER TABLE sales_companies ADD COLUMN lvr_name VARCHAR(220)"),
+            ("lvr_role", "ALTER TABLE sales_companies ADD COLUMN lvr_role VARCHAR(160)"),
+            ("trashed_at", "ALTER TABLE sales_companies ADD COLUMN trashed_at TIMESTAMP"),
+        ],
+    }
+    for _slug, eng in iter_company_engines():
+        insp = inspect(eng)
+        for table, specs in sqlite_column_migrations.items():
+            try:
+                cols = {c["name"] for c in insp.get_columns(table)}
+            except Exception:
+                continue
+            for col, sql in specs:
+                if col in cols:
+                    continue
+                try:
+                    with eng.connect() as conn:
+                        conn.execute(text(sql))
+                        conn.commit()
+                except Exception as e:
+                    log.warning("Migration skipped [%s] (%s.%s): %s", _slug, table, col, e)
 
 
 _MASTER_ADMIN_EMAIL = "agasi@gmail.com"

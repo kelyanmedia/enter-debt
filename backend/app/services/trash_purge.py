@@ -8,6 +8,7 @@ from sqlalchemy.orm import Session
 from app.db.database import get_request_company
 from app.models.partner import Partner
 from app.models.payment import NotificationLog, Payment
+from app.models.sales_company import SalesCompany
 
 TRASH_RETENTION_DAYS = 30
 
@@ -16,6 +17,7 @@ def purge_expired_trash(db: Session) -> dict:
     cutoff = datetime.now(timezone.utc) - timedelta(days=TRASH_RETENTION_DAYS)
     removed_p = 0
     removed_part = 0
+    removed_clients = 0
     for p in (
         db.query(Payment)
         .filter(
@@ -48,5 +50,16 @@ def purge_expired_trash(db: Session) -> dict:
             db.delete(pay)
         db.delete(part)
         removed_part += 1
+    for client in (
+        db.query(SalesCompany)
+        .filter(
+            SalesCompany.trashed_at.isnot(None),
+            SalesCompany.trashed_at < cutoff,
+            SalesCompany.company_slug == get_request_company(),
+        )
+        .all()
+    ):
+        db.delete(client)
+        removed_clients += 1
     db.commit()
-    return {"purged_payments": removed_p, "purged_partners": removed_part}
+    return {"purged_payments": removed_p, "purged_partners": removed_part, "purged_clients": removed_clients}

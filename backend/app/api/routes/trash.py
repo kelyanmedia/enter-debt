@@ -11,6 +11,7 @@ from app.core.security import require_admin
 from app.db.database import get_db, get_request_company
 from app.models.partner import Partner
 from app.models.payment import NotificationLog, Payment
+from app.models.sales_company import SalesCompany
 from app.models.user import User
 from app.schemas.schemas import PartnerOut, PaymentOut
 from app.services.trash_purge import TRASH_RETENTION_DAYS, purge_expired_trash
@@ -69,6 +70,38 @@ def list_trashed_partners(
     return [_enrich_partner_trash(db, p) for p in rows]
 
 
+@router.get("/clients")
+def list_trashed_clients(
+    db: Session = Depends(get_db),
+    _: User = Depends(require_admin),
+):
+    rows = (
+        db.query(SalesCompany)
+        .options(
+            joinedload(SalesCompany.assigned_manager),
+            joinedload(SalesCompany.brought_by_manager),
+        )
+        .filter(
+            SalesCompany.trashed_at.isnot(None),
+            SalesCompany.company_slug == get_request_company(),
+        )
+        .order_by(SalesCompany.trashed_at.desc())
+        .all()
+    )
+    return [
+        {
+            "id": int(r.id),
+            "company_name": r.company_name,
+            "client_type": r.client_type,
+            "status": r.status,
+            "assigned_manager_name": (r.assigned_manager.name if r.assigned_manager else None),
+            "brought_by_manager_name": (r.brought_by_manager.name if r.brought_by_manager else None),
+            "trashed_at": r.trashed_at.isoformat() if r.trashed_at else None,
+        }
+        for r in rows
+    ]
+
+
 @router.post("/payments/{payment_id}/restore")
 def restore_trashed_payment(
     payment_id: int,
@@ -124,6 +157,27 @@ def restore_trashed_partner(
     return {"ok": True}
 
 
+@router.post("/clients/{client_id}/restore")
+def restore_trashed_client(
+    client_id: int,
+    db: Session = Depends(get_db),
+    _: User = Depends(require_admin),
+):
+    row = (
+        db.query(SalesCompany)
+        .filter(
+            SalesCompany.id == client_id,
+            SalesCompany.company_slug == get_request_company(),
+        )
+        .first()
+    )
+    if not row or row.trashed_at is None:
+        raise HTTPException(status_code=404, detail="Клиент не найден в корзине")
+    row.trashed_at = None
+    db.commit()
+    return {"ok": True}
+
+
 @router.delete("/payments/{payment_id}")
 def permanently_delete_trashed_payment(
     payment_id: int,
@@ -172,6 +226,27 @@ def permanently_delete_trashed_partner(
         ).delete(synchronize_session=False)
         db.delete(pay)
     db.delete(partner)
+    db.commit()
+    return {"ok": True}
+
+
+@router.delete("/clients/{client_id}")
+def permanently_delete_trashed_client(
+    client_id: int,
+    db: Session = Depends(get_db),
+    _: User = Depends(require_admin),
+):
+    row = (
+        db.query(SalesCompany)
+        .filter(
+            SalesCompany.id == client_id,
+            SalesCompany.company_slug == get_request_company(),
+        )
+        .first()
+    )
+    if not row or row.trashed_at is None:
+        raise HTTPException(status_code=404, detail="Клиент не найден в корзине")
+    db.delete(row)
     db.commit()
     return {"ok": True}
 

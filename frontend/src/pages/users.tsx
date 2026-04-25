@@ -16,6 +16,7 @@ interface User {
   can_view_subscriptions?: boolean
   can_view_accesses?: boolean
   can_enter_cash_flow?: boolean
+  can_view_sales?: boolean
   see_all_partners?: boolean
   visible_manager_ids?: number[]
   admin_telegram_notify_all?: boolean
@@ -55,6 +56,7 @@ const EMPTY = {
   is_ad_budget_employee: 'false',
   can_view_subscriptions: 'false', can_view_accesses: 'false',
   can_enter_cash_flow: 'false',
+  can_view_sales: 'false',
   admin_telegram_notify_all: 'false',
 }
 
@@ -126,6 +128,7 @@ export default function UsersPage() {
       can_view_subscriptions: u.can_view_subscriptions ? 'true' : 'false',
       can_view_accesses: u.can_view_accesses ? 'true' : 'false',
       can_enter_cash_flow: u.can_enter_cash_flow ? 'true' : 'false',
+      can_view_sales: u.can_view_sales ? 'true' : 'false',
       admin_telegram_notify_all: u.admin_telegram_notify_all ? 'true' : 'false',
       new_password: '',
       payment_details: u.payment_details || '',
@@ -235,7 +238,10 @@ export default function UsersPage() {
           telegram_username: form.telegram_username || null,
           telegram_chat_id: form.telegram_chat_id ? Number(form.telegram_chat_id) : null,
         }
-        if (form.role === 'manager') payload.see_all_partners = form.see_all_partners === 'true'
+        if (form.role === 'manager') {
+          payload.see_all_partners = form.see_all_partners === 'true'
+          payload.can_view_sales = form.can_view_sales === 'true'
+        }
         if (form.role === 'administration') payload.visible_manager_ids = visibleManagerIds
         if (form.role === 'administration') {
           payload.can_view_subscriptions = form.can_view_subscriptions === 'true'
@@ -269,6 +275,7 @@ export default function UsersPage() {
           telegram_chat_id: form.telegram_chat_id ? Number(form.telegram_chat_id) : null,
           telegram_username: form.telegram_username || null,
           see_all_partners: form.role === 'manager' ? form.see_all_partners === 'true' : false,
+          can_view_sales: form.role === 'manager' ? form.can_view_sales === 'true' : false,
           visible_manager_ids: form.role === 'administration' ? visibleManagerIds : undefined,
           can_view_subscriptions: form.role === 'administration' ? form.can_view_subscriptions === 'true' : undefined,
           can_view_accesses: form.role === 'administration' ? form.can_view_accesses === 'true' : undefined,
@@ -533,7 +540,7 @@ export default function UsersPage() {
                         </Td>
                         <Td style={{ fontSize: 11, color: '#8a8fa8' }}>
                           {u.role === 'manager'
-                            ? (u.see_all_partners ? 'Все партнёры' : 'Только назначенные')
+                            ? `${u.see_all_partners ? 'Все партнёры' : 'Только назначенные'} · Продажи: ${u.can_view_sales ? 'да' : 'нет'}`
                             : u.role === 'administration'
                               ? `${(u.visible_manager_ids || []).length} менеджер(ов) · Подписки: ${u.can_view_subscriptions ? 'да' : 'нет'} · Доступы: ${u.can_view_accesses ? 'да' : 'нет'}`
                               : u.role === 'employee'
@@ -878,12 +885,20 @@ export default function UsersPage() {
           </>
         )}
         {form.role === 'manager' && (
-          <Field label="Менеджер видит проекты всех партнёров">
-            <Select value={form.see_all_partners} onChange={e => setForm(f => ({ ...f, see_all_partners: e.target.value }))}>
-              <option value="false">Нет — только выбранные ниже партнёры</option>
-              <option value="true">Да — полный доступ по всем партнёрам</option>
-            </Select>
-          </Field>
+          <>
+            <Field label="Доступ к Продажам → Компании">
+              <Select value={form.can_view_sales} onChange={e => setForm(f => ({ ...f, can_view_sales: e.target.value }))}>
+                <option value="false">Нет — по умолчанию раздел скрыт</option>
+                <option value="true">Да — видит раздел «Компании» и свои назначенные компании</option>
+              </Select>
+            </Field>
+            <Field label="Менеджер видит проекты всех партнёров">
+              <Select value={form.see_all_partners} onChange={e => setForm(f => ({ ...f, see_all_partners: e.target.value }))}>
+                <option value="false">Нет — только выбранные ниже партнёры</option>
+                <option value="true">Да — полный доступ по всем партнёрам</option>
+              </Select>
+            </Field>
+          </>
         )}
         {editing && form.role === 'manager' && form.see_all_partners === 'false' && allPartners.length > 0 && (
           <div style={{ marginBottom: 14 }}>

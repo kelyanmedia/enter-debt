@@ -854,28 +854,36 @@ export default function FinanceProjectsCostPage() {
                             </>
                           ) : (
                             <Td colSpan={4} style={{ verticalAlign: 'middle', padding: '8px 10px' }}>
-                              <button
-                                type="button"
-                                onClick={() => toggle(r.payment_id)}
-                                title="Статьи себестоимости (4 колонки) и порядок оплат по месяцам"
-                                style={{
-                                  fontSize: 11,
-                                  fontWeight: 600,
-                                  color: '#1a6b3c',
-                                  background: '#fff',
-                                  border: '1px solid #c3e6d0',
-                                  borderRadius: 6,
-                                  padding: '5px 10px',
-                                  cursor: 'pointer',
-                                  fontFamily: 'inherit',
-                                  display: 'inline-flex',
-                                  alignItems: 'center',
-                                  gap: 6,
-                                }}
-                              >
-                                Показать всё
-                                <span style={{ fontWeight: 500, color: '#64748b' }}>({r.schedule_months.length})</span>
-                              </button>
+                              <div style={{ display: 'flex', alignItems: 'center', gap: 10, whiteSpace: 'nowrap' }}>
+                                <span
+                                  title="Итого по скрытым статьям: дизайн + разработка + прочее + SEO"
+                                  style={{ fontSize: 13, fontWeight: 700, color: '#334155' }}
+                                >
+                                  {formatMoneyNumber(Number(r.internal_cost_sum))}
+                                </span>
+                                <button
+                                  type="button"
+                                  onClick={() => toggle(r.payment_id)}
+                                  title="Открыть статьи себестоимости (4 кликабельные суммы) и порядок оплат по месяцам"
+                                  style={{
+                                    fontSize: 11,
+                                    fontWeight: 600,
+                                    color: '#1a6b3c',
+                                    background: '#fff',
+                                    border: '1px solid #c3e6d0',
+                                    borderRadius: 6,
+                                    padding: '5px 10px',
+                                    cursor: 'pointer',
+                                    fontFamily: 'inherit',
+                                    display: 'inline-flex',
+                                    alignItems: 'center',
+                                    gap: 6,
+                                  }}
+                                >
+                                  Показать всё
+                                  <span style={{ fontWeight: 500, color: '#64748b' }}>({r.schedule_months.length})</span>
+                                </button>
+                              </div>
                             </Td>
                           )}
                           <Td style={{ fontSize: 13 }}>{formatStart(r.project_start)}</Td>

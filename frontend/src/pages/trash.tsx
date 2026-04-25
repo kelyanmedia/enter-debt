@@ -47,7 +47,17 @@ interface TrashedPartner {
   open_payments_count?: number
 }
 
-type Tab = 'payments' | 'partners'
+interface TrashedClient {
+  id: number
+  company_name: string
+  client_type?: string | null
+  status?: string | null
+  assigned_manager_name?: string | null
+  brought_by_manager_name?: string | null
+  trashed_at?: string | null
+}
+
+type Tab = 'payments' | 'partners' | 'clients'
 
 export default function TrashPage() {
   const { user, loading } = useAuth()
@@ -55,26 +65,32 @@ export default function TrashPage() {
   const [tab, setTab] = useState<Tab>('payments')
   const [payments, setPayments] = useState<TrashedPayment[]>([])
   const [partners, setPartners] = useState<TrashedPartner[]>([])
+  const [clients, setClients] = useState<TrashedClient[]>([])
   const [fetching, setFetching] = useState(false)
   const [purgeBusy, setPurgeBusy] = useState(false)
   const [restorePaymentId, setRestorePaymentId] = useState<number | null>(null)
   const [restorePartnerId, setRestorePartnerId] = useState<number | null>(null)
   const [wipePaymentId, setWipePaymentId] = useState<number | null>(null)
   const [wipePartnerId, setWipePartnerId] = useState<number | null>(null)
+  const [restoreClientId, setRestoreClientId] = useState<number | null>(null)
+  const [wipeClientId, setWipeClientId] = useState<number | null>(null)
 
   const load = useCallback(async () => {
     if (!user || user.role !== 'admin') return
     setFetching(true)
     try {
-      const [rp, rpart] = await Promise.all([
+      const [rp, rpart, rclients] = await Promise.all([
         api.get('trash/payments'),
         api.get('trash/partners'),
+        api.get('trash/clients'),
       ])
       setPayments(rp.data)
       setPartners(rpart.data)
+      setClients(rclients.data || [])
     } catch {
       setPayments([])
       setPartners([])
+      setClients([])
     } finally {
       setFetching(false)
     }
@@ -109,6 +125,18 @@ export default function TrashPage() {
   const runWipePartner = async () => {
     if (wipePartnerId === null) return
     await api.delete(`trash/partners/${wipePartnerId}`)
+    await load()
+  }
+
+  const runRestoreClient = async () => {
+    if (restoreClientId === null) return
+    await api.post(`trash/clients/${restoreClientId}/restore`)
+    await load()
+  }
+
+  const runWipeClient = async () => {
+    if (wipeClientId === null) return
+    await api.delete(`trash/clients/${wipeClientId}`)
     await load()
   }
 
@@ -156,6 +184,9 @@ export default function TrashPage() {
           </button>
           <button type="button" style={tabStyle('partners')} onClick={() => setTab('partners')}>
             Компании ({partners.length})
+          </button>
+          <button type="button" style={tabStyle('clients')} onClick={() => setTab('clients')}>
+            Клиенты ({clients.length})
           </button>
         </div>
 
@@ -251,6 +282,49 @@ export default function TrashPage() {
             {partners.length === 0 && !fetching && <Empty text="В корзине нет компаний" />}
           </Card>
         )}
+
+        {tab === 'clients' && (
+          <Card>
+            <table style={{ width: '100%', borderCollapse: 'collapse' }}>
+              <thead>
+                <tr>
+                  <Th>Клиент</Th>
+                  <Th>Тип</Th>
+                  <Th>Статус</Th>
+                  <Th>Менеджер</Th>
+                  <Th>Кто привёл</Th>
+                  <Th>Удалён</Th>
+                  <Th>Осталось</Th>
+                  <Th />
+                </tr>
+              </thead>
+              <tbody>
+                {clients.map((c) => (
+                  <tr key={c.id} style={{ borderBottom: '1px solid #e8e9ef' }}>
+                    <Td style={{ fontWeight: 600 }}>{c.company_name}</Td>
+                    <Td>{c.client_type || '—'}</Td>
+                    <Td>{c.status || '—'}</Td>
+                    <Td>{c.assigned_manager_name || '—'}</Td>
+                    <Td>{c.brought_by_manager_name || '—'}</Td>
+                    <Td style={{ fontSize: 13 }}>{c.trashed_at ? formatDate(c.trashed_at) : '—'}</Td>
+                    <Td style={{ fontWeight: 600, color: daysLeftInTrash(c.trashed_at) <= 3 ? '#e84040' : '#64748b' }}>
+                      {daysLeftInTrash(c.trashed_at)} дн.
+                    </Td>
+                    <Td style={{ whiteSpace: 'nowrap' }}>
+                      <BtnPrimary onClick={() => setRestoreClientId(c.id)} style={{ padding: '6px 12px', fontSize: 12, marginRight: 8 }}>
+                        Восстановить
+                      </BtnPrimary>
+                      <BtnOutline onClick={() => setWipeClientId(c.id)} style={{ padding: '6px 12px', fontSize: 12, color: '#e84040' }}>
+                        Удалить навсегда
+                      </BtnOutline>
+                    </Td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+            {clients.length === 0 && !fetching && <Empty text="В корзине нет клиентов" />}
+          </Card>
+        )}
       </div>
 
       <ConfirmModal
@@ -286,6 +360,23 @@ export default function TrashPage() {
         message="Компания и все связанные проекты будут безвозвратно удалены из базы."
         confirmLabel="Удалить"
         onConfirm={runWipePartner}
+      />
+      <ConfirmModal
+        open={restoreClientId !== null}
+        onClose={() => setRestoreClientId(null)}
+        title="Восстановить клиента?"
+        message="Клиент снова появится в разделе Продажи."
+        confirmLabel="Восстановить"
+        danger={false}
+        onConfirm={runRestoreClient}
+      />
+      <ConfirmModal
+        open={wipeClientId !== null}
+        onClose={() => setWipeClientId(null)}
+        title="Удалить клиента навсегда?"
+        message="Запись клиента будет безвозвратно удалена из базы."
+        confirmLabel="Удалить"
+        onConfirm={runWipeClient}
       />
     </Layout>
   )

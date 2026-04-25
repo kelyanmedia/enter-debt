@@ -78,6 +78,7 @@ class UserBase(BaseModel):
     can_view_subscriptions: bool = False
     can_view_accesses: bool = False
     can_enter_cash_flow: bool = False  # только administration: ввод ДДС без отчёта
+    can_view_sales: bool = False  # только manager: доступ к CRM/Продажи → Компании
     see_all_partners: bool = False
     payment_details: Optional[str] = None  # реквизиты выплат для сотрудников (freelance)
     multi_company_access: bool = False  # только employee: переключение компаний в кабинете
@@ -107,6 +108,7 @@ class UserUpdate(BaseModel):
     can_view_subscriptions: Optional[bool] = None
     can_view_accesses: Optional[bool] = None
     can_enter_cash_flow: Optional[bool] = None
+    can_view_sales: Optional[bool] = None
     see_all_partners: Optional[bool] = None
     password: Optional[str] = None
     visible_manager_ids: Optional[List[int]] = None
@@ -686,6 +688,59 @@ class PLManualCellPut(BaseModel):
     period_month: str = Field(..., pattern=r"^\d{4}-\d{2}$")
     uzs: Decimal = Decimal("0")
     usd: Decimal = Decimal("0")
+
+
+class LendingRecordOut(BaseModel):
+    """Строка учёта кредита / безвозмездной выдачи."""
+
+    id: int
+    entity_name: str
+    record_type: Literal["interest_loan", "interest_free"]
+    payment_id: Optional[int] = None
+    payment_label: Optional[str] = None
+    issued_on: date
+    principal_uzs: Decimal
+    monthly_rate_percent: Optional[Decimal] = None
+    total_repayment_uzs: Decimal
+    deadline_date: Optional[date] = None
+    charged_months: int = 0
+    calculation_date: date
+    period_note: Optional[str] = None
+    note: Optional[str] = None
+    created_at: Optional[datetime] = None
+
+    class Config:
+        from_attributes = True
+
+
+class LendingRecordCreate(BaseModel):
+    entity_name: str = Field(..., min_length=1, max_length=500)
+    payment_id: Optional[int] = None
+    record_type: Literal["interest_loan", "interest_free"]
+    issued_on: date
+    principal_uzs: Decimal = Field(..., ge=0)
+    monthly_rate_percent: Optional[Decimal] = None
+    deadline_date: Optional[date] = None
+    period_note: Optional[str] = Field(None, max_length=500)
+    note: Optional[str] = None
+
+    @model_validator(mode="after")
+    def _lending_create_rates(self) -> "LendingRecordCreate":
+        if self.record_type == "interest_loan" and self.monthly_rate_percent is None:
+            raise ValueError("Для кредита с процентом укажите ставку % в месяц")
+        return self
+
+
+class LendingRecordUpdate(BaseModel):
+    entity_name: Optional[str] = Field(None, min_length=1, max_length=500)
+    payment_id: Optional[int] = None
+    record_type: Optional[Literal["interest_loan", "interest_free"]] = None
+    issued_on: Optional[date] = None
+    principal_uzs: Optional[Decimal] = None
+    monthly_rate_percent: Optional[Decimal] = None
+    deadline_date: Optional[date] = None
+    period_note: Optional[str] = Field(None, max_length=500)
+    note: Optional[str] = None
 
 
 class CashFlowTemplateLineOut(BaseModel):

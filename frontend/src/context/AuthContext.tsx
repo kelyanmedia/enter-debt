@@ -24,6 +24,8 @@ interface User {
   can_view_accesses?: boolean
   /** Администрация: пункт «Ввод ДДС» без просмотра отчёта */
   can_enter_cash_flow?: boolean
+  /** Менеджер: доступ к CRM/Продажи → Компании. По умолчанию закрыто. */
+  can_view_sales?: boolean
   payment_details?: string | null
   payment_details_updated_at?: string | null
   /** Только сотрудник: переключение компаний в кабинете (иначе закреплена компания входа). */

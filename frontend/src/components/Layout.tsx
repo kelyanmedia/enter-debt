@@ -22,6 +22,10 @@ type NavItem = {
   badge?: string
   /** Подсветка пункта для всех путей с этим префиксом (например /subscriptions/*) */
   activePathPrefix?: string
+  /** Раздел «Продажи» — мастер-база лидов, только админ */
+  salesClientBase?: boolean
+  /** Раздел «Продажи» — список компаний менеджера (и админ) */
+  salesCompanies?: boolean
 }
 
 type NavSection = { title: string; items: NavItem[]; hideForFinancier?: boolean }
@@ -63,6 +67,7 @@ const NAV_SECTIONS: NavSection[] = [
       { href: '/finance/projects-cost', label: 'Projects Cost', icon: '🧮', financeTeam: true },
       { href: '/received-payments', label: 'Оплаты', icon: '💳', financeTeam: true },
       { href: '/finance/expenses', label: 'Расходы', icon: '📤', financeTeam: true },
+      { href: '/finance/lending', label: 'Кредитование', icon: '🏦', financeTeam: true },
     ],
   },
   {
@@ -80,6 +85,26 @@ const NAV_SECTIONS: NavSection[] = [
         label: 'Доступы',
         icon: '🔐',
         activePathPrefix: '/subscriptions/accesses',
+      },
+    ],
+  },
+  {
+    title: 'Продажи',
+    hideForFinancier: true,
+    items: [
+      {
+        href: '/sales/client-base',
+        label: 'Клиентская база',
+        icon: '🗂️',
+        salesClientBase: true,
+        activePathPrefix: '/sales/client-base',
+      },
+      {
+        href: '/sales/companies',
+        label: 'Компании',
+        icon: '🏢',
+        salesCompanies: true,
+        activePathPrefix: '/sales/companies',
       },
     ],
   },
@@ -170,6 +195,7 @@ export default function Layout({ children }: { children: ReactNode }) {
   const { user, loading, logout, authBootstrapFailed, retryAuthBootstrap } = useAuth()
   const router = useRouter()
   const [employeeQaOpen, setEmployeeQaOpen] = useState(false)
+  const [salesFocusMode, setSalesFocusMode] = useState(false)
 
   useEffect(() => {
     if (loading || user) return
@@ -361,10 +387,24 @@ export default function Layout({ children }: { children: ReactNode }) {
     )
   }
 
+  const canUseSalesFocusMode =
+    router.pathname.startsWith('/sales/client-base') ||
+    router.pathname.startsWith('/sales/companies')
+  const isSidebarHidden = canUseSalesFocusMode && salesFocusMode
+
   return (
     <div style={{ display: 'flex', height: '100vh', overflow: 'hidden', background: '#f5f6fa' }}>
       {/* Sidebar */}
-      <aside style={{ width: 260, background: '#fff', borderRight: '1px solid #e8e9ef', display: 'flex', flexDirection: 'column', flexShrink: 0 }}>
+      <aside
+        style={{
+          width: 260,
+          background: '#fff',
+          borderRight: '1px solid #e8e9ef',
+          display: isSidebarHidden ? 'none' : 'flex',
+          flexDirection: 'column',
+          flexShrink: 0,
+        }}
+      >
         {/* Logo */}
         <div style={{ padding: '20px 16px 16px', borderBottom: '1px solid #e8e9ef', display: 'flex', alignItems: 'center', gap: 8 }}>
           <img
@@ -407,6 +447,11 @@ export default function Layout({ children }: { children: ReactNode }) {
               if (n.accountantHidden && user.role === 'accountant') return false
               if (n.administrationHidden && user.role === 'administration') return false
               if (n.managerHidden && (user.role === 'manager' || user.role === 'administration')) return false
+              if (n.salesClientBase && user.role !== 'admin') return false
+              if (n.salesCompanies) {
+                if (user.role === 'admin') return true
+                if (user.role !== 'manager' || user.can_view_sales !== true) return false
+              }
               if (user.role === 'administration') {
                 if (n.href.startsWith('/subscriptions/accesses')) {
                   if (!user.can_view_accesses) return false
@@ -507,6 +552,40 @@ export default function Layout({ children }: { children: ReactNode }) {
           width: '100%',
         }}
       >
+        {canUseSalesFocusMode ? (
+          <button
+            type="button"
+            onClick={() => setSalesFocusMode((v) => !v)}
+            title={
+              salesFocusMode
+                ? 'Вернуть левое меню и обычный режим'
+                : 'Скрыть левое меню и развернуть рабочую область'
+            }
+            style={{
+              position: 'fixed',
+              top: 12,
+              right: 74,
+              zIndex: 60,
+              width: 34,
+              height: 34,
+              borderRadius: 9,
+              border: '1px solid #d7dde8',
+              background: '#fff',
+              color: '#334155',
+              fontSize: 16,
+              fontWeight: 700,
+              cursor: 'pointer',
+              boxShadow: '0 2px 10px rgba(15,23,42,.08)',
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'center',
+              fontFamily: 'inherit',
+            }}
+            aria-label={salesFocusMode ? 'Вернуть левое меню' : 'Скрыть левое меню'}
+          >
+            {salesFocusMode ? '←' : '⤢'}
+          </button>
+        ) : null}
         <div style={{ position: 'fixed', top: 12, right: 20, zIndex: 50 }}>
           <NotificationBell />
         </div>
