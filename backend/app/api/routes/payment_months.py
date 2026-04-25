@@ -11,8 +11,15 @@ from app.db.database import get_db, get_request_company
 from app.models.payment import Payment, PaymentMonth
 from app.models.partner import Partner
 from app.models.user import User
-from app.schemas.schemas import PaymentMonthConfirmIn, PaymentMonthCreate, PaymentMonthOut
+from app.schemas.schemas import PaymentMonthConfirmIn, PaymentMonthCreate, PaymentMonthOut, PaymentMonthUpdate
 from app.core.security import get_current_user, require_manager_or_admin
+
+
+def require_payment_month_schedule_write(current_user: User = Depends(get_current_user)):
+    """Изменение строк графика: как в UI (включая финансиста)."""
+    if current_user.role not in ("admin", "manager", "administration", "financier"):
+        raise HTTPException(status_code=403, detail="Недостаточно прав для изменения графика оплат")
+    return current_user
 from app.core.access import assert_payment_access
 from app.core.config import settings
 from app.api.routes.payments import _require_payment_not_trashed, load_payment
@@ -67,6 +74,15 @@ def _effective_month_amount(pm_amount: Optional[Decimal], payment_amount) -> Dec
 
 def _sum_month_lines_amounts(db: Session, payment_id: int, payment: Payment) -> Decimal:
     rows = db.query(PaymentMonth).filter(PaymentMonth.payment_id == payment_id).all()
+    return sum(_effective_month_amount(r.amount, payment.amount) for r in rows)
+
+
+def _sum_month_lines_amounts_except(db: Session, payment_id: int, payment: Payment, exclude_month_id: int) -> Decimal:
+    rows = (
+        db.query(PaymentMonth)
+        .filter(PaymentMonth.payment_id == payment_id, PaymentMonth.id != exclude_month_id)
+        .all()
+    )
     return sum(_effective_month_amount(r.amount, payment.amount) for r in rows)
 
 
@@ -168,6 +184,75 @@ def add_month(
     except Exception as e:
         db.rollback()
         logger.error(f"add_month error payment_id={payment_id} month={data.month}: {e}")
+        raise HTTPException(status_code=500, detail=f"Ошибка базы данных: {str(e)}")
+
+
+@router.patch("/{payment_id}/months/{month_id}", response_model=PaymentMonthOut)
+def patch_payment_month(
+    payment_id: int,
+    month_id: int,
+    data: PaymentMonthUpdate,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(require_payment_month_schedule_write),
+):
+    """Редактирование периода, суммы, описания, срока и примечания строки графика."""
+    p = _require_payment_not_trashed(load_payment(db, payment_id))
+    assert_payment_access(db, current_user, p)
+    pm = db.query(PaymentMonth).filter(
+        PaymentMonth.id == month_id,
+        PaymentMonth.payment_id == payment_id,
+    ).first()
+    if not pm:
+        raise HTTPException(status_code=404, detail="Month not found")
+
+    patch = data.model_dump(exclude_unset=True)
+    if not patch:
+        db.refresh(pm)
+        return pm
+
+    if "month" in patch and patch["month"] is not None:
+        ym = (patch["month"] or "").strip()
+        try:
+            parts = ym.split("-")
+            if len(parts) != 2:
+                raise ValueError
+            y, mo = int(parts[0]), int(parts[1])
+            if mo < 1 or mo > 12:
+                raise ValueError
+            pm.month = f"{y}-{mo:02d}"
+        except Exception:
+            raise HTTPException(status_code=400, detail="Неверный формат месяца (нужно YYYY-MM)")
+
+    if "description" in patch:
+        d = patch.get("description")
+        pm.description = (d.strip() if isinstance(d, str) else None) or None
+    if "note" in patch:
+        n = patch.get("note")
+        pm.note = (n.strip() if isinstance(n, str) else None) or None
+    if "due_date" in patch:
+        pm.due_date = patch.get("due_date")
+    if "amount" in patch:
+        pm.amount = patch.get("amount")
+
+    new_eff = _effective_month_amount(pm.amount, p.amount)
+    others = _sum_month_lines_amounts_except(db, payment_id, p, month_id)
+    contract_amt = Decimal(str(p.amount)).quantize(Decimal("0.01"))
+    if (others + new_eff).quantize(Decimal("0.01")) > contract_amt:
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                f"Сумма по строкам месяцев ({others + new_eff} сум) не может превышать сумму договора "
+                f"({contract_amt} сум)."
+            ),
+        )
+
+    try:
+        db.commit()
+        db.refresh(pm)
+        return pm
+    except Exception as e:
+        db.rollback()
+        logger.error(f"patch_payment_month payment_id={payment_id} month_id={month_id}: {e}")
         raise HTTPException(status_code=500, detail=f"Ошибка базы данных: {str(e)}")
 
 

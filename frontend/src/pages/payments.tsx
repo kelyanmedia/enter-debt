@@ -300,6 +300,15 @@ export default function PaymentsPage() {
   const [deletePaymentId, setDeletePaymentId] = useState<number | null>(null)
   const [deleteMonthId, setDeleteMonthId] = useState<number | null>(null)
   const [archiveDrawerConfirm, setArchiveDrawerConfirm] = useState(false)
+  const [editMonthId, setEditMonthId] = useState<number | null>(null)
+  const [editMonthForm, setEditMonthForm] = useState({
+    month: '',
+    due_date: '',
+    amount: '',
+    description: '',
+    note: '',
+  })
+  const [editMonthSaving, setEditMonthSaving] = useState(false)
 
   const syncDrawerPayment = useCallback(async (paymentId: number) => {
     try {
@@ -608,6 +617,7 @@ export default function PaymentsPage() {
     setPayConfirmModalMonthId(null)
     setPayConfirmBackdateYmd('')
     setArchiveDrawerConfirm(false)
+    setEditMonthId(null)
     setDrawer(p)
     setDrawerLoading(true)
     setAddMonthOpen(false)
@@ -751,10 +761,48 @@ export default function PaymentsPage() {
     try {
       await api.delete(`payments/${pid}/months/${mid}`)
       setDrawerMonths(prev => prev.filter(m => m.id !== mid))
+      if (editMonthId === mid) setEditMonthId(null)
       await syncDrawerPayment(pid)
     } catch (e: unknown) {
       alert(formatApiError(e))
       throw e
+    }
+  }
+
+  const openEditMonth = (m: PaymentMonth) => {
+    setEditMonthId(m.id)
+    setAddMonthOpen(false)
+    setEditMonthForm({
+      month: m.month,
+      due_date: m.due_date ? String(m.due_date).slice(0, 10) : '',
+      amount: m.amount != null && m.amount !== undefined ? String(m.amount) : '',
+      description: m.description || '',
+      note: m.note || '',
+    })
+  }
+
+  const saveEditMonth = async () => {
+    if (!drawer || editMonthId === null) return
+    if (!editMonthForm.due_date.trim()) {
+      alert('Укажите срок оплаты (дату).')
+      return
+    }
+    setEditMonthSaving(true)
+    try {
+      const r = await api.patch<PaymentMonth>(`payments/${drawer.id}/months/${editMonthId}`, {
+        month: editMonthForm.month.trim(),
+        due_date: editMonthForm.due_date.trim(),
+        amount: editMonthForm.amount.trim() ? Number(editMonthForm.amount) : null,
+        description: editMonthForm.description.trim() || null,
+        note: editMonthForm.note.trim() || null,
+      })
+      setDrawerMonths((prev) => sortDrawerMonths(prev.map((row) => (row.id === editMonthId ? r.data : row))))
+      setEditMonthId(null)
+      await syncDrawerPayment(drawer.id)
+    } catch (e: unknown) {
+      alert(formatApiError(e))
+    } finally {
+      setEditMonthSaving(false)
     }
   }
 
@@ -1616,6 +1664,13 @@ export default function PaymentsPage() {
                           {formatMoneyNumber(effAmount)}
                           <span style={{ fontSize: 10, fontWeight: 600, color: '#94a3b8', marginLeft: 4 }}>UZS</span>
                         </span>
+                        {['admin', 'manager', 'administration', 'financier'].includes(user?.role || '') && (
+                          <BtnIconEdit
+                            title={drawerIsHosting ? 'Редактировать период' : 'Редактировать строку'}
+                            onClick={() => (editMonthId === m.id ? setEditMonthId(null) : openEditMonth(m))}
+                            style={{ width: 34, height: 34 }}
+                          />
+                        )}
                         <button
                           type="button"
                           onClick={() => setDeleteMonthId(m.id)}
@@ -1636,6 +1691,75 @@ export default function PaymentsPage() {
                         </button>
                       </div>
                     </div>
+
+                    {editMonthId === m.id && (
+                      <div
+                        style={{
+                          padding: '14px 16px',
+                          background: '#f8fafc',
+                          borderBottom: '1px solid #e2e8f0',
+                        }}
+                      >
+                        <div style={{ fontSize: 12, fontWeight: 700, color: '#475569', marginBottom: 10 }}>
+                          Редактирование строки
+                        </div>
+                        <div style={{ display: 'grid', gap: 10 }}>
+                          <Field label={drawerIsHosting ? 'Период (YYYY-MM)' : 'Месяц услуги (период акта)'}>
+                            <Input
+                              type="month"
+                              value={editMonthForm.month}
+                              onChange={(e) => setEditMonthForm((f) => ({ ...f, month: e.target.value }))}
+                            />
+                          </Field>
+                          <Field label="Срок оплаты">
+                            <Input
+                              type="date"
+                              value={editMonthForm.due_date}
+                              onChange={(e) => setEditMonthForm((f) => ({ ...f, due_date: e.target.value }))}
+                            />
+                          </Field>
+                          <Field label={`Сумма (пусто = ${formatMoneyNumber(drawer.amount)} UZS по договору)`}>
+                            <MoneyInput
+                              value={editMonthForm.amount}
+                              placeholder={formatMoneyNumber(drawer.amount)}
+                              onChange={(v) => setEditMonthForm((f) => ({ ...f, amount: v }))}
+                            />
+                          </Field>
+                          <Field label="Описание (Акт/СФ)">
+                            <Input
+                              value={editMonthForm.description}
+                              onChange={(e) => setEditMonthForm((f) => ({ ...f, description: e.target.value }))}
+                            />
+                          </Field>
+                          <Field label="Примечание (внутреннее)">
+                            <textarea
+                              value={editMonthForm.note}
+                              onChange={(e) => setEditMonthForm((f) => ({ ...f, note: e.target.value }))}
+                              rows={2}
+                              style={textareaStyle}
+                            />
+                          </Field>
+                        </div>
+                        <div style={{ display: 'flex', gap: 8, marginTop: 12, flexWrap: 'wrap' }}>
+                          <BtnPrimary
+                            type="button"
+                            disabled={editMonthSaving}
+                            onClick={() => void saveEditMonth()}
+                            style={{ fontSize: 12, padding: '6px 14px' }}
+                          >
+                            {editMonthSaving ? 'Сохранение…' : 'Сохранить'}
+                          </BtnPrimary>
+                          <BtnOutline
+                            type="button"
+                            disabled={editMonthSaving}
+                            onClick={() => setEditMonthId(null)}
+                            style={{ fontSize: 12, padding: '6px 14px' }}
+                          >
+                            Отмена
+                          </BtnOutline>
+                        </div>
+                      </div>
+                    )}
 
                     <div style={{ padding: '8px 14px', display: 'flex', flexDirection: 'column', gap: 4 }}>
                       <div style={{ fontSize: 12, color: '#475569', lineHeight: 1.35 }}>

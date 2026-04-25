@@ -510,6 +510,16 @@ class PaymentMonthCreate(BaseModel):
     due_date: Optional[date] = None  # срок оплаты; если не задан — из day_of_month договора или конец месяца
 
 
+class PaymentMonthUpdate(BaseModel):
+    """Частичное обновление строки графика (месяц/год). Пустое тело — без изменений."""
+
+    month: Optional[str] = None  # YYYY-MM
+    amount: Optional[Decimal] = None  # None — как при создании: полная сумма договора
+    description: Optional[str] = None
+    note: Optional[str] = None
+    due_date: Optional[date] = None
+
+
 class PaymentMonthOut(BaseModel):
     id: int
     payment_id: int
