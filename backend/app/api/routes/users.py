@@ -44,9 +44,11 @@ class InternalTelegramDividendIn(BaseModel):
         return self
 
 
-def _validate_visible_manager_ids(db: Session, ids: Optional[List[int]]) -> List[int]:
+def _validate_visible_manager_ids(db: Session, ids: Optional[List[int]], *, require_any: bool = True) -> List[int]:
     if not ids:
-        raise HTTPException(status_code=400, detail="Укажите хотя бы одного менеджера для роли «Администрация»")
+        if require_any:
+            raise HTTPException(status_code=400, detail="Укажите хотя бы одного менеджера для роли «Администрация»")
+        return []
     uniq: List[int] = []
     seen = set()
     for x in ids:
@@ -235,7 +237,19 @@ def create_user(data: UserCreate, db: Session = Depends(get_db), _=Depends(requi
         raise HTTPException(status_code=400, detail="Недопустимая роль")
     vm_json = None
     if data.role == "administration":
-        vm_json = json.dumps(_validate_visible_manager_ids(db, getattr(data, "visible_manager_ids", None)))
+        has_sales_access = bool(getattr(data, "can_view_sales", False))
+        needs_manager_scope = bool(
+            getattr(data, "can_view_subscriptions", False)
+            or getattr(data, "can_view_accesses", False)
+            or getattr(data, "can_enter_cash_flow", False)
+        )
+        vm_json = json.dumps(
+            _validate_visible_manager_ids(
+                db,
+                getattr(data, "visible_manager_ids", None),
+                require_any=(not has_sales_access or needs_manager_scope),
+            )
+        )
     admin_notify_json = None
     admin_access_json = None
     if data.role == "admin":
@@ -267,7 +281,7 @@ def create_user(data: UserCreate, db: Session = Depends(get_db), _=Depends(requi
         can_view_subscriptions=bool(getattr(data, "can_view_subscriptions", False)) if data.role == "administration" else False,
         can_view_accesses=bool(getattr(data, "can_view_accesses", False)) if data.role == "administration" else False,
         can_enter_cash_flow=bool(getattr(data, "can_enter_cash_flow", False)) if data.role == "administration" else False,
-        can_view_sales=bool(getattr(data, "can_view_sales", False)) if data.role == "manager" else False,
+        can_view_sales=bool(getattr(data, "can_view_sales", False)) if data.role in ("manager", "administration") else False,
         see_all_partners=data.see_all_partners if data.role == "manager" else False,
         visible_manager_ids=vm_json,
         payment_details=pd,
@@ -363,8 +377,25 @@ def _sync_visible_managers_after_user_update(db: Session, user: User, data: User
     if data.visible_manager_ids is not None:
         if user.role != "administration":
             raise HTTPException(status_code=400, detail="Список менеджеров задаётся только для роли «Администрация»")
-        user.visible_manager_ids = json.dumps(_validate_visible_manager_ids(db, data.visible_manager_ids))
-    if user.role == "administration" and not parse_visible_manager_ids(user):
+        require_any = (
+            not bool(getattr(user, "can_view_sales", False))
+            or bool(getattr(user, "can_view_subscriptions", False))
+            or bool(getattr(user, "can_view_accesses", False))
+            or bool(getattr(user, "can_enter_cash_flow", False))
+            or bool(data.can_enter_cash_flow)
+        )
+        user.visible_manager_ids = json.dumps(_validate_visible_manager_ids(db, data.visible_manager_ids, require_any=require_any))
+    administration_requires_manager_scope = (
+        user.role == "administration"
+        and (
+            not bool(getattr(user, "can_view_sales", False))
+            or bool(getattr(user, "can_view_subscriptions", False))
+            or bool(getattr(user, "can_view_accesses", False))
+            or bool(getattr(user, "can_enter_cash_flow", False))
+            or bool(data.can_enter_cash_flow)
+        )
+    )
+    if administration_requires_manager_scope and not parse_visible_manager_ids(user):
         raise HTTPException(status_code=400, detail="Укажите хотя бы одного менеджера для роли «Администрация»")
     if user.role != "administration":
         user.can_view_subscriptions = False
@@ -436,8 +467,8 @@ def _sync_admin_telegram_prefs(db: Session, user: User, data: UserUpdate) -> Non
         user.admin_telegram_notify_manager_ids = json.dumps(_validate_notify_manager_ids(db, data.admin_telegram_notify_manager_ids))
 
 
-def _sync_manager_sales_access(user: User, data: UserUpdate) -> None:
-    if user.role != "manager":
+def _sync_sales_access(user: User, data: UserUpdate) -> None:
+    if user.role not in ("manager", "administration"):
         user.can_view_sales = False
         return
     if data.can_view_sales is not None:
@@ -453,11 +484,11 @@ def update_user(user_id: int, data: UserUpdate, db: Session = Depends(get_db), _
     _check_email_change_tenant_unique(db, user, data)
     _apply_update(user, data)
     _sync_telegram_binding(user, data, db)
+    _sync_sales_access(user, data)
     _sync_visible_managers_after_user_update(db, user, data)
     _sync_administration_cash_flow_input(db, user, data)
     _sync_admin_company_access(db, user, data, previous_role)
     _sync_admin_telegram_prefs(db, user, data)
-    _sync_manager_sales_access(user, data)
     db.commit()
     db.refresh(user)
     return user
@@ -472,11 +503,11 @@ def patch_user(user_id: int, data: UserUpdate, db: Session = Depends(get_db), _=
     _check_email_change_tenant_unique(db, user, data)
     _apply_update(user, data)
     _sync_telegram_binding(user, data, db)
+    _sync_sales_access(user, data)
     _sync_visible_managers_after_user_update(db, user, data)
     _sync_administration_cash_flow_input(db, user, data)
     _sync_admin_company_access(db, user, data, previous_role)
     _sync_admin_telegram_prefs(db, user, data)
-    _sync_manager_sales_access(user, data)
     db.commit()
     db.refresh(user)
     return user

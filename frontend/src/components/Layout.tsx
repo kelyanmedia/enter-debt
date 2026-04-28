@@ -450,7 +450,7 @@ export default function Layout({ children }: { children: ReactNode }) {
               if (n.salesClientBase && user.role !== 'admin') return false
               if (n.salesCompanies) {
                 if (user.role === 'admin') return true
-                if (user.role !== 'manager' || user.can_view_sales !== true) return false
+                if (!['manager', 'administration'].includes(user.role) || user.can_view_sales !== true) return false
               }
               if (user.role === 'administration') {
                 if (n.href.startsWith('/subscriptions/accesses')) {

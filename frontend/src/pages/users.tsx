@@ -224,7 +224,16 @@ export default function UsersPage() {
 
   const save = async () => {
     if (!form.name || !form.email) { setError('Заполните имя и email'); return }
-    if (form.role === 'administration' && visibleManagerIds.length === 0) {
+    const administrationNeedsManagerScope =
+      form.role === 'administration' &&
+      visibleManagerIds.length === 0 &&
+      (
+        form.can_view_sales !== 'true' ||
+        form.can_view_subscriptions === 'true' ||
+        form.can_view_accesses === 'true' ||
+        form.can_enter_cash_flow === 'true'
+      )
+    if (administrationNeedsManagerScope) {
       setError('Отметьте хотя бы одного менеджера, чьи компании и проекты видит администрация')
       return
     }
@@ -240,6 +249,8 @@ export default function UsersPage() {
         }
         if (form.role === 'manager') {
           payload.see_all_partners = form.see_all_partners === 'true'
+        }
+        if (form.role === 'manager' || form.role === 'administration') {
           payload.can_view_sales = form.can_view_sales === 'true'
         }
         if (form.role === 'administration') payload.visible_manager_ids = visibleManagerIds
@@ -275,7 +286,7 @@ export default function UsersPage() {
           telegram_chat_id: form.telegram_chat_id ? Number(form.telegram_chat_id) : null,
           telegram_username: form.telegram_username || null,
           see_all_partners: form.role === 'manager' ? form.see_all_partners === 'true' : false,
-          can_view_sales: form.role === 'manager' ? form.can_view_sales === 'true' : false,
+          can_view_sales: (form.role === 'manager' || form.role === 'administration') ? form.can_view_sales === 'true' : false,
           visible_manager_ids: form.role === 'administration' ? visibleManagerIds : undefined,
           can_view_subscriptions: form.role === 'administration' ? form.can_view_subscriptions === 'true' : undefined,
           can_view_accesses: form.role === 'administration' ? form.can_view_accesses === 'true' : undefined,
@@ -542,7 +553,7 @@ export default function UsersPage() {
                           {u.role === 'manager'
                             ? `${u.see_all_partners ? 'Все партнёры' : 'Только назначенные'} · Продажи: ${u.can_view_sales ? 'да' : 'нет'}`
                             : u.role === 'administration'
-                              ? `${(u.visible_manager_ids || []).length} менеджер(ов) · Подписки: ${u.can_view_subscriptions ? 'да' : 'нет'} · Доступы: ${u.can_view_accesses ? 'да' : 'нет'}`
+                              ? `${(u.visible_manager_ids || []).length} менеджер(ов) · Продажи: ${u.can_view_sales ? 'да' : 'нет'} · Подписки: ${u.can_view_subscriptions ? 'да' : 'нет'} · Доступы: ${u.can_view_accesses ? 'да' : 'нет'}`
                               : u.role === 'employee'
                                 ? 'Только «Мои задачи»'
                                 : u.role === 'financier'
@@ -759,7 +770,7 @@ export default function UsersPage() {
         {form.role === 'administration' && (
           <div style={{ marginBottom: 14 }}>
             <div style={{ fontSize: 12, fontWeight: 600, marginBottom: 8 }}>
-              Менеджеры, чьих партнёров и проекты видит эта учётная запись *
+              Менеджеры, чьих партнёров и проекты видит эта учётная запись{form.can_view_sales === 'true' ? '' : ' *'}
             </div>
             <div style={{ maxHeight: 200, overflowY: 'auto', border: '1px solid #e8e9ef', borderRadius: 8, padding: 8 }}>
               {managerOptions.length === 0 ? (
@@ -782,7 +793,7 @@ export default function UsersPage() {
               )}
             </div>
             <div style={{ fontSize: 11, color: '#8a8fa8', marginTop: 6, lineHeight: 1.45 }}>
-              При создании компании и проекта пользователь выбирает одного из отмеченных менеджеров как ответственного.
+              Для доступа только к «Продажи → Компании» менеджеров можно не отмечать: новые компании будут закрепляться за этой учётной записью.
             </div>
             <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12, marginTop: 10 }}>
               <Field label="Видит подписки">
@@ -884,14 +895,18 @@ export default function UsersPage() {
             </label>
           </>
         )}
-        {form.role === 'manager' && (
+        {(form.role === 'manager' || form.role === 'administration') && (
           <>
             <Field label="Доступ к Продажам → Компании">
               <Select value={form.can_view_sales} onChange={e => setForm(f => ({ ...f, can_view_sales: e.target.value }))}>
                 <option value="false">Нет — по умолчанию раздел скрыт</option>
-                <option value="true">Да — видит раздел «Компании» и свои назначенные компании</option>
+                <option value="true">Да — видит раздел «Компании» и может добавлять записи</option>
               </Select>
             </Field>
+          </>
+        )}
+        {form.role === 'manager' && (
+          <>
             <Field label="Менеджер видит проекты всех партнёров">
               <Select value={form.see_all_partners} onChange={e => setForm(f => ({ ...f, see_all_partners: e.target.value }))}>
                 <option value="false">Нет — только выбранные ниже партнёры</option>

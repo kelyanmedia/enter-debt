@@ -19,7 +19,7 @@ export default function SalesCompaniesPage() {
       !loading &&
       user &&
       user.role !== 'admin' &&
-      (user.role !== 'manager' || user.can_view_sales !== true)
+      (!['manager', 'administration'].includes(user.role) || user.can_view_sales !== true)
     ) {
       void router.replace('/')
     }
@@ -28,7 +28,7 @@ export default function SalesCompaniesPage() {
   if (
     loading ||
     !user ||
-    (user.role !== 'admin' && (user.role !== 'manager' || user.can_view_sales !== true))
+    (user.role !== 'admin' && (!['manager', 'administration'].includes(user.role) || user.can_view_sales !== true))
   ) return null
 
   const isAdmin = user.role === 'admin'

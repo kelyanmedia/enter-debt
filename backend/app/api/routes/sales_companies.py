@@ -153,9 +153,11 @@ def _require_sales_access(user: User) -> None:
         return
     if user.role == "manager" and bool(getattr(user, "can_view_sales", False)):
         return
-    if user.role == "manager":
+    if user.role == "administration" and bool(getattr(user, "can_view_sales", False)):
+        return
+    if user.role in ("manager", "administration"):
         raise HTTPException(status_code=403, detail="Нет доступа к разделу «Продажи». Попросите администратора выдать доступ.")
-    if user.role not in ("admin", "manager"):
+    if user.role not in ("admin", "manager", "administration"):
         raise HTTPException(status_code=403, detail="Нет доступа")
 
 

@@ -13,7 +13,7 @@ export default function SalesIndexPage() {
       void router.replace('/sales/client-base')
       return
     }
-    if (user.role === 'manager' && user.can_view_sales === true) {
+    if ((user.role === 'manager' || user.role === 'administration') && user.can_view_sales === true) {
       void router.replace('/sales/companies')
       return
     }

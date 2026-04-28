@@ -78,7 +78,7 @@ class UserBase(BaseModel):
     can_view_subscriptions: bool = False
     can_view_accesses: bool = False
     can_enter_cash_flow: bool = False  # только administration: ввод ДДС без отчёта
-    can_view_sales: bool = False  # только manager: доступ к CRM/Продажи → Компании
+    can_view_sales: bool = False  # manager/administration: доступ к CRM/Продажи → Компании
     see_all_partners: bool = False
     payment_details: Optional[str] = None  # реквизиты выплат для сотрудников (freelance)
     multi_company_access: bool = False  # только employee: переключение компаний в кабинете
