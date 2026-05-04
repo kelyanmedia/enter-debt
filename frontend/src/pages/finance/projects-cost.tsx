@@ -755,6 +755,8 @@ export default function FinanceProjectsCostPage() {
                 overscrollBehavior: 'contain',
                 WebkitOverflowScrolling: 'touch',
                 outline: 'none',
+                /* место под «липкую» строку итогов — последняя строка tbody не перекрывается tfoot */
+                paddingBottom: 52,
               }}
             >
               <table style={{ width: '100%', borderCollapse: 'collapse', minWidth: 1280 }}>

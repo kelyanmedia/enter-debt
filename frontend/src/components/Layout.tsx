@@ -381,7 +381,28 @@ export default function Layout({ children }: { children: ReactNode }) {
             </div>
           </div>
         </aside>
-        <div style={{ flex: 1, display: 'flex', flexDirection: 'column', overflow: 'hidden', minWidth: 0 }}>{children}</div>
+        <div
+          style={{
+            flex: 1,
+            minHeight: 0,
+            minWidth: 0,
+            display: 'flex',
+            flexDirection: 'column',
+            overflow: 'hidden',
+          }}
+        >
+          <div
+            style={{
+              flex: 1,
+              minHeight: 0,
+              overflowY: 'auto',
+              overflowX: 'hidden',
+              WebkitOverflowScrolling: 'touch',
+            }}
+          >
+            {children}
+          </div>
+        </div>
         <EmployeeQaDrawer open={employeeQaOpen} onClose={() => setEmployeeQaOpen(false)} />
       </div>
     )
@@ -589,7 +610,27 @@ export default function Layout({ children }: { children: ReactNode }) {
         <div style={{ position: 'fixed', top: 12, right: 20, zIndex: 50 }}>
           <NotificationBell />
         </div>
-        {children}
+        <div
+          style={{
+            flex: 1,
+            minHeight: 0,
+            display: 'flex',
+            flexDirection: 'column',
+            overflow: 'hidden',
+          }}
+        >
+          <div
+            style={{
+              flex: 1,
+              minHeight: 0,
+              overflowY: 'auto',
+              overflowX: 'hidden',
+              WebkitOverflowScrolling: 'touch',
+            }}
+          >
+            {children}
+          </div>
+        </div>
       </div>
     </div>
   )
