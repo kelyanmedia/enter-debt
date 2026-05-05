@@ -251,6 +251,9 @@ export default function FinanceCashflowPage() {
     payment_id: '' as string,
     notes: '',
   })
+  const [expenseCategorySearch, setExpenseCategorySearch] = useState('')
+  const [editExpenseCategorySearch, setEditExpenseCategorySearch] = useState('')
+  const [tplExpenseCategorySearch, setTplExpenseCategorySearch] = useState('')
 
   const [tplLines, setTplLines] = useState<TemplateLine[]>([])
   const [tplViewGroup, setTplViewGroup] = useState<string | null>(null)
@@ -445,6 +448,27 @@ export default function FinanceCashflowPage() {
       0,
     )
 
+  const filteredExpenseCategories = useMemo(() => {
+    const q = expenseCategorySearch.trim().toLowerCase()
+    const all = meta?.expense_categories ?? []
+    if (!q) return all
+    return all.filter((c) => c.label.toLowerCase().includes(q) || c.slug.toLowerCase().includes(q))
+  }, [meta?.expense_categories, expenseCategorySearch])
+
+  const filteredEditExpenseCategories = useMemo(() => {
+    const q = editExpenseCategorySearch.trim().toLowerCase()
+    const all = meta?.expense_categories ?? []
+    if (!q) return all
+    return all.filter((c) => c.label.toLowerCase().includes(q) || c.slug.toLowerCase().includes(q))
+  }, [meta?.expense_categories, editExpenseCategorySearch])
+
+  const filteredTplExpenseCategories = useMemo(() => {
+    const q = tplExpenseCategorySearch.trim().toLowerCase()
+    const all = meta?.expense_categories ?? []
+    if (!q) return all
+    return all.filter((c) => c.label.toLowerCase().includes(q) || c.slug.toLowerCase().includes(q))
+  }, [meta?.expense_categories, tplExpenseCategorySearch])
+
   const applyTemplate = async (groups: string[]) => {
     setBusy(true)
     try {
@@ -481,6 +505,7 @@ export default function FinanceCashflowPage() {
       flow_category: 'salary',
       direction: 'expense',
     })
+    setTplExpenseCategorySearch('')
     setTplModalOpen(true)
   }
 
@@ -495,6 +520,7 @@ export default function FinanceCashflowPage() {
       flow_category: line.flow_category || 'other',
       direction: line.direction,
     })
+    setTplExpenseCategorySearch('')
     setTplModalOpen(true)
   }
 
@@ -582,6 +608,7 @@ export default function FinanceCashflowPage() {
       payment_id: '',
       notes: '',
     })
+    setExpenseCategorySearch('')
     setAddOpen(dir)
   }
 
@@ -664,6 +691,7 @@ export default function FinanceCashflowPage() {
       payment_id: r.payment_id ? String(r.payment_id) : '',
       notes: r.notes || '',
     })
+    setEditExpenseCategorySearch('')
     setEditRow(r)
   }
 
@@ -1406,13 +1434,24 @@ export default function FinanceCashflowPage() {
         </Field>
         {addOpen === 'expense' && (
           <Field label="Категория расхода *">
-            <Select value={form.flow_category} onChange={(e) => setForm((f) => ({ ...f, flow_category: e.target.value }))}>
-              {(meta?.expense_categories ?? []).map((c) => (
-                <option key={c.slug} value={c.slug}>
-                  {c.label}
-                </option>
-              ))}
-            </Select>
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+              <Input
+                value={expenseCategorySearch}
+                onChange={(e) => setExpenseCategorySearch(e.target.value)}
+                placeholder="Поиск категории..."
+              />
+              <Select value={form.flow_category} onChange={(e) => setForm((f) => ({ ...f, flow_category: e.target.value }))}>
+                {filteredExpenseCategories.length > 0 ? (
+                  filteredExpenseCategories.map((c) => (
+                    <option key={c.slug} value={c.slug}>
+                      {c.label}
+                    </option>
+                  ))
+                ) : (
+                  <option value={form.flow_category}>Ничего не найдено</option>
+                )}
+              </Select>
+            </div>
           </Field>
         )}
         {addOpen === 'income' && (
@@ -1504,13 +1543,24 @@ export default function FinanceCashflowPage() {
             </Field>
             {editRow.direction === 'expense' && (
               <Field label="Категория">
-                <Select value={form.flow_category} onChange={(e) => setForm((f) => ({ ...f, flow_category: e.target.value }))}>
-                  {(meta?.expense_categories ?? []).map((c) => (
-                    <option key={c.slug} value={c.slug}>
-                      {c.label}
-                    </option>
-                  ))}
-                </Select>
+                <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+                  <Input
+                    value={editExpenseCategorySearch}
+                    onChange={(e) => setEditExpenseCategorySearch(e.target.value)}
+                    placeholder="Поиск категории..."
+                  />
+                  <Select value={form.flow_category} onChange={(e) => setForm((f) => ({ ...f, flow_category: e.target.value }))}>
+                    {filteredEditExpenseCategories.length > 0 ? (
+                      filteredEditExpenseCategories.map((c) => (
+                        <option key={c.slug} value={c.slug}>
+                          {c.label}
+                        </option>
+                      ))
+                    ) : (
+                      <option value={form.flow_category}>Ничего не найдено</option>
+                    )}
+                  </Select>
+                </div>
               </Field>
             )}
             {editRow.direction === 'income' && (
@@ -1724,17 +1774,29 @@ export default function FinanceCashflowPage() {
         </Field>
         {tplForm.direction === 'expense' ? (
           <Field label="Категория расхода *">
-            <Select
-              value={tplForm.flow_category}
-              onChange={(e) => setTplForm((f) => ({ ...f, flow_category: e.target.value }))}
-              disabled={busy}
-            >
-              {(meta?.expense_categories ?? []).map((c) => (
-                <option key={c.slug} value={c.slug}>
-                  {c.label}
-                </option>
-              ))}
-            </Select>
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+              <Input
+                value={tplExpenseCategorySearch}
+                onChange={(e) => setTplExpenseCategorySearch(e.target.value)}
+                placeholder="Поиск категории..."
+                disabled={busy}
+              />
+              <Select
+                value={tplForm.flow_category}
+                onChange={(e) => setTplForm((f) => ({ ...f, flow_category: e.target.value }))}
+                disabled={busy}
+              >
+                {filteredTplExpenseCategories.length > 0 ? (
+                  filteredTplExpenseCategories.map((c) => (
+                    <option key={c.slug} value={c.slug}>
+                      {c.label}
+                    </option>
+                  ))
+                ) : (
+                  <option value={tplForm.flow_category}>Ничего не найдено</option>
+                )}
+              </Select>
+            </div>
           </Field>
         ) : (
           <Field label="Категория прихода *">
