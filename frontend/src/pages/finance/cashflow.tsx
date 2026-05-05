@@ -18,7 +18,7 @@ import {
 } from '@/components/ui'
 import { useAuth } from '@/context/AuthContext'
 import api from '@/lib/api'
-import { isFinanceTeamRole } from '@/lib/roles'
+import { canAccessFinanceSection } from '@/lib/roles'
 
 interface Meta {
   payment_methods: { id: string; label: string }[]
@@ -284,7 +284,7 @@ export default function FinanceCashflowPage() {
   const [afReveal, setAfReveal] = useState({ account: false, cards: false, deposits: false })
 
   useEffect(() => {
-    if (!loading && user && !isFinanceTeamRole(user.role)) router.replace('/')
+    if (!loading && user && !canAccessFinanceSection(user, 'cashflow')) router.replace('/')
   }, [loading, user, router])
 
   useEffect(() => {
@@ -315,7 +315,7 @@ export default function FinanceCashflowPage() {
   }, [])
 
   const loadTemplates = useCallback(() => {
-    if (!user || !isFinanceTeamRole(user.role)) return
+    if (!user || !canAccessFinanceSection(user, 'cashflow')) return
     api
       .get<TemplateLine[]>('finance/cash-flow/templates')
       .then((r) => setTplLines(r.data || []))
@@ -323,7 +323,7 @@ export default function FinanceCashflowPage() {
   }, [user])
 
   const loadEntries = useCallback(() => {
-    if (!user || !isFinanceTeamRole(user.role)) return
+    if (!user || !canAccessFinanceSection(user, 'cashflow')) return
     setBusy(true)
     api
       .get<CFEntry[]>(`finance/cash-flow/entries?period_month=${encodeURIComponent(ym)}`)
@@ -333,7 +333,7 @@ export default function FinanceCashflowPage() {
   }, [user, ym])
 
   const loadAvailableFunds = useCallback(() => {
-    if (!user || !isFinanceTeamRole(user.role)) return
+    if (!user || !canAccessFinanceSection(user, 'cashflow')) return
     api
       .get<AvailableFundsResponse>(`finance/available-funds?period_month=${encodeURIComponent(ym)}`)
       .then((r) => setAvailableFunds(r.data))
@@ -706,7 +706,7 @@ export default function FinanceCashflowPage() {
     }
   }
 
-  if (loading || !user || !isFinanceTeamRole(user.role)) return null
+  if (loading || !user || !canAccessFinanceSection(user, 'cashflow')) return null
 
   return (
     <Layout>

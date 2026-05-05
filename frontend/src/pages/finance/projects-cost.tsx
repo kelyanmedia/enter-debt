@@ -5,7 +5,7 @@ import Layout from '@/components/Layout'
 import { PageHeader, Card, Th, Td, Empty, formatMoneyNumber, BtnOutline, BtnPrimary, MoneyInput, Input, Field, Modal } from '@/components/ui'
 import { useAuth } from '@/context/AuthContext'
 import api from '@/lib/api'
-import { isFinanceTeamRole } from '@/lib/roles'
+import { canAccessFinanceSection } from '@/lib/roles'
 
 interface ScheduleMonth {
   month_id: number
@@ -222,7 +222,7 @@ export default function FinanceProjectsCostPage() {
     user?.role === 'admin' || user?.role === 'accountant' || user?.role === 'financier'
 
   useEffect(() => {
-    if (!loading && user && !isFinanceTeamRole(user.role)) router.replace('/')
+    if (!loading && user && !canAccessFinanceSection(user, 'projects_cost')) router.replace('/')
   }, [loading, user, router])
 
   const monthRange = useMemo(() => {
@@ -246,7 +246,7 @@ export default function FinanceProjectsCostPage() {
   }, [periodPreset, monthRange])
 
   const load = useCallback(async () => {
-    if (!user || !isFinanceTeamRole(user.role)) return
+    if (!user || !canAccessFinanceSection(user, 'projects_cost')) return
     setFetching(true)
     try {
       const params = new URLSearchParams()
@@ -283,7 +283,7 @@ export default function FinanceProjectsCostPage() {
   }, [])
 
   useEffect(() => {
-    if (!loading && user && isFinanceTeamRole(user.role)) {
+    if (!loading && user && canAccessFinanceSection(user, 'projects_cost')) {
       void loadCostFieldUi()
     }
   }, [loadCostFieldUi, loading, user])
@@ -559,7 +559,7 @@ export default function FinanceProjectsCostPage() {
     return { cost, internal, profit, paid, design, dev, other, seo }
   }, [tableRows])
 
-  if (loading || !user || !isFinanceTeamRole(user.role)) return null
+  if (loading || !user || !canAccessFinanceSection(user, 'projects_cost')) return null
 
   return (
     <Layout>

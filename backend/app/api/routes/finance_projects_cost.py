@@ -13,7 +13,7 @@ from sqlalchemy.exc import OperationalError, ProgrammingError
 from sqlalchemy.orm import Session, joinedload
 
 from app.core.access import filter_payments_query
-from app.core.security import get_current_user, require_admin_or_financier
+from app.core.security import get_current_user, require_finance_section, can_access_finance_section
 from app.db.database import get_db, get_request_company
 from app.models.available_funds_manual import AvailableFundsManual
 from app.models.cash_flow import CashFlowEntry
@@ -41,6 +41,8 @@ from app.schemas.schemas import (
 router = APIRouter(prefix="/api/finance", tags=["finance"])
 # Если nginx отрезает префикс /api (см. main.py), клиент шлёт на /finance/... — дублируем ручные строки P&L.
 router_finance_no_api_prefix = APIRouter(prefix="/finance", tags=["finance"])
+require_projects_cost_access = require_finance_section("projects_cost")
+require_pl_access = require_finance_section("pl")
 
 _CATEGORY_SORT = {
     "smm": 0,
@@ -369,6 +371,8 @@ def projects_cost_report(
         description="Конец периода YYYY-MM (включительно).",
     ),
 ):
+    if not can_access_finance_section(current_user, "projects_cost"):
+        raise HTTPException(status_code=403, detail="Доступ запрещён")
     """
     Активные (не архивные) проекты с графиком месяцев.
     Рекуррент / сервис: в колонке «ставка» — сумма за период из договора (обычно месяц); % оплаты не считаем (как N/a в таблице).
@@ -408,7 +412,7 @@ def put_projects_cost_breakdown(
     payment_id: int,
     body: ProjectCostBreakdownPut,
     db: Session = Depends(get_db),
-    current_user: User = Depends(require_admin_or_financier),
+    current_user: User = Depends(require_projects_cost_access),
 ):
     """Разбивка себестоимости (дизайн / разработка / прочее / SEO) — сумма в колонке «Себест.»."""
     q = (
@@ -522,6 +526,8 @@ def pl_report(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
+    if not can_access_finance_section(current_user, "pl"):
+        raise HTTPException(status_code=403, detail="Доступ запрещён")
     """
     P&L по месяцам: выручка — оплаты по графику проектов (категории) + приходы из ДДС;
     расходы — команда + ДДС по статьям + ручные строки.
@@ -1338,7 +1344,7 @@ def pl_report(
 @router_finance_no_api_prefix.get("/pl-manual-lines", response_model=List[PLManualLineOut])
 def list_pl_manual_lines(
     db: Session = Depends(get_db),
-    _: User = Depends(require_admin_or_financier),
+    _: User = Depends(require_pl_access),
 ):
     slug = get_request_company()
     rows = (
@@ -1365,7 +1371,7 @@ def list_pl_manual_lines(
 def create_pl_manual_line(
     body: PLManualLineCreate,
     db: Session = Depends(get_db),
-    _: User = Depends(require_admin_or_financier),
+    _: User = Depends(require_pl_access),
 ):
     slug = get_request_company()
     r = PlManualLine(
@@ -1404,7 +1410,7 @@ def update_pl_manual_line(
     line_id: int,
     body: PLManualLineUpdate,
     db: Session = Depends(get_db),
-    _: User = Depends(require_admin_or_financier),
+    _: User = Depends(require_pl_access),
 ):
     slug = get_request_company()
     r = (
@@ -1441,7 +1447,7 @@ def update_pl_manual_line(
 def delete_pl_manual_line(
     line_id: int,
     db: Session = Depends(get_db),
-    _: User = Depends(require_admin_or_financier),
+    _: User = Depends(require_pl_access),
 ):
     slug = get_request_company()
     r = (
@@ -1463,7 +1469,7 @@ def put_pl_manual_cell(
     line_id: int,
     body: PLManualCellPut,
     db: Session = Depends(get_db),
-    _: User = Depends(require_admin_or_financier),
+    _: User = Depends(require_pl_access),
 ):
     if not _YM_RE.match(body.period_month):
         raise HTTPException(status_code=400, detail="Неверный формат месяца (YYYY-MM)")

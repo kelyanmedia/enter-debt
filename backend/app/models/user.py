@@ -29,8 +29,16 @@ class User(Base):
     can_view_accesses = Column(Boolean, nullable=False, default=False)
     # Только role=administration: ввод строк ДДС без просмотра отчёта
     can_enter_cash_flow = Column(Boolean, nullable=False, default=False)
-    # Только role=manager: доступ к разделу «Продажи → Компании»
+    # Только role=manager/administration: доступ к разделу «Продажи → Компании»
     can_view_sales = Column(Boolean, nullable=False, default=False)
+    # Только role=accountant: доступы к пунктам меню «Финансы»
+    can_view_finance_ceo = Column(Boolean, nullable=False, default=False)
+    can_view_finance_pl = Column(Boolean, nullable=False, default=False)
+    can_view_finance_cashflow = Column(Boolean, nullable=False, default=False)
+    can_view_finance_projects_cost = Column(Boolean, nullable=False, default=False)
+    can_view_finance_received_payments = Column(Boolean, nullable=False, default=False)
+    can_view_finance_expenses = Column(Boolean, nullable=False, default=False)
+    can_view_finance_lending = Column(Boolean, nullable=False, default=False)
     # Только role=admin: копии Telegram по цепочке менеджер–бухгалтерия
     admin_telegram_notify_all = Column(Boolean, nullable=False, default=False)
     admin_telegram_notify_manager_ids = Column(Text, nullable=True)  # JSON [id, ...]

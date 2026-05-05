@@ -124,6 +124,17 @@ def _normalize_telegram_username(value: Optional[str]) -> Optional[str]:
     return raw[1:] if raw.startswith("@") else raw
 
 
+_ACCOUNTANT_FINANCE_FIELDS = (
+    "can_view_finance_ceo",
+    "can_view_finance_pl",
+    "can_view_finance_cashflow",
+    "can_view_finance_projects_cost",
+    "can_view_finance_received_payments",
+    "can_view_finance_expenses",
+    "can_view_finance_lending",
+)
+
+
 def _visible_dividend_categories() -> List[dict]:
     return expense_categories_for_api()
 
@@ -282,6 +293,13 @@ def create_user(data: UserCreate, db: Session = Depends(get_db), _=Depends(requi
         can_view_accesses=bool(getattr(data, "can_view_accesses", False)) if data.role == "administration" else False,
         can_enter_cash_flow=bool(getattr(data, "can_enter_cash_flow", False)) if data.role == "administration" else False,
         can_view_sales=bool(getattr(data, "can_view_sales", False)) if data.role in ("manager", "administration") else False,
+        can_view_finance_ceo=bool(getattr(data, "can_view_finance_ceo", False)) if data.role == "accountant" else False,
+        can_view_finance_pl=bool(getattr(data, "can_view_finance_pl", False)) if data.role == "accountant" else False,
+        can_view_finance_cashflow=bool(getattr(data, "can_view_finance_cashflow", False)) if data.role == "accountant" else False,
+        can_view_finance_projects_cost=bool(getattr(data, "can_view_finance_projects_cost", False)) if data.role == "accountant" else False,
+        can_view_finance_received_payments=bool(getattr(data, "can_view_finance_received_payments", False)) if data.role == "accountant" else False,
+        can_view_finance_expenses=bool(getattr(data, "can_view_finance_expenses", False)) if data.role == "accountant" else False,
+        can_view_finance_lending=bool(getattr(data, "can_view_finance_lending", False)) if data.role == "accountant" else False,
         see_all_partners=data.see_all_partners if data.role == "manager" else False,
         visible_manager_ids=vm_json,
         payment_details=pd,
@@ -316,6 +334,8 @@ def _apply_update(user: User, data: UserUpdate):
         if field == "can_enter_cash_flow":
             continue
         if field == "can_view_sales":
+            continue
+        if field in _ACCOUNTANT_FINANCE_FIELDS:
             continue
         if field in ("telegram_chat_id", "telegram_username"):
             continue
@@ -475,6 +495,17 @@ def _sync_sales_access(user: User, data: UserUpdate) -> None:
         user.can_view_sales = bool(data.can_view_sales)
 
 
+def _sync_accountant_finance_access(user: User, data: UserUpdate) -> None:
+    if user.role != "accountant":
+        for field in _ACCOUNTANT_FINANCE_FIELDS:
+            setattr(user, field, False)
+        return
+    patch = data.model_dump(exclude_unset=True)
+    for field in _ACCOUNTANT_FINANCE_FIELDS:
+        if field in patch:
+            setattr(user, field, bool(patch.get(field)))
+
+
 @router.put("/{user_id}", response_model=UserOut)
 def update_user(user_id: int, data: UserUpdate, db: Session = Depends(get_db), _=Depends(require_admin)):
     user = db.query(User).filter(User.id == user_id, User.company_slug == get_request_company()).first()
@@ -485,6 +516,7 @@ def update_user(user_id: int, data: UserUpdate, db: Session = Depends(get_db), _
     _apply_update(user, data)
     _sync_telegram_binding(user, data, db)
     _sync_sales_access(user, data)
+    _sync_accountant_finance_access(user, data)
     _sync_visible_managers_after_user_update(db, user, data)
     _sync_administration_cash_flow_input(db, user, data)
     _sync_admin_company_access(db, user, data, previous_role)
@@ -504,6 +536,7 @@ def patch_user(user_id: int, data: UserUpdate, db: Session = Depends(get_db), _=
     _apply_update(user, data)
     _sync_telegram_binding(user, data, db)
     _sync_sales_access(user, data)
+    _sync_accountant_finance_access(user, data)
     _sync_visible_managers_after_user_update(db, user, data)
     _sync_administration_cash_flow_input(db, user, data)
     _sync_admin_company_access(db, user, data, previous_role)

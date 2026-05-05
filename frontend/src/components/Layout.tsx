@@ -6,6 +6,7 @@ import { useAuth } from '@/context/AuthContext'
 import { NotificationBell } from '@/components/NotificationDrawer'
 import { EmployeeQaDrawer } from '@/components/EmployeeSidebarGuide'
 import { companyDisplayName, getCompanySlug, getTokenForSlug } from '@/lib/company'
+import { canAccessFinanceSection } from '@/lib/roles'
 
 type NavItem = {
   href: string
@@ -26,6 +27,7 @@ type NavItem = {
   salesClientBase?: boolean
   /** Раздел «Продажи» — список компаний менеджера (и админ) */
   salesCompanies?: boolean
+  financeSectionKey?: 'ceo' | 'pl' | 'cashflow' | 'projects_cost' | 'received_payments' | 'expenses' | 'lending'
 }
 
 type NavSection = { title: string; items: NavItem[]; hideForFinancier?: boolean }
@@ -61,13 +63,13 @@ const NAV_SECTIONS: NavSection[] = [
   {
     title: 'Финансы',
     items: [
-      { href: '/ceo', label: 'CEO Dashboard', icon: '📊', managerHidden: true },
-      { href: '/finance/pl', label: 'P&L', icon: '📈', financeTeam: true },
-      { href: '/finance/cashflow', label: 'ДДС', icon: '💸', financeTeam: true },
-      { href: '/finance/projects-cost', label: 'Projects Cost', icon: '🧮', financeTeam: true },
-      { href: '/received-payments', label: 'Оплаты', icon: '💳', financeTeam: true },
-      { href: '/finance/expenses', label: 'Расходы', icon: '📤', financeTeam: true },
-      { href: '/finance/lending', label: 'Кредитование', icon: '🏦', financeTeam: true },
+      { href: '/ceo', label: 'CEO Dashboard', icon: '📊', managerHidden: true, financeSectionKey: 'ceo' },
+      { href: '/finance/pl', label: 'P&L', icon: '📈', financeTeam: true, financeSectionKey: 'pl' },
+      { href: '/finance/cashflow', label: 'ДДС', icon: '💸', financeTeam: true, financeSectionKey: 'cashflow' },
+      { href: '/finance/projects-cost', label: 'Projects Cost', icon: '🧮', financeTeam: true, financeSectionKey: 'projects_cost' },
+      { href: '/received-payments', label: 'Оплаты', icon: '💳', financeTeam: true, financeSectionKey: 'received_payments' },
+      { href: '/finance/expenses', label: 'Расходы', icon: '📤', financeTeam: true, financeSectionKey: 'expenses' },
+      { href: '/finance/lending', label: 'Кредитование', icon: '🏦', financeTeam: true, financeSectionKey: 'lending' },
     ],
   },
   {
@@ -461,10 +463,12 @@ export default function Layout({ children }: { children: ReactNode }) {
               if (
                 n.financeTeam &&
                 user.role !== 'admin' &&
-                user.role !== 'financier'
+                user.role !== 'financier' &&
+                user.role !== 'accountant'
               ) {
                 return false
               }
+              if (n.financeSectionKey && !canAccessFinanceSection(user, n.financeSectionKey)) return false
               if (n.accountantHidden && user.role === 'accountant') return false
               if (n.administrationHidden && user.role === 'administration') return false
               if (n.managerHidden && (user.role === 'manager' || user.role === 'administration')) return false

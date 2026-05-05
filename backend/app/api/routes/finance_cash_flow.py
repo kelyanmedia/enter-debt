@@ -9,7 +9,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy.orm import Session, joinedload
 
 from app.core.access import filter_payments_query
-from app.core.security import require_admin_or_financier, require_cash_flow_dds_input
+from app.core.security import require_finance_section, require_cash_flow_dds_input
 from app.db.database import get_db, get_request_company
 from sqlalchemy import func
 
@@ -68,6 +68,7 @@ _TEMPLATE_GROUP_LABELS: dict[str, str] = {
 }
 
 router = APIRouter(prefix="/api/finance", tags=["finance"])
+require_cashflow_access = require_finance_section("cashflow")
 
 _YM = re.compile(r"^\d{4}-\d{2}$")
 
@@ -132,7 +133,7 @@ def cash_flow_fx_rate(
 @router.get("/cash-flow/templates", response_model=List[CashFlowTemplateLineOut])
 def list_templates(
     db: Session = Depends(get_db),
-    _admin: User = Depends(require_admin_or_financier),
+    _admin: User = Depends(require_cashflow_access),
 ):
     rows = (
         db.query(CashFlowTemplateLine)
@@ -147,7 +148,7 @@ def list_templates(
 def create_template_line(
     body: CashFlowTemplateLineCreate,
     db: Session = Depends(get_db),
-    _admin: User = Depends(require_admin_or_financier),
+    _admin: User = Depends(require_cashflow_access),
 ):
     tg = body.template_group.strip()
     if body.direction == "expense":
@@ -189,7 +190,7 @@ def update_template_line(
     template_id: int,
     body: CashFlowTemplateLineUpdate,
     db: Session = Depends(get_db),
-    _admin: User = Depends(require_admin_or_financier),
+    _admin: User = Depends(require_cashflow_access),
 ):
     row = (
         db.query(CashFlowTemplateLine)
@@ -226,7 +227,7 @@ def update_template_line(
 def delete_template_line(
     template_id: int,
     db: Session = Depends(get_db),
-    _admin: User = Depends(require_admin_or_financier),
+    _admin: User = Depends(require_cashflow_access),
 ):
     row = (
         db.query(CashFlowTemplateLine)
@@ -247,7 +248,7 @@ def delete_template_line(
 def delete_template_group(
     template_group: str = Query(..., min_length=1, max_length=40),
     db: Session = Depends(get_db),
-    _admin: User = Depends(require_admin_or_financier),
+    _admin: User = Depends(require_cashflow_access),
 ):
     q = db.query(CashFlowTemplateLine).filter(
         CashFlowTemplateLine.template_group == template_group,
@@ -262,7 +263,7 @@ def delete_template_group(
 def list_entries(
     period_month: str = Query(..., description="YYYY-MM"),
     db: Session = Depends(get_db),
-    _admin: User = Depends(require_admin_or_financier),
+    _admin: User = Depends(require_cashflow_access),
 ):
     if not _YM.match(period_month):
         raise HTTPException(status_code=400, detail="period_month: формат YYYY-MM")
@@ -280,7 +281,7 @@ def list_entries(
 @router.get("/cash-flow/payment-options", response_model=List[CashFlowPaymentOptionOut])
 def payment_options(
     db: Session = Depends(get_db),
-    _admin: User = Depends(require_admin_or_financier),
+    _admin: User = Depends(require_cashflow_access),
 ):
     q = db.query(Payment).options(joinedload(Payment.partner)).filter(Payment.is_archived == False)
     q = filter_payments_query(q, db, _admin)
@@ -302,7 +303,7 @@ def payment_options(
 def apply_template(
     body: ApplyCashFlowTemplateIn,
     db: Session = Depends(get_db),
-    _admin: User = Depends(require_admin_or_financier),
+    _admin: User = Depends(require_cashflow_access),
 ):
     empty: List[str] = []
     for g in body.template_groups:
@@ -417,7 +418,7 @@ def update_entry(
     entry_id: int,
     body: CashFlowEntryUpdate,
     db: Session = Depends(get_db),
-    _admin: User = Depends(require_admin_or_financier),
+    _admin: User = Depends(require_cashflow_access),
 ):
     row = (
         db.query(CashFlowEntry)
@@ -461,7 +462,7 @@ def update_entry(
 def delete_entry(
     entry_id: int,
     db: Session = Depends(get_db),
-    _admin: User = Depends(require_admin_or_financier),
+    _admin: User = Depends(require_cashflow_access),
 ):
     row = (
         db.query(CashFlowEntry)
@@ -482,7 +483,7 @@ def delete_entry(
 def get_available_funds(
     period_month: str = Query(..., description="YYYY-MM"),
     db: Session = Depends(get_db),
-    _admin: User = Depends(require_admin_or_financier),
+    _admin: User = Depends(require_cashflow_access),
 ):
     if not _YM.match(period_month):
         raise HTTPException(status_code=400, detail="period_month: формат YYYY-MM")
@@ -493,7 +494,7 @@ def get_available_funds(
 def put_available_funds_deposits(
     body: AvailableFundsManualPut,
     db: Session = Depends(get_db),
-    _admin: User = Depends(require_admin_or_financier),
+    _admin: User = Depends(require_cashflow_access),
 ):
     row = (
         db.query(AvailableFundsManual)

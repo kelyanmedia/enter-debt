@@ -8,7 +8,7 @@ from typing import List
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session, joinedload
 
-from app.core.security import require_admin_or_financier
+from app.core.security import require_finance_section
 from app.db.database import get_db, get_request_company
 from app.models.lending_record import LendingRecord
 from app.models.payment import Payment
@@ -16,6 +16,7 @@ from app.models.user import User
 from app.schemas.schemas import LendingRecordCreate, LendingRecordOut, LendingRecordUpdate
 
 router = APIRouter(prefix="/api/finance", tags=["finance"])
+require_lending_access = require_finance_section("lending")
 
 _VALID_TYPES = frozenset({"interest_loan", "interest_free"})
 
@@ -106,7 +107,7 @@ def _validate_row_rules(row: LendingRecord) -> None:
 @router.get("/lending", response_model=List[LendingRecordOut])
 def list_lending(
     db: Session = Depends(get_db),
-    _: User = Depends(require_admin_or_financier),
+    _: User = Depends(require_lending_access),
 ):
     slug = get_request_company()
     rows = (
@@ -123,7 +124,7 @@ def list_lending(
 def create_lending(
     body: LendingRecordCreate,
     db: Session = Depends(get_db),
-    _: User = Depends(require_admin_or_financier),
+    _: User = Depends(require_lending_access),
 ):
     slug = get_request_company()
     row = LendingRecord(
@@ -152,7 +153,7 @@ def update_lending(
     record_id: int,
     body: LendingRecordUpdate,
     db: Session = Depends(get_db),
-    _: User = Depends(require_admin_or_financier),
+    _: User = Depends(require_lending_access),
 ):
     slug = get_request_company()
     row = (
@@ -178,7 +179,7 @@ def update_lending(
 def delete_lending(
     record_id: int,
     db: Session = Depends(get_db),
-    _: User = Depends(require_admin_or_financier),
+    _: User = Depends(require_lending_access),
 ):
     slug = get_request_company()
     row = (

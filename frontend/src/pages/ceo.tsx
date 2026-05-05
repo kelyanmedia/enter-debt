@@ -9,6 +9,7 @@ import api from '@/lib/api'
 import { fetchCeoLayout, saveCeoLayout } from '@/lib/ceoLayoutApi'
 import type { PLReportForNet } from '@/lib/plNetProfitSeries'
 import CeoDashboardBlocks, { type CeoLayoutBlock } from '@/components/CeoDashboardBlocks'
+import { canAccessFinanceSection } from '@/lib/roles'
 
 interface CeoStats {
   total_projects: number
@@ -250,14 +251,14 @@ export default function CeoDashboardPage() {
   const { user, loading, companySlug } = useAuth()
   const router = useRouter()
   const isAdmin = user?.role === 'admin'
+  const canAccessCeo = canAccessFinanceSection(user, 'ceo')
   /** Те же роли, что GET /ceo/layout — могут сохранять раскладку и восстанавливать блоки */
-  const canConfigureCeoLayout =
-    user?.role === 'admin' || user?.role === 'accountant' || user?.role === 'financier'
+  const canConfigureCeoLayout = canAccessCeo
   const ceoLayoutAutoRestoreDone = useRef(false)
 
   useEffect(() => {
-    if (!loading && user && (user.role === 'manager' || user.role === 'administration')) router.replace('/debitor')
-  }, [user, loading, router])
+    if (!loading && user && !canAccessCeo) router.replace('/debitor')
+  }, [user, loading, canAccessCeo, router])
 
   const [stats, setStats] = useState<CeoStats | null>(null)
   const [turnover, setTurnover] = useState<TurnoverPoint[]>([])
@@ -530,8 +531,7 @@ export default function CeoDashboardPage() {
         ? turnoverYear ?? new Date().getFullYear()
         : ltvYear ?? new Date().getFullYear()
 
-  const redirectingToDebitor =
-    !loading && user && (user.role === 'manager' || user.role === 'administration')
+  const redirectingToDebitor = !loading && user && !canAccessCeo
 
   return (
     <Layout>
@@ -551,7 +551,7 @@ export default function CeoDashboardPage() {
           Переход в дебиторку…
         </div>
       )}
-      {!loading && user && user.role !== 'manager' && user.role !== 'administration' && <>
+      {!loading && user && canAccessCeo && <>
       <PageHeader
         title="CEO Dashboard"
         subtitle="Карточки по линиям; ниже — блоки графиков. Администратор: «Настроить блоки» — порядок, удаление; «+ Добавить блок»; карандаш на графике — ручной ввод метрик; P&L — ссылка на отчёт. Если блоков нет — «Восстановить стандартные блоки»."

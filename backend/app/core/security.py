@@ -82,15 +82,35 @@ def require_payment_write(current_user=Depends(get_current_user)):
 
 
 def require_admin_or_financier(current_user=Depends(get_current_user)):
-    """Полный доступ к разделу «Финансы» (ДДС, оплаты и т.д.) — админ и финансист."""
+    """Полный доступ к разделу «Финансы» (legacy-проверка) — админ и финансист."""
     if current_user.role not in ("admin", "financier"):
         raise HTTPException(status_code=403, detail="Доступ запрещён")
     return current_user
 
 
+def can_access_finance_section(current_user, section: str) -> bool:
+    if current_user.role in ("admin", "financier"):
+        return True
+    if current_user.role != "accountant":
+        return False
+    field = f"can_view_finance_{section}"
+    return bool(getattr(current_user, field, False))
+
+
+def require_finance_section(section: str):
+    def _dep(current_user=Depends(get_current_user)):
+        if can_access_finance_section(current_user, section):
+            return current_user
+        raise HTTPException(status_code=403, detail="Доступ запрещён")
+
+    return _dep
+
+
 def require_cash_flow_dds_input(current_user=Depends(get_current_user)):
     """Справочники и создание строки ДДС: админ, финансист или любая администрация (страница «Ввод ДДС»)."""
     if current_user.role in ("admin", "financier"):
+        return current_user
+    if can_access_finance_section(current_user, "cashflow"):
         return current_user
     if current_user.role == "administration":
         return current_user
@@ -99,6 +119,8 @@ def require_cash_flow_dds_input(current_user=Depends(get_current_user)):
 
 def require_admin_or_accountant(current_user=Depends(get_current_user)):
     """CEO Dashboard и агрегированная аналитика — админ, бухгалтерия, финансист; не менеджеры."""
-    if current_user.role not in ("admin", "accountant", "financier"):
-        raise HTTPException(status_code=403, detail="Доступ запрещён")
-    return current_user
+    if current_user.role in ("admin", "financier"):
+        return current_user
+    if current_user.role == "accountant" and can_access_finance_section(current_user, "ceo"):
+        return current_user
+    raise HTTPException(status_code=403, detail="Доступ запрещён")

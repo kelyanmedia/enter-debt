@@ -26,6 +26,14 @@ interface User {
   can_enter_cash_flow?: boolean
   /** Менеджер/администрация: доступ к CRM/Продажи → Компании. По умолчанию закрыто. */
   can_view_sales?: boolean
+  /** Только бухгалтерия: доступы к пунктам раздела «Финансы». */
+  can_view_finance_ceo?: boolean
+  can_view_finance_pl?: boolean
+  can_view_finance_cashflow?: boolean
+  can_view_finance_projects_cost?: boolean
+  can_view_finance_received_payments?: boolean
+  can_view_finance_expenses?: boolean
+  can_view_finance_lending?: boolean
   payment_details?: string | null
   payment_details_updated_at?: string | null
   /** Только сотрудник: переключение компаний в кабинете (иначе закреплена компания входа). */

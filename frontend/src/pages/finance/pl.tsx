@@ -5,7 +5,7 @@ import { PageHeader, Card, BtnOutline, BtnPrimary, Modal, formatMoneyNumber } fr
 import { useAuth } from '@/context/AuthContext'
 import api from '@/lib/api'
 import { deletePlManualLine, postPlManualLine, putPlManualCell } from '@/lib/plManualLinesApi'
-import { isFinanceTeamRole } from '@/lib/roles'
+import { canAccessFinanceSection } from '@/lib/roles'
 
 interface PLCell {
   uzs: string
@@ -187,11 +187,11 @@ export default function FinancePlPage() {
   const [modalError, setModalError] = useState('')
 
   useEffect(() => {
-    if (!loading && user && !isFinanceTeamRole(user.role)) router.replace('/')
+    if (!loading && user && !canAccessFinanceSection(user, 'pl')) router.replace('/')
   }, [loading, user, router])
 
   const load = useCallback(() => {
-    if (!user || !isFinanceTeamRole(user.role)) return
+    if (!user || !canAccessFinanceSection(user, 'pl')) return
     setFetching(true)
     api
       .get<PLReport>(`finance/pl?year=${year}`)
@@ -243,7 +243,7 @@ export default function FinancePlPage() {
     return Array.from({ length: 8 }, (_, i) => y - i)
   }, [now])
 
-  if (loading || !user || !isFinanceTeamRole(user.role)) return null
+  if (loading || !user || !canAccessFinanceSection(user, 'pl')) return null
 
   const cols = report?.columns ?? []
 

@@ -4,7 +4,7 @@ import Layout from '@/components/Layout'
 import { PageHeader, Card, Th, Td, BtnOutline, Empty, formatMoneyNumber } from '@/components/ui'
 import { useAuth } from '@/context/AuthContext'
 import api from '@/lib/api'
-import { isFinanceTeamRole } from '@/lib/roles'
+import { canAccessFinanceSection } from '@/lib/roles'
 
 interface ReceivedRow {
   kind: string
@@ -66,11 +66,11 @@ export default function ReceivedPaymentsPage() {
   const [fetching, setFetching] = useState(false)
 
   useEffect(() => {
-    if (!loading && user && !isFinanceTeamRole(user.role)) router.replace('/')
+    if (!loading && user && !canAccessFinanceSection(user, 'received_payments')) router.replace('/')
   }, [user, loading, router])
 
   const load = useCallback(() => {
-    if (!user || !isFinanceTeamRole(user.role)) return
+    if (!user || !canAccessFinanceSection(user, 'received_payments')) return
     setFetching(true)
     api
       .get<ReceivedRow[]>(`dashboard/received-payments?year=${year}&month=${month}`)
@@ -119,7 +119,7 @@ export default function ReceivedPaymentsPage() {
     return list
   }, [rows])
 
-  if (loading || !user || !isFinanceTeamRole(user.role)) return null
+  if (loading || !user || !canAccessFinanceSection(user, 'received_payments')) return null
 
   const periodTitle = `${MONTHS_RU[month - 1]} ${year}`
 

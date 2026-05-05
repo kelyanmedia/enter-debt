@@ -27,12 +27,13 @@ from app.schemas.schemas import (
     CeoLayoutBlockOut,
     CeoLayoutPut,
 )
-from app.core.security import get_current_user, require_admin, require_admin_or_accountant, require_admin_or_financier
+from app.core.security import get_current_user, require_admin, require_admin_or_accountant, require_admin_or_financier, require_finance_section
 from app.core.access import accessible_partner_ids, filter_payments_query, filter_partners_query, parse_visible_manager_ids
 from app.models.user import User
 from app.services.weekly_tg_report import run_weekly_cash_report
 
 router = APIRouter(prefix="/api/dashboard", tags=["dashboard"])
+require_received_payments_access = require_finance_section("received_payments")
 
 _MONTHS_RU = (
     "янв.",
@@ -209,7 +210,7 @@ def received_payments_cashflow(
     year: int = Query(..., ge=2000, le=2100),
     month: int = Query(..., ge=1, le=12),
     db: Session = Depends(get_db),
-    _: User = Depends(require_admin_or_financier),
+    _: User = Depends(require_received_payments_access),
 ):
     """
     Все зафиксированные поступления за календарный месяц (по дате paid_at) для ДДС.

@@ -17,7 +17,7 @@ import {
 } from '@/components/ui'
 import { useAuth } from '@/context/AuthContext'
 import api from '@/lib/api'
-import { isFinanceTeamRole } from '@/lib/roles'
+import { canAccessFinanceSection } from '@/lib/roles'
 
 type LendingType = 'interest_loan' | 'interest_free'
 
@@ -156,11 +156,11 @@ export default function FinanceLendingPage() {
   const repaymentCalc = useMemo(() => calculatedRepayment(form), [form])
 
   useEffect(() => {
-    if (!loading && user && !isFinanceTeamRole(user.role)) router.replace('/')
+    if (!loading && user && !canAccessFinanceSection(user, 'lending')) router.replace('/')
   }, [loading, user, router])
 
   const load = useCallback(async () => {
-    if (!user || !isFinanceTeamRole(user.role)) return
+    if (!user || !canAccessFinanceSection(user, 'lending')) return
     setFetching(true)
     try {
       const r = await api.get<LendingRecord[]>('finance/lending')
@@ -177,7 +177,7 @@ export default function FinanceLendingPage() {
   }, [load])
 
   const loadProjectOptions = useCallback(async () => {
-    if (!user || !isFinanceTeamRole(user.role)) return
+    if (!user || !canAccessFinanceSection(user, 'lending')) return
     setProjectsLoading(true)
     try {
       const r = await api.get<ProjectOption[]>('finance/projects-cost')
@@ -310,7 +310,7 @@ export default function FinanceLendingPage() {
     }))
   }
 
-  if (loading || !user || !isFinanceTeamRole(user.role)) return null
+  if (loading || !user || !canAccessFinanceSection(user, 'lending')) return null
 
   return (
     <Layout>

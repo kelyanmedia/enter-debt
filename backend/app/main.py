@@ -350,6 +350,13 @@ def _migrate():
         "ALTER TABLE users ADD COLUMN IF NOT EXISTS admin_accessible_company_slugs TEXT",
         "ALTER TABLE users ADD COLUMN IF NOT EXISTS can_enter_cash_flow BOOLEAN NOT NULL DEFAULT FALSE",
         "ALTER TABLE users ADD COLUMN IF NOT EXISTS can_view_sales BOOLEAN NOT NULL DEFAULT FALSE",
+        "ALTER TABLE users ADD COLUMN IF NOT EXISTS can_view_finance_ceo BOOLEAN NOT NULL DEFAULT FALSE",
+        "ALTER TABLE users ADD COLUMN IF NOT EXISTS can_view_finance_pl BOOLEAN NOT NULL DEFAULT FALSE",
+        "ALTER TABLE users ADD COLUMN IF NOT EXISTS can_view_finance_cashflow BOOLEAN NOT NULL DEFAULT FALSE",
+        "ALTER TABLE users ADD COLUMN IF NOT EXISTS can_view_finance_projects_cost BOOLEAN NOT NULL DEFAULT FALSE",
+        "ALTER TABLE users ADD COLUMN IF NOT EXISTS can_view_finance_received_payments BOOLEAN NOT NULL DEFAULT FALSE",
+        "ALTER TABLE users ADD COLUMN IF NOT EXISTS can_view_finance_expenses BOOLEAN NOT NULL DEFAULT FALSE",
+        "ALTER TABLE users ADD COLUMN IF NOT EXISTS can_view_finance_lending BOOLEAN NOT NULL DEFAULT FALSE",
         # Commissions table
         """CREATE TABLE IF NOT EXISTS commissions (
             id SERIAL PRIMARY KEY,
@@ -766,6 +773,34 @@ def _migrate():
         if "can_view_sales" not in cols:
             missing.append(
                 "ALTER TABLE users ADD COLUMN can_view_sales BOOLEAN NOT NULL DEFAULT FALSE"
+            )
+        if "can_view_finance_ceo" not in cols:
+            missing.append(
+                "ALTER TABLE users ADD COLUMN can_view_finance_ceo BOOLEAN NOT NULL DEFAULT FALSE"
+            )
+        if "can_view_finance_pl" not in cols:
+            missing.append(
+                "ALTER TABLE users ADD COLUMN can_view_finance_pl BOOLEAN NOT NULL DEFAULT FALSE"
+            )
+        if "can_view_finance_cashflow" not in cols:
+            missing.append(
+                "ALTER TABLE users ADD COLUMN can_view_finance_cashflow BOOLEAN NOT NULL DEFAULT FALSE"
+            )
+        if "can_view_finance_projects_cost" not in cols:
+            missing.append(
+                "ALTER TABLE users ADD COLUMN can_view_finance_projects_cost BOOLEAN NOT NULL DEFAULT FALSE"
+            )
+        if "can_view_finance_received_payments" not in cols:
+            missing.append(
+                "ALTER TABLE users ADD COLUMN can_view_finance_received_payments BOOLEAN NOT NULL DEFAULT FALSE"
+            )
+        if "can_view_finance_expenses" not in cols:
+            missing.append(
+                "ALTER TABLE users ADD COLUMN can_view_finance_expenses BOOLEAN NOT NULL DEFAULT FALSE"
+            )
+        if "can_view_finance_lending" not in cols:
+            missing.append(
+                "ALTER TABLE users ADD COLUMN can_view_finance_lending BOOLEAN NOT NULL DEFAULT FALSE"
             )
         for sql in missing:
             try:

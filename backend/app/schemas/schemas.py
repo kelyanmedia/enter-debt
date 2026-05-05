@@ -79,6 +79,13 @@ class UserBase(BaseModel):
     can_view_accesses: bool = False
     can_enter_cash_flow: bool = False  # только administration: ввод ДДС без отчёта
     can_view_sales: bool = False  # manager/administration: доступ к CRM/Продажи → Компании
+    can_view_finance_ceo: bool = False
+    can_view_finance_pl: bool = False
+    can_view_finance_cashflow: bool = False
+    can_view_finance_projects_cost: bool = False
+    can_view_finance_received_payments: bool = False
+    can_view_finance_expenses: bool = False
+    can_view_finance_lending: bool = False
     see_all_partners: bool = False
     payment_details: Optional[str] = None  # реквизиты выплат для сотрудников (freelance)
     multi_company_access: bool = False  # только employee: переключение компаний в кабинете
@@ -109,6 +116,13 @@ class UserUpdate(BaseModel):
     can_view_accesses: Optional[bool] = None
     can_enter_cash_flow: Optional[bool] = None
     can_view_sales: Optional[bool] = None
+    can_view_finance_ceo: Optional[bool] = None
+    can_view_finance_pl: Optional[bool] = None
+    can_view_finance_cashflow: Optional[bool] = None
+    can_view_finance_projects_cost: Optional[bool] = None
+    can_view_finance_received_payments: Optional[bool] = None
+    can_view_finance_expenses: Optional[bool] = None
+    can_view_finance_lending: Optional[bool] = None
     see_all_partners: Optional[bool] = None
     password: Optional[str] = None
     visible_manager_ids: Optional[List[int]] = None

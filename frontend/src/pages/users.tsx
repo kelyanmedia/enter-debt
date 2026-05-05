@@ -17,6 +17,13 @@ interface User {
   can_view_accesses?: boolean
   can_enter_cash_flow?: boolean
   can_view_sales?: boolean
+  can_view_finance_ceo?: boolean
+  can_view_finance_pl?: boolean
+  can_view_finance_cashflow?: boolean
+  can_view_finance_projects_cost?: boolean
+  can_view_finance_received_payments?: boolean
+  can_view_finance_expenses?: boolean
+  can_view_finance_lending?: boolean
   see_all_partners?: boolean
   visible_manager_ids?: number[]
   admin_telegram_notify_all?: boolean
@@ -57,6 +64,13 @@ const EMPTY = {
   can_view_subscriptions: 'false', can_view_accesses: 'false',
   can_enter_cash_flow: 'false',
   can_view_sales: 'false',
+  can_view_finance_ceo: 'false',
+  can_view_finance_pl: 'false',
+  can_view_finance_cashflow: 'false',
+  can_view_finance_projects_cost: 'false',
+  can_view_finance_received_payments: 'false',
+  can_view_finance_expenses: 'false',
+  can_view_finance_lending: 'false',
   admin_telegram_notify_all: 'false',
 }
 
@@ -129,6 +143,13 @@ export default function UsersPage() {
       can_view_accesses: u.can_view_accesses ? 'true' : 'false',
       can_enter_cash_flow: u.can_enter_cash_flow ? 'true' : 'false',
       can_view_sales: u.can_view_sales ? 'true' : 'false',
+      can_view_finance_ceo: u.can_view_finance_ceo ? 'true' : 'false',
+      can_view_finance_pl: u.can_view_finance_pl ? 'true' : 'false',
+      can_view_finance_cashflow: u.can_view_finance_cashflow ? 'true' : 'false',
+      can_view_finance_projects_cost: u.can_view_finance_projects_cost ? 'true' : 'false',
+      can_view_finance_received_payments: u.can_view_finance_received_payments ? 'true' : 'false',
+      can_view_finance_expenses: u.can_view_finance_expenses ? 'true' : 'false',
+      can_view_finance_lending: u.can_view_finance_lending ? 'true' : 'false',
       admin_telegram_notify_all: u.admin_telegram_notify_all ? 'true' : 'false',
       new_password: '',
       payment_details: u.payment_details || '',
@@ -259,6 +280,15 @@ export default function UsersPage() {
           payload.can_view_accesses = form.can_view_accesses === 'true'
           payload.can_enter_cash_flow = form.can_enter_cash_flow === 'true'
         }
+        if (form.role === 'accountant') {
+          payload.can_view_finance_ceo = form.can_view_finance_ceo === 'true'
+          payload.can_view_finance_pl = form.can_view_finance_pl === 'true'
+          payload.can_view_finance_cashflow = form.can_view_finance_cashflow === 'true'
+          payload.can_view_finance_projects_cost = form.can_view_finance_projects_cost === 'true'
+          payload.can_view_finance_received_payments = form.can_view_finance_received_payments === 'true'
+          payload.can_view_finance_expenses = form.can_view_finance_expenses === 'true'
+          payload.can_view_finance_lending = form.can_view_finance_lending === 'true'
+        }
         if (form.role === 'admin') {
           payload.admin_telegram_notify_all = form.admin_telegram_notify_all === 'true'
           payload.admin_telegram_notify_manager_ids = adminNotifyManagerIds
@@ -291,6 +321,13 @@ export default function UsersPage() {
           can_view_subscriptions: form.role === 'administration' ? form.can_view_subscriptions === 'true' : undefined,
           can_view_accesses: form.role === 'administration' ? form.can_view_accesses === 'true' : undefined,
           can_enter_cash_flow: form.role === 'administration' ? form.can_enter_cash_flow === 'true' : undefined,
+          can_view_finance_ceo: form.role === 'accountant' ? form.can_view_finance_ceo === 'true' : undefined,
+          can_view_finance_pl: form.role === 'accountant' ? form.can_view_finance_pl === 'true' : undefined,
+          can_view_finance_cashflow: form.role === 'accountant' ? form.can_view_finance_cashflow === 'true' : undefined,
+          can_view_finance_projects_cost: form.role === 'accountant' ? form.can_view_finance_projects_cost === 'true' : undefined,
+          can_view_finance_received_payments: form.role === 'accountant' ? form.can_view_finance_received_payments === 'true' : undefined,
+          can_view_finance_expenses: form.role === 'accountant' ? form.can_view_finance_expenses === 'true' : undefined,
+          can_view_finance_lending: form.role === 'accountant' ? form.can_view_finance_lending === 'true' : undefined,
           payment_details: form.role === 'employee' ? (form.payment_details.trim() || null) : undefined,
           multi_company_access: form.role === 'employee' ? form.multi_company_access === 'true' : false,
           is_ad_budget_employee: form.role === 'employee' ? form.is_ad_budget_employee === 'true' : false,
@@ -552,6 +589,16 @@ export default function UsersPage() {
                         <Td style={{ fontSize: 11, color: '#8a8fa8' }}>
                           {u.role === 'manager'
                             ? `${u.see_all_partners ? 'Все партнёры' : 'Только назначенные'} · Продажи: ${u.can_view_sales ? 'да' : 'нет'}`
+                            : u.role === 'accountant'
+                              ? `Финансы: ${[
+                                  u.can_view_finance_ceo,
+                                  u.can_view_finance_pl,
+                                  u.can_view_finance_cashflow,
+                                  u.can_view_finance_projects_cost,
+                                  u.can_view_finance_received_payments,
+                                  u.can_view_finance_expenses,
+                                  u.can_view_finance_lending,
+                                ].filter(Boolean).length} раздел(ов)`
                             : u.role === 'administration'
                               ? `${(u.visible_manager_ids || []).length} менеджер(ов) · Продажи: ${u.can_view_sales ? 'да' : 'нет'} · Подписки: ${u.can_view_subscriptions ? 'да' : 'нет'} · Доступы: ${u.can_view_accesses ? 'да' : 'нет'}`
                               : u.role === 'employee'
@@ -819,6 +866,46 @@ export default function UsersPage() {
               Раздел <strong>«Ввод ДДС»</strong> в меню «Проекты» доступен <strong>всем</strong> пользователям с ролью Администрация:
               упрощённый ввод прихода/расхода в учёт ДДС. Полный отчёт «ДДС» и остальные пункты «Финансы» по-прежнему только у
               админа и финансиста.
+            </div>
+          </div>
+        )}
+        {form.role === 'accountant' && (
+          <div style={{ marginBottom: 14 }}>
+            <div style={{ fontSize: 12, fontWeight: 600, marginBottom: 8 }}>
+              Доступ к разделам «Финансы» (видимость и редактирование)
+            </div>
+            <div
+              style={{
+                display: 'grid',
+                gridTemplateColumns: '1fr 1fr',
+                gap: 8,
+                border: '1px solid #e8e9ef',
+                borderRadius: 8,
+                padding: 10,
+                background: '#f8fafc',
+              }}
+            >
+              {([
+                ['can_view_finance_ceo', 'CEO Dashboard'],
+                ['can_view_finance_pl', 'P&L'],
+                ['can_view_finance_cashflow', 'ДДС'],
+                ['can_view_finance_projects_cost', 'Projects Cost'],
+                ['can_view_finance_received_payments', 'Оплаты'],
+                ['can_view_finance_expenses', 'Расходы'],
+                ['can_view_finance_lending', 'Кредитование'],
+              ] as const).map(([key, label]) => (
+                <label key={key} style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 13, cursor: 'pointer' }}>
+                  <input
+                    type="checkbox"
+                    checked={form[key] === 'true'}
+                    onChange={(e) => setForm((f) => ({ ...f, [key]: e.target.checked ? 'true' : 'false' }))}
+                  />
+                  {label}
+                </label>
+              ))}
+            </div>
+            <div style={{ fontSize: 11, color: '#64748b', marginTop: 6, lineHeight: 1.45 }}>
+              Отмеченные пункты появятся в левом меню. Неотмеченные скрываются и будут недоступны по API.
             </div>
           </div>
         )}

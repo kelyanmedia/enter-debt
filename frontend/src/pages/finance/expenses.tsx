@@ -5,7 +5,7 @@ import Layout from '@/components/Layout'
 import { PageHeader, Card, Th, Td, Empty, formatMoneyNumber } from '@/components/ui'
 import { useAuth } from '@/context/AuthContext'
 import api from '@/lib/api'
-import { isFinanceTeamRole } from '@/lib/roles'
+import { canAccessFinanceSection } from '@/lib/roles'
 
 interface PayrollExpenseRow {
   id: number
@@ -71,11 +71,11 @@ export default function FinanceExpensesPage() {
   const defaultExpandedOnce = useRef(false)
 
   useEffect(() => {
-    if (!loading && user && !isFinanceTeamRole(user.role)) router.replace('/')
+    if (!loading && user && !canAccessFinanceSection(user, 'expenses')) router.replace('/')
   }, [loading, user, router])
 
   const load = useCallback(() => {
-    if (!user || !isFinanceTeamRole(user.role)) return
+    if (!user || !canAccessFinanceSection(user, 'expenses')) return
     setFetching(true)
     api
       .get<PayrollExpenseRow[]>('employee-payment-records/payroll-expenses')
@@ -148,7 +148,7 @@ export default function FinanceExpensesPage() {
     })
   }
 
-  if (loading || !user || !isFinanceTeamRole(user.role)) return null
+  if (loading || !user || !canAccessFinanceSection(user, 'expenses')) return null
 
   const curYm = currentYearMonth()
 
