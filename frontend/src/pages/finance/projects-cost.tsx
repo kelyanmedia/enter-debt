@@ -171,11 +171,9 @@ function paymentTypeRu(t: string) {
   return m[t] || t
 }
 
-/** Только сумма; для рекуррента — «N / период» без слова «договор» */
-function costDisplay(isRec: boolean, billingUnit: string) {
-  const n = formatMoneyNumber(Number(billingUnit))
-  if (isRec) return `${n} / период`
-  return n
+/** В колонке «Стоимость» всегда показываем только числовую сумму. */
+function costDisplay(_isRec: boolean, billingUnit: string) {
+  return formatMoneyNumber(Number(billingUnit))
 }
 
 function moneyCellString(v: string | undefined) {
