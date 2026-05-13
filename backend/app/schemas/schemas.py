@@ -212,6 +212,12 @@ class EmployeeTaskOut(EmployeeTaskBase):
     allocated_payment_id: Optional[int] = None
     cost_category: Optional[str] = None
     allocated_payment_label: Optional[str] = Field(None, description="Подпись проекта для админки")
+    pl_salary_uzs_locked: Optional[Decimal] = Field(
+        None, description="Зафиксированная сумма в UZS для P&L при оплате (если есть привязка к Projects Cost)"
+    )
+    pl_usd_to_uzs_rate_applied: Optional[Decimal] = Field(
+        None, description="Курс USD→UZS на момент фиксации (только для USD)"
+    )
 
     class Config:
         from_attributes = True
@@ -232,6 +238,8 @@ class EmployeePaymentRecordOut(BaseModel):
     has_receipt: bool
     entered_by: str  # self | admin
     created_at: datetime
+    pl_salary_uzs_locked: Optional[Decimal] = None
+    pl_usd_to_uzs_rate_applied: Optional[Decimal] = None
 
 
 class EmployeePayrollExpenseOut(BaseModel):

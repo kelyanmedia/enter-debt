@@ -24,6 +24,9 @@ class EmployeePaymentRecord(Base):
     receipt_path = Column(String(500), nullable=True)
     created_by_user_id = Column(Integer, ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
     created_at = Column(DateTime(timezone=True), server_default=func.now())
+    # Сумма в UZS для строки P&L на момент записи выплаты (курс из «Доступные средства» за месяц периода/выплаты)
+    pl_salary_uzs_locked = Column(Numeric(15, 2), nullable=True)
+    pl_usd_to_uzs_rate_applied = Column(Numeric(15, 4), nullable=True)
 
     user = relationship("User", foreign_keys=[user_id])
     created_by = relationship("User", foreign_keys=[created_by_user_id])

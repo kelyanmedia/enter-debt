@@ -17,6 +17,7 @@ from app.db.database import get_db, get_request_company
 from app.models.employee_payment_record import EmployeePaymentRecord
 from app.models.user import User
 from app.schemas.schemas import EmployeePaymentRecordOut, EmployeePayrollExpenseOut
+from app.services.pl_payroll_fx_lock import sync_employee_payment_record_pl_fx_lock
 
 router = APIRouter(prefix="/api/employee-payment-records", tags=["employee-payment-records"])
 
@@ -41,6 +42,10 @@ def _record_out(r: EmployeePaymentRecord) -> EmployeePaymentRecordOut:
         has_receipt=bool(r.receipt_path),
         entered_by="admin" if r.created_by_user_id is not None else "self",
         created_at=r.created_at,
+        pl_salary_uzs_locked=Decimal(str(r.pl_salary_uzs_locked)) if getattr(r, "pl_salary_uzs_locked", None) is not None else None,
+        pl_usd_to_uzs_rate_applied=Decimal(str(r.pl_usd_to_uzs_rate_applied))
+        if getattr(r, "pl_usd_to_uzs_rate_applied", None) is not None
+        else None,
     )
 
 
@@ -307,6 +312,7 @@ async def create_payment_record(
         created_by_user_id=created_by,
     )
     db.add(row)
+    sync_employee_payment_record_pl_fx_lock(db, row)
     db.commit()
     db.refresh(row)
     return _record_out(row)

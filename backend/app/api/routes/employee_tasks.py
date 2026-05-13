@@ -19,6 +19,7 @@ from app.schemas.schemas import (
     StaffMonthTotalsOut,
     StaffPendingPaymentMonthOut,
 )
+from app.services.pl_payroll_fx_lock import sync_employee_task_pl_fx_lock
 from app.core.security import get_current_user, require_admin
 
 router = APIRouter(prefix="/api/employee-tasks", tags=["employee-tasks"])
@@ -469,6 +470,8 @@ def create_task(
         cost_category=ccat,
     )
     db.add(t)
+    db.flush()
+    sync_employee_task_pl_fx_lock(db, t, refresh=True)
     db.commit()
     db.refresh(t)
     t = (
@@ -505,6 +508,11 @@ def update_task(
     upd = {k: v for k, v in dump.items() if k not in ("allocated_payment_id", "cost_category")}
     old_status = t.status
     old_paid = t.paid
+    old_amount = t.amount
+    old_budget = t.budget_amount
+    old_currency = t.currency
+    old_alloc = t.allocated_payment_id
+    old_cat = t.cost_category
 
     if current_user.role != "admin":
         if "paid" in upd:
@@ -574,6 +582,22 @@ def update_task(
         and t.budget_amount is None
     ):
         t.budget_amount = Decimal(str(t.amount))
+
+    became_paid = t.paid and not old_paid
+    was_eligible = bool(old_paid and old_alloc and old_cat)
+    is_eligible = bool(t.paid and t.allocated_payment_id and t.cost_category)
+    money_changed = (
+        Decimal(str(t.amount or 0)) != Decimal(str(old_amount or 0))
+        or Decimal(str(t.budget_amount or 0)) != Decimal(str(old_budget or 0))
+        or (t.currency or "USD").upper() != (old_currency or "USD").upper()
+    )
+    old_cat_n = (old_cat or "").strip().lower()
+    new_cat_n = (t.cost_category or "").strip().lower()
+    alloc_changed = (old_alloc != t.allocated_payment_id) or (old_cat_n != new_cat_n)
+    refresh_lock = became_paid or (is_eligible and not was_eligible) or (
+        old_paid and t.paid and is_eligible and (money_changed or alloc_changed)
+    )
+    sync_employee_task_pl_fx_lock(db, t, refresh=refresh_lock)
 
     db.commit()
     t = (

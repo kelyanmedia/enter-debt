@@ -764,6 +764,10 @@ def pl_report(
         m_idx = _employee_payment_pl_month_index(r, y)
         if m_idx is None:
             continue
+        locked_uzs = getattr(r, "pl_salary_uzs_locked", None)
+        if locked_uzs is not None:
+            salary_uzs[m_idx - 1] += Decimal(str(locked_uzs))
+            continue
         amt = Decimal(str(r.amount))
         bud = Decimal(str(getattr(r, "budget_amount", 0) or 0))
         pl_amt = amt - bud
@@ -790,6 +794,10 @@ def pl_report(
         paid_dt = t.paid_at.date() if isinstance(t.paid_at, datetime) else t.paid_at
         d = paid_dt or t.work_date
         if d.year != y:
+            continue
+        locked_uzs = getattr(t, "pl_salary_uzs_locked", None)
+        if locked_uzs is not None:
+            salary_uzs[d.month - 1] += Decimal(str(locked_uzs))
             continue
         amt = Decimal(str(t.amount or 0))
         bud = Decimal(str(t.budget_amount or 0))
