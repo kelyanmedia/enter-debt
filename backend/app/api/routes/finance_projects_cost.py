@@ -309,7 +309,13 @@ def _payment_to_project_cost_row(
     c_oth = m_oth + to
     c_seo = m_seo + ts
     internal = (c_des + c_dev + c_oth + c_seo).quantize(Decimal("0.01"))
-    profit = (sum_paid - internal).quantize(Decimal("0.01"))
+    if rec:
+        # Рекуррент / сервис: маржа по факту оплат в графике за выбранную логику периода
+        profit = (sum_paid - internal).quantize(Decimal("0.01"))
+    else:
+        # Разовый договор: маржа по сумме договора (колонка «Стоимость»), не «оплата факт − себест.»
+        basis = contract_total if contract_total is not None else unit
+        profit = (basis - internal).quantize(Decimal("0.01"))
 
     mcp = None
     reserved: Optional[Decimal] = None
@@ -376,7 +382,7 @@ def projects_cost_report(
     """
     Активные (не архивные) проекты с графиком месяцев.
     Рекуррент / сервис: в колонке «ставка» — сумма за период из договора (обычно месяц); % оплаты не считаем (как N/a в таблице).
-    Разовый: контракт = payment.amount; факт = сумма оплаченных строк графика; % от контракта.
+    Разовый: контракт = payment.amount; факт = сумма оплаченных строк графика; % от контракта; маржа в отчёте = договор − себестоимость.
     При month_from/month_to остаются проекты, у которых интервал работы (от «Начала» до дедлайна или конца графика)
     пересекает выбранные календарные месяцы. Без дедлайна и без дат в графике — по месяцам строк графика или дате создания/оплаты.
     """

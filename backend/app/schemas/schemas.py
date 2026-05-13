@@ -920,7 +920,11 @@ class ProjectCostBreakdownPut(BaseModel):
 
 
 class ProjectCostRowOut(BaseModel):
-    """Сводка по проекту для отчёта «Projects Cost»: синхронизировано с payments / payment_months."""
+    """Сводка по проекту для отчёта «Projects Cost»: синхронизировано с payments / payment_months.
+
+    Маржа (profit_actual): для разового договора — сумма договора минус себестоимость; для рекуррента/сервиса —
+    сумма оплаченных строк графика минус себестоимость (кассовая маржа по факту оплат).
+    """
 
     payment_id: int
     partner_id: int
