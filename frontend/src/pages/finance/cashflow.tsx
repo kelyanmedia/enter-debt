@@ -440,8 +440,8 @@ export default function FinanceCashflowPage() {
   }, [])
 
   useEffect(() => {
-    if (addOpen === 'income' || editRow?.direction === 'income') loadPayOpts()
-  }, [addOpen, editRow?.direction, loadPayOpts])
+    if (addOpen === 'income' || personalCashflowMode || editRow?.direction === 'income') loadPayOpts()
+  }, [addOpen, personalCashflowMode, editRow?.direction, loadPayOpts])
 
   const incomeRows = useMemo(() => entries.filter((e) => e.direction === 'income'), [entries])
   const expenseRows = useMemo(() => entries.filter((e) => e.direction === 'expense'), [entries])
@@ -625,6 +625,10 @@ export default function FinanceCashflowPage() {
     const uzs = Number(String(form.amount_uzs).replace(/\s/g, '').replace(',', '.')) || 0
     const usd = Number(String(form.amount_usd).replace(/\s/g, '').replace(',', '.')) || 0
     if (!form.label.trim()) return
+    if (uzs <= 0 && usd <= 0) {
+      alert('Укажите сумму расхода')
+      return
+    }
     if (addOpen === 'expense' && !form.flow_category) return
     if (addOpen === 'income' && !form.flow_category.trim()) return
     setBusy(true)
@@ -752,6 +756,11 @@ export default function FinanceCashflowPage() {
         <PageHeader
           title="Личный ДДС расходов"
           subtitle="Только расходы, которые вы фиксируете через Telegram /ex. Приходы, доступные средства и курс P&L здесь не показываются."
+          action={
+            <BtnPrimary type="button" onClick={() => openAdd('expense')} disabled={busy}>
+              + Строка
+            </BtnPrimary>
+          }
         />
         <div style={{ flex: 1, overflowY: 'auto', padding: '22px 24px', display: 'flex', flexDirection: 'column', gap: 16 }}>
           <Card style={{ padding: '16px 18px' }}>
@@ -822,6 +831,76 @@ export default function FinanceCashflowPage() {
             )}
           </Card>
         </div>
+        <Modal
+          open={addOpen === 'expense'}
+          onClose={() => setAddOpen(null)}
+          title="Новый расход"
+          footer={(
+            <>
+              <BtnOutline onClick={() => setAddOpen(null)}>Отмена</BtnOutline>
+              <BtnPrimary onClick={() => void saveNew()} disabled={busy}>
+                Добавить
+              </BtnPrimary>
+            </>
+          )}
+        >
+          <Field label="Название *">
+            <Input
+              value={form.label}
+              onChange={(e) => setForm((f) => ({ ...f, label: e.target.value }))}
+              placeholder="Напр. Такси на встречу"
+            />
+          </Field>
+          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
+            <Field label="Сумма, сум">
+              <MoneyInput value={form.amount_uzs} onChange={(v) => setForm((f) => ({ ...f, amount_uzs: v }))} />
+            </Field>
+            <Field label="Сумма, USD">
+              <MoneyInput value={form.amount_usd} onChange={(v) => setForm((f) => ({ ...f, amount_usd: v }))} />
+            </Field>
+          </div>
+          <Field label="Форма оплаты">
+            <Select value={form.payment_method} onChange={(e) => setForm((f) => ({ ...f, payment_method: e.target.value }))}>
+              {(meta?.payment_methods ?? []).map((p) => (
+                <option key={p.id} value={p.id}>
+                  {p.label}
+                </option>
+              ))}
+            </Select>
+          </Field>
+          <Field label="Категория расхода *">
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+              <Input
+                value={expenseCategorySearch}
+                onChange={(e) => setExpenseCategorySearch(e.target.value)}
+                placeholder="Поиск категории..."
+              />
+              <Select value={form.flow_category} onChange={(e) => setForm((f) => ({ ...f, flow_category: e.target.value }))}>
+                {filteredExpenseCategories.length > 0 ? (
+                  filteredExpenseCategories.map((c) => (
+                    <option key={c.slug} value={c.slug}>
+                      {c.label}
+                    </option>
+                  ))
+                ) : (
+                  <option value={form.flow_category}>Ничего не найдено</option>
+                )}
+              </Select>
+            </div>
+          </Field>
+          <Field label="Проект">
+            <PaymentOptionCombobox
+              value={form.payment_id}
+              onChange={(id) => setForm((f) => ({ ...f, payment_id: id }))}
+              options={payOpts}
+              disabled={busy}
+              emptyLabel="— без проекта"
+            />
+          </Field>
+          <Field label="Комментарий">
+            <Input value={form.notes} onChange={(e) => setForm((f) => ({ ...f, notes: e.target.value }))} />
+          </Field>
+        </Modal>
       </Layout>
     )
   }

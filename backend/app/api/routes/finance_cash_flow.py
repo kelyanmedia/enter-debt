@@ -8,7 +8,7 @@ from typing import List, Optional
 from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy.orm import Session, joinedload
 
-from app.core.access import filter_payments_query
+from app.core.access import assert_payment_access, filter_payments_query
 from app.core.security import get_current_user, require_finance_section, require_cash_flow_dds_input
 from app.db.database import get_db, get_request_company
 from sqlalchemy import func
@@ -316,10 +316,10 @@ def list_personal_entries(
 @router.get("/cash-flow/payment-options", response_model=List[CashFlowPaymentOptionOut])
 def payment_options(
     db: Session = Depends(get_db),
-    _admin: User = Depends(require_cashflow_access),
+    current_user: User = Depends(require_cash_flow_dds_input),
 ):
     q = db.query(Payment).options(joinedload(Payment.partner)).filter(Payment.is_archived == False)
-    q = filter_payments_query(q, db, _admin)
+    q = filter_payments_query(q, db, current_user)
     payments = q.order_by(Payment.description).limit(500).all()
     out: List[CashFlowPaymentOptionOut] = []
     for p in payments:
@@ -398,6 +398,13 @@ def create_entry(
     db: Session = Depends(get_db),
     current_user: User = Depends(require_cash_flow_dds_input),
 ):
+    personal_expense_mode = current_user.role in ("manager", "employee") and bool(
+        getattr(current_user, "team_expense_control_enabled", False)
+    )
+    if personal_expense_mode and body.direction != "expense":
+        raise HTTPException(status_code=403, detail="В личном ДДС команды можно добавлять только расходы")
+    if personal_expense_mode and body.amount_uzs <= 0 and body.amount_usd <= 0:
+        raise HTTPException(status_code=400, detail="Укажите сумму расхода")
     pay_id = body.payment_id
     if pay_id is not None and pay_id <= 0:
         pay_id = None
@@ -414,6 +421,8 @@ def create_entry(
         )
         if not p or p.trashed_at is not None:
             raise HTTPException(status_code=404, detail="Проект не найден")
+        if current_user.role == "manager":
+            assert_payment_access(db, current_user, p)
     if body.direction == "expense":
         _check_expense_category(body.flow_category)
     else:
@@ -434,7 +443,7 @@ def create_entry(
         label=body.label.strip(),
         amount_uzs=body.amount_uzs,
         amount_usd=body.amount_usd,
-        apply_fx_to_uzs=bool(body.apply_fx_to_uzs),
+        apply_fx_to_uzs=False if personal_expense_mode else bool(body.apply_fx_to_uzs),
         payment_method=body.payment_method,
         flow_category=(body.flow_category or "").strip() or None,
         recipient=(body.recipient or "").strip() or None,
