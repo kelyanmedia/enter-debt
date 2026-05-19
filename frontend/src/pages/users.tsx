@@ -32,6 +32,8 @@ interface User {
   payment_details?: string | null
   multi_company_access?: boolean
   is_ad_budget_employee?: boolean
+  team_expense_control_enabled?: boolean
+  team_expense_visible_user_ids?: number[]
   last_login_at?: string | null
 }
 interface PartnerRow { id: number; name: string }
@@ -61,6 +63,7 @@ const EMPTY = {
   name: '', email: '', password: '', role: 'manager', telegram_chat_id: '', telegram_username: '', is_active: 'true',
   see_all_partners: 'false', new_password: '', payment_details: '', multi_company_access: 'false',
   is_ad_budget_employee: 'false',
+  team_expense_control_enabled: 'false',
   can_view_subscriptions: 'false', can_view_accesses: 'false',
   can_enter_cash_flow: 'false',
   can_view_sales: 'false',
@@ -100,6 +103,7 @@ export default function UsersPage() {
   const [deleteUserId, setDeleteUserId] = useState<number | null>(null)
   const [visibleManagerIds, setVisibleManagerIds] = useState<number[]>([])
   const [adminNotifyManagerIds, setAdminNotifyManagerIds] = useState<number[]>([])
+  const [teamExpenseVisibleUserIds, setTeamExpenseVisibleUserIds] = useState<number[]>([])
   const [adminOrgFullAccess, setAdminOrgFullAccess] = useState(false)
   const [adminCompanySlugs, setAdminCompanySlugs] = useState<string[]>([])
   const [managerOptions, setManagerOptions] = useState<User[]>([])
@@ -123,6 +127,7 @@ export default function UsersPage() {
     setAssignedPartnerIds([])
     setVisibleManagerIds([])
     setAdminNotifyManagerIds([])
+    setTeamExpenseVisibleUserIds([])
     setAdminOrgFullAccess(false)
     setAdminCompanySlugs([companySlug])
     setError('')
@@ -155,11 +160,13 @@ export default function UsersPage() {
       payment_details: u.payment_details || '',
       multi_company_access: u.multi_company_access ? 'true' : 'false',
       is_ad_budget_employee: u.is_ad_budget_employee ? 'true' : 'false',
+      team_expense_control_enabled: u.team_expense_control_enabled ? 'true' : 'false',
     })
     setError('')
     setAssignedPartnerIds([])
     setVisibleManagerIds(Array.isArray(u.visible_manager_ids) ? u.visible_manager_ids : [])
     setAdminNotifyManagerIds(Array.isArray(u.admin_telegram_notify_manager_ids) ? u.admin_telegram_notify_manager_ids : [])
+    setTeamExpenseVisibleUserIds(Array.isArray(u.team_expense_visible_user_ids) ? u.team_expense_visible_user_ids : [])
     if (u.role === 'admin') {
       if (u.admin_accessible_company_slugs == null) {
         setAdminOrgFullAccess(true)
@@ -298,6 +305,8 @@ export default function UsersPage() {
           payload.payment_details = form.payment_details.trim() || null
           payload.multi_company_access = form.multi_company_access === 'true'
           payload.is_ad_budget_employee = form.is_ad_budget_employee === 'true'
+          payload.team_expense_control_enabled = form.team_expense_control_enabled === 'true'
+          payload.team_expense_visible_user_ids = teamExpenseVisibleUserIds
         }
         if (form.new_password.trim()) payload.password = form.new_password.trim()
         await api.patch(`users/${editing.id}`, payload)
@@ -331,6 +340,8 @@ export default function UsersPage() {
           payment_details: form.role === 'employee' ? (form.payment_details.trim() || null) : undefined,
           multi_company_access: form.role === 'employee' ? form.multi_company_access === 'true' : false,
           is_ad_budget_employee: form.role === 'employee' ? form.is_ad_budget_employee === 'true' : false,
+          team_expense_control_enabled: form.role === 'employee' ? form.team_expense_control_enabled === 'true' : false,
+          team_expense_visible_user_ids: form.role === 'employee' ? teamExpenseVisibleUserIds : undefined,
           admin_telegram_notify_all: form.role === 'admin' ? form.admin_telegram_notify_all === 'true' : undefined,
           admin_telegram_notify_manager_ids: form.role === 'admin' ? adminNotifyManagerIds : undefined,
           admin_accessible_company_slugs:
@@ -980,6 +991,56 @@ export default function UsersPage() {
                 или при задаче.
               </span>
             </label>
+            <label
+              style={{
+                display: 'flex',
+                alignItems: 'flex-start',
+                gap: 10,
+                cursor: 'pointer',
+                fontSize: 13,
+                color: '#334155',
+                marginBottom: 14,
+                lineHeight: 1.45,
+              }}
+            >
+              <input
+                type="checkbox"
+                checked={form.team_expense_control_enabled === 'true'}
+                onChange={(e) => setForm((f) => ({ ...f, team_expense_control_enabled: e.target.checked ? 'true' : 'false' }))}
+                style={{ marginTop: 3 }}
+              />
+              <span>
+                <strong>Контролирование процесса расходов командой</strong> — сотрудник сможет писать в Telegram
+                <code> /ex сумма комментарий</code>. Бот запишет расход в общий ДДС, спросит категорию и предложит привязать проект.
+              </span>
+            </label>
+            <div style={{ marginBottom: 14 }}>
+              <div style={{ fontSize: 12, fontWeight: 700, color: '#334155', marginBottom: 8 }}>
+                Расшарить личный ДДС других сотрудников
+              </div>
+              <div style={{ fontSize: 11, color: '#64748b', lineHeight: 1.45, marginBottom: 8 }}>
+                По умолчанию сотрудник видит только свои расходы, внесённые через /ex. Отметьте коллег, чьи личные ДДС можно сравнивать.
+              </div>
+              <div style={{ display: 'grid', gap: 6, maxHeight: 140, overflowY: 'auto', padding: '8px 10px', border: '1px solid #e2e8f0', borderRadius: 8 }}>
+                {users.filter((x) => x.role === 'employee' && x.id !== editing?.id).map((emp) => (
+                  <label key={emp.id} style={{ display: 'flex', gap: 8, alignItems: 'center', fontSize: 12, color: '#334155' }}>
+                    <input
+                      type="checkbox"
+                      checked={teamExpenseVisibleUserIds.includes(emp.id)}
+                      onChange={(e) => {
+                        setTeamExpenseVisibleUserIds((prev) =>
+                          e.target.checked ? Array.from(new Set([...prev, emp.id])) : prev.filter((id) => id !== emp.id),
+                        )
+                      }}
+                    />
+                    {emp.name}
+                  </label>
+                ))}
+                {users.filter((x) => x.role === 'employee' && x.id !== editing?.id).length === 0 && (
+                  <span style={{ fontSize: 12, color: '#94a3b8' }}>Нет других сотрудников</span>
+                )}
+              </div>
+            </div>
           </>
         )}
         {(form.role === 'manager' || form.role === 'administration') && (

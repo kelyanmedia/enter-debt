@@ -303,6 +303,8 @@ def _migrate():
         "ALTER TABLE users ADD COLUMN IF NOT EXISTS can_view_sales BOOLEAN NOT NULL DEFAULT FALSE",
         "UPDATE users SET web_access = TRUE WHERE web_access IS NULL",
         "ALTER TABLE users ADD COLUMN IF NOT EXISTS see_all_partners BOOLEAN DEFAULT FALSE",
+        "ALTER TABLE users ADD COLUMN IF NOT EXISTS team_expense_control_enabled BOOLEAN NOT NULL DEFAULT FALSE",
+        "ALTER TABLE users ADD COLUMN IF NOT EXISTS team_expense_visible_user_ids TEXT",
         "UPDATE users SET see_all_partners = FALSE WHERE see_all_partners IS NULL",
         "ALTER TABLE payments ADD COLUMN IF NOT EXISTS contract_months INTEGER",
         "ALTER TABLE payments ADD COLUMN IF NOT EXISTS notify_accounting BOOLEAN DEFAULT TRUE",
@@ -625,6 +627,8 @@ def _migrate():
         "UPDATE employee_payment_records r SET company_slug = u.company_slug FROM users u WHERE r.user_id = u.id",
         "ALTER TABLE cash_flow_template_lines ADD COLUMN IF NOT EXISTS company_slug VARCHAR(32) NOT NULL DEFAULT 'kelyanmedia'",
         "ALTER TABLE cash_flow_entries ADD COLUMN IF NOT EXISTS company_slug VARCHAR(32) NOT NULL DEFAULT 'kelyanmedia'",
+        "ALTER TABLE cash_flow_entries ADD COLUMN IF NOT EXISTS created_by_user_id INTEGER REFERENCES users(id) ON DELETE SET NULL",
+        "CREATE INDEX IF NOT EXISTS ix_cash_flow_entries_created_by_user_id ON cash_flow_entries (created_by_user_id)",
         "ALTER TABLE ceo_metric_overrides ADD COLUMN IF NOT EXISTS company_slug VARCHAR(32) NOT NULL DEFAULT 'kelyanmedia'",
         "ALTER TABLE feed_notifications ADD COLUMN IF NOT EXISTS company_slug VARCHAR(32) NOT NULL DEFAULT 'kelyanmedia'",
         "ALTER TABLE telegram_join_requests ADD COLUMN IF NOT EXISTS company_slug VARCHAR(32) NOT NULL DEFAULT 'kelyanmedia'",
@@ -806,6 +810,14 @@ def _migrate():
             missing.append(
                 "ALTER TABLE users ADD COLUMN can_view_finance_lending BOOLEAN NOT NULL DEFAULT FALSE"
             )
+        if "team_expense_control_enabled" not in cols:
+            missing.append(
+                "ALTER TABLE users ADD COLUMN team_expense_control_enabled BOOLEAN NOT NULL DEFAULT FALSE"
+            )
+        if "team_expense_visible_user_ids" not in cols:
+            missing.append(
+                "ALTER TABLE users ADD COLUMN team_expense_visible_user_ids TEXT"
+            )
         for sql in missing:
             try:
                 with eng.connect() as conn:
@@ -836,6 +848,9 @@ def _migrate():
             ("lvr_name", "ALTER TABLE sales_companies ADD COLUMN lvr_name VARCHAR(220)"),
             ("lvr_role", "ALTER TABLE sales_companies ADD COLUMN lvr_role VARCHAR(160)"),
             ("trashed_at", "ALTER TABLE sales_companies ADD COLUMN trashed_at TIMESTAMP"),
+        ],
+        "cash_flow_entries": [
+            ("created_by_user_id", "ALTER TABLE cash_flow_entries ADD COLUMN created_by_user_id INTEGER REFERENCES users(id) ON DELETE SET NULL"),
         ],
     }
     for _slug, eng in iter_company_engines():

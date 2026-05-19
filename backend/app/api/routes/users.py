@@ -12,6 +12,7 @@ from app.core.config import settings
 from app.finance.cash_flow_catalog import EXPENSE_CATEGORY_LABELS, expense_categories_for_api
 from app.db.database import get_db, get_request_company, is_registered_company_slug
 from app.models.cash_flow import CashFlowEntry
+from app.models.payment import Payment
 from app.models.user import User
 from app.models.partner import Partner
 from app.schemas.schemas import UserOut, UserCreate, UserUpdate, AssignedPartnersBody
@@ -36,6 +37,23 @@ class InternalTelegramDividendIn(BaseModel):
     note: Optional[str] = Field(default=None, max_length=500)
     payment_method: Literal["cash", "card", "transfer"] = "transfer"
     entry_date: Optional[date] = None
+
+    @model_validator(mode="after")
+    def _validate_amount(self):
+        if self.amount_uzs <= 0 and self.amount_usd <= 0:
+            raise ValueError("Укажите сумму в UZS или USD больше нуля")
+        return self
+
+
+class InternalTeamExpenseIn(BaseModel):
+    chat_id: int
+    amount_uzs: Decimal = Decimal("0")
+    amount_usd: Decimal = Decimal("0")
+    flow_category: str = Field(..., max_length=64)
+    note: Optional[str] = Field(default=None, max_length=500)
+    payment_method: Literal["cash", "card", "transfer"] = "transfer"
+    entry_date: Optional[date] = None
+    payment_id: Optional[int] = None
 
     @model_validator(mode="after")
     def _validate_amount(self):
@@ -69,6 +87,32 @@ def _validate_visible_manager_ids(db: Session, ids: Optional[List[int]], *, requ
         )
         if not u:
             raise HTTPException(status_code=400, detail=f"Пользователь {mid} не является активным менеджером")
+    return uniq
+
+
+def _validate_team_expense_visible_user_ids(db: Session, ids: Optional[List[int]]) -> List[int]:
+    if not ids:
+        return []
+    uniq: List[int] = []
+    seen = set()
+    for x in ids:
+        i = int(x)
+        if i not in seen:
+            seen.add(i)
+            uniq.append(i)
+    for uid in uniq:
+        u = (
+            db.query(User)
+            .filter(
+                User.id == uid,
+                User.role == "employee",
+                User.is_active == True,
+                User.company_slug == get_request_company(),
+            )
+            .first()
+        )
+        if not u:
+            raise HTTPException(status_code=400, detail=f"Сотрудник для доступа к личному ДДС не найден: {uid}")
     return uniq
 
 
@@ -279,6 +323,12 @@ def create_user(data: UserCreate, db: Session = Depends(get_db), _=Depends(requi
         pd = str(data.payment_details).strip() or None
     mca = bool(getattr(data, "multi_company_access", False)) if data.role == "employee" else False
     ad_budget = bool(getattr(data, "is_ad_budget_employee", False)) if data.role == "employee" else False
+    team_expense_enabled = bool(getattr(data, "team_expense_control_enabled", False)) if data.role == "employee" else False
+    team_expense_visible_json = None
+    if data.role == "employee":
+        team_expense_visible_json = json.dumps(
+            _validate_team_expense_visible_user_ids(db, getattr(data, "team_expense_visible_user_ids", None))
+        )
     user = User(
         company_slug=get_request_company(),
         name=data.name,
@@ -305,6 +355,8 @@ def create_user(data: UserCreate, db: Session = Depends(get_db), _=Depends(requi
         payment_details=pd,
         multi_company_access=mca,
         is_ad_budget_employee=ad_budget,
+        team_expense_control_enabled=team_expense_enabled,
+        team_expense_visible_user_ids=team_expense_visible_json,
         admin_telegram_notify_all=bool(getattr(data, "admin_telegram_notify_all", False)) if data.role == "admin" else False,
         admin_telegram_notify_manager_ids=admin_notify_json if data.role == "admin" else None,
         admin_accessible_company_slugs=admin_access_json if data.role == "admin" else None,
@@ -328,6 +380,8 @@ def _apply_update(user: User, data: UserUpdate):
         if field == "admin_telegram_notify_manager_ids":
             continue
         if field == "admin_accessible_company_slugs":
+            continue
+        if field == "team_expense_visible_user_ids":
             continue
         if field == "admin_telegram_notify_all":
             continue
@@ -360,6 +414,9 @@ def _apply_update(user: User, data: UserUpdate):
         elif field == "is_ad_budget_employee":
             if user.role == "employee":
                 user.is_ad_budget_employee = bool(value)
+        elif field == "team_expense_control_enabled":
+            if user.role == "employee":
+                user.team_expense_control_enabled = bool(value)
         else:
             setattr(user, field, value)
 
@@ -425,6 +482,12 @@ def _sync_visible_managers_after_user_update(db: Session, user: User, data: User
         user.payment_details = None
         user.multi_company_access = False
         user.is_ad_budget_employee = False
+        user.team_expense_control_enabled = False
+        user.team_expense_visible_user_ids = None
+    if user.role == "employee" and data.team_expense_visible_user_ids is not None:
+        user.team_expense_visible_user_ids = json.dumps(
+            _validate_team_expense_visible_user_ids(db, data.team_expense_visible_user_ids)
+        )
     if data.role is not None and data.role != "admin":
         user.admin_accessible_company_slugs = None
 
@@ -622,7 +685,13 @@ def get_user_by_chat(chat_id: int, db: Session = Depends(get_db)):
     )
     if not user:
         raise HTTPException(status_code=404, detail="User not found")
-    return {"id": user.id, "name": user.name, "role": user.role, "telegram_chat_id": user.telegram_chat_id}
+    return {
+        "id": user.id,
+        "name": user.name,
+        "role": user.role,
+        "telegram_chat_id": user.telegram_chat_id,
+        "team_expense_control_enabled": bool(getattr(user, "team_expense_control_enabled", False)),
+    }
 
 
 @router.get("/internal/telegram-dividend-settings/{chat_id}")
@@ -755,6 +824,132 @@ def internal_administration_status(db: Session = Depends(get_db)):
         }
         for u in rows
     ]
+
+
+@router.get("/internal/team-expense-meta/{chat_id}")
+def internal_team_expense_meta(
+    chat_id: int,
+    db: Session = Depends(get_db),
+    _auth: bool = Depends(_verify_internal_secret),
+):
+    """Для бота /ex: проверка доступа, категории ДДС и список проектов для привязки."""
+    user = (
+        db.query(User)
+        .filter(
+            User.telegram_chat_id == chat_id,
+            User.is_active == True,
+            User.company_slug == get_request_company(),
+        )
+        .first()
+    )
+    if not user:
+        raise HTTPException(status_code=404, detail="User not found")
+    if user.role != "admin" and not bool(getattr(user, "team_expense_control_enabled", False)):
+        raise HTTPException(status_code=403, detail="Для вас не включён контроль расходов команды")
+    projects = (
+        db.query(Payment)
+        .filter(
+            Payment.is_archived == False,
+            Payment.trashed_at.is_(None),
+            Payment.company_slug == get_request_company(),
+        )
+        .order_by(Payment.description.asc(), Payment.id.desc())
+        .limit(30)
+        .all()
+    )
+    return {
+        "user": {"id": user.id, "name": user.name, "role": user.role},
+        "expense_categories": expense_categories_for_api(),
+        "projects": [
+            {"id": p.id, "label": (p.description or "").strip() or f"Проект #{p.id}"}
+            for p in projects
+        ],
+    }
+
+
+@router.post("/internal/team-expense")
+def internal_team_expense(
+    body: InternalTeamExpenseIn,
+    db: Session = Depends(get_db),
+    _auth: bool = Depends(_verify_internal_secret),
+):
+    """Для бота /ex: расход сотрудника в общий ДДС с фиксацией автора и опциональной привязкой к проекту."""
+    user = (
+        db.query(User)
+        .filter(
+            User.telegram_chat_id == body.chat_id,
+            User.is_active == True,
+            User.company_slug == get_request_company(),
+        )
+        .first()
+    )
+    if not user:
+        raise HTTPException(status_code=404, detail="User not found")
+    if user.role != "admin" and not bool(getattr(user, "team_expense_control_enabled", False)):
+        raise HTTPException(status_code=403, detail="Для вас не включён контроль расходов команды")
+
+    chosen_category = (body.flow_category or "").strip().lower()
+    if chosen_category not in EXPENSE_CATEGORY_LABELS:
+        raise HTTPException(status_code=400, detail="Категория расхода не найдена")
+
+    pay_id = body.payment_id
+    project_label = None
+    if pay_id is not None:
+        p = (
+            db.query(Payment)
+            .filter(
+                Payment.id == pay_id,
+                Payment.company_slug == get_request_company(),
+                Payment.is_archived == False,
+                Payment.trashed_at.is_(None),
+            )
+            .first()
+        )
+        if not p:
+            raise HTTPException(status_code=404, detail="Проект не найден")
+        project_label = (p.description or "").strip() or f"Проект #{p.id}"
+
+    entry_date = body.entry_date or datetime.now(timezone.utc).date()
+    period_month = f"{entry_date.year:04d}-{entry_date.month:02d}"
+    category_label = EXPENSE_CATEGORY_LABELS.get(chosen_category, chosen_category)
+    raw_note = (body.note or "").strip()
+    note = f"Добавлено из Telegram командой /ex пользователем {user.name}"
+    if project_label:
+        note += f". Проект: {project_label}"
+    if raw_note:
+        note += f". {raw_note}"
+
+    row = CashFlowEntry(
+        company_slug=get_request_company(),
+        period_month=period_month,
+        entry_date=entry_date,
+        direction="expense",
+        label=f"{category_label} (/ex)",
+        amount_uzs=body.amount_uzs,
+        amount_usd=body.amount_usd,
+        apply_fx_to_uzs=False,
+        payment_method=body.payment_method,
+        flow_category=chosen_category,
+        recipient=user.name,
+        payment_id=pay_id,
+        created_by_user_id=user.id,
+        notes=note,
+        template_line_id=None,
+    )
+    db.add(row)
+    db.commit()
+    db.refresh(row)
+    return {
+        "ok": True,
+        "entry_id": row.id,
+        "period_month": row.period_month,
+        "entry_date": str(row.entry_date) if row.entry_date else None,
+        "label": row.label,
+        "flow_category": chosen_category,
+        "flow_category_label": category_label,
+        "payment_id": row.payment_id,
+        "project_label": project_label,
+    }
 
 
 @router.post("/internal/telegram-dividend")

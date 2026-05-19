@@ -91,6 +91,8 @@ class UserBase(BaseModel):
     multi_company_access: bool = False  # только employee: переключение компаний в кабинете
     # только employee: работа с проходным рекламным бюджетом — в P&L только доля «услуга» (сумма − бюджет)
     is_ad_budget_employee: bool = False
+    team_expense_control_enabled: bool = False
+    team_expense_visible_user_ids: VisibleManagerIds = Field(default_factory=list)
     # только role=admin: копии Telegram (менеджер ↔ бухгалтерия)
     admin_telegram_notify_all: bool = False
 
@@ -129,6 +131,8 @@ class UserUpdate(BaseModel):
     payment_details: Optional[str] = None
     multi_company_access: Optional[bool] = None
     is_ad_budget_employee: Optional[bool] = None
+    team_expense_control_enabled: Optional[bool] = None
+    team_expense_visible_user_ids: Optional[List[int]] = None
     admin_telegram_notify_all: Optional[bool] = None
     admin_telegram_notify_manager_ids: Optional[List[int]] = None
     admin_accessible_company_slugs: Optional[List[str]] = None
@@ -147,6 +151,7 @@ class UserOut(UserBase):
     last_login_at: Optional[datetime] = None
     visible_manager_ids: VisibleManagerIds = Field(default_factory=list)
     admin_telegram_notify_manager_ids: VisibleManagerIds = Field(default_factory=list)
+    team_expense_visible_user_ids: VisibleManagerIds = Field(default_factory=list)
     admin_accessible_company_slugs: Annotated[
         Optional[List[str]], BeforeValidator(_coerce_admin_company_slugs_read)
     ] = None
@@ -833,6 +838,7 @@ class CashFlowEntryOut(BaseModel):
     flow_category: Optional[str] = None
     recipient: Optional[str] = None
     payment_id: Optional[int] = None
+    created_by_user_id: Optional[int] = None
     notes: Optional[str] = None
     template_line_id: Optional[int] = None
     created_at: datetime
@@ -853,6 +859,7 @@ class CashFlowEntryCreate(BaseModel):
     flow_category: Optional[str] = Field(None, max_length=64)
     recipient: Optional[str] = Field(None, max_length=120)
     payment_id: Optional[int] = None
+    created_by_user_id: Optional[int] = None
     notes: Optional[str] = Field(None, max_length=500)
 
     @model_validator(mode="after")

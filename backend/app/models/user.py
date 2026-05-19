@@ -51,6 +51,10 @@ class User(Base):
     multi_company_access = Column(Boolean, nullable=False, default=False)
     # Сотрудник ведёт рекламный бюджет клиента: без явного «бюджет/услуга» вся сумма не в P&L (проходные средства)
     is_ad_budget_employee = Column(Boolean, nullable=False, default=False)
+    # Сотрудник может вносить расходы команды через Telegram /ex и видеть личный ДДС.
+    team_expense_control_enabled = Column(Boolean, nullable=False, default=False)
+    # JSON-массив user_id сотрудников, чьи личные ДДС видны этому сотруднику.
+    team_expense_visible_user_ids = Column(Text, nullable=True)
     see_all_partners = Column(Boolean, nullable=False, default=False)  # менеджер: True = видит всех партнёров
     created_at = Column(DateTime(timezone=True), server_default=func.now())
     feed_cleared_at = Column(DateTime(timezone=True), nullable=True)

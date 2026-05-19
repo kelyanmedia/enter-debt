@@ -42,6 +42,8 @@ interface User {
   admin_accessible_company_slugs?: string[] | null
   /** Только сотрудник: рекламный бюджет клиента — в P&L учитывается только доля «услуга». */
   is_ad_budget_employee?: boolean
+  team_expense_control_enabled?: boolean
+  team_expense_visible_user_ids?: number[]
 }
 
 export interface CompanyOption {

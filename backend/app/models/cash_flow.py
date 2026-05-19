@@ -40,9 +40,11 @@ class CashFlowEntry(Base):
     flow_category = Column(String(64), nullable=True)
     recipient = Column(String(120), nullable=True)
     payment_id = Column(Integer, ForeignKey("payments.id", ondelete="SET NULL"), nullable=True)
+    created_by_user_id = Column(Integer, ForeignKey("users.id", ondelete="SET NULL"), nullable=True, index=True)
     notes = Column(String(500), nullable=True)
     template_line_id = Column(Integer, ForeignKey("cash_flow_template_lines.id", ondelete="SET NULL"), nullable=True)
     created_at = Column(DateTime(timezone=True), server_default=func.now())
 
     payment = relationship("Payment", foreign_keys=[payment_id])
+    created_by_user = relationship("User", foreign_keys=[created_by_user_id])
     template_line = relationship("CashFlowTemplateLine", foreign_keys=[template_line_id])

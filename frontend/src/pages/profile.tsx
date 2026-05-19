@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react'
 import Layout from '@/components/Layout'
-import { PageHeader, Card, Field, Input, BtnPrimary, BtnOutline, Modal } from '@/components/ui'
+import { PageHeader, Card, Field, Input, BtnPrimary, BtnOutline, Modal, formatMoneyNumber } from '@/components/ui'
 import { useAuth } from '@/context/AuthContext'
 import api from '@/lib/api'
 import {
@@ -30,6 +30,22 @@ type TelegramDividendSettings = {
   default_category: string
 }
 
+type PersonalCashFlowEntry = {
+  id: number
+  entry_date?: string | null
+  label: string
+  amount_uzs: string
+  amount_usd: string
+  flow_category?: string | null
+  payment_id?: number | null
+  notes?: string | null
+}
+
+function currentYM() {
+  const d = new Date()
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`
+}
+
 export default function ProfilePage() {
   const { user, loading, refreshUser } = useAuth()
   const [email, setEmail] = useState('')
@@ -57,6 +73,9 @@ export default function ProfilePage() {
   const [dividendCategories, setDividendCategories] = useState<{ slug: string; label: string }[]>([])
   const [dividendAllowed, setDividendAllowed] = useState<string[]>([])
   const [dividendDefault, setDividendDefault] = useState('dividends')
+  const [personalMonth, setPersonalMonth] = useState(currentYM)
+  const [personalRows, setPersonalRows] = useState<PersonalCashFlowEntry[]>([])
+  const [personalMsg, setPersonalMsg] = useState('')
 
   useEffect(() => {
     if (user?.email) setEmail(user.email)
@@ -91,6 +110,26 @@ export default function ProfilePage() {
       cancelled = true
     }
   }, [user?.role])
+
+  useEffect(() => {
+    if (user?.role !== 'employee') return
+    let cancelled = false
+    setPersonalMsg('')
+    api
+      .get<PersonalCashFlowEntry[]>(`finance/cash-flow/personal-entries?period_month=${personalMonth}`)
+      .then(({ data }) => {
+        if (!cancelled) setPersonalRows(Array.isArray(data) ? data : [])
+      })
+      .catch(() => {
+        if (!cancelled) {
+          setPersonalRows([])
+          setPersonalMsg('Не удалось загрузить личный ДДС')
+        }
+      })
+    return () => {
+      cancelled = true
+    }
+  }, [user?.role, personalMonth])
 
   useEffect(() => {
     if (user?.role !== 'admin') return
@@ -686,6 +725,47 @@ export default function ProfilePage() {
                 </>
               )}
             </div>
+            )}
+          </Card>
+        )}
+        {user.role === 'employee' && (
+          <Card style={{ padding: '18px 20px', marginTop: 16 }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', gap: 12, alignItems: 'center', marginBottom: 12 }}>
+              <div>
+                <div style={{ fontSize: 15, fontWeight: 800, color: '#1a1d23' }}>Личный ДДС</div>
+                <div style={{ fontSize: 12, color: '#64748b', marginTop: 4 }}>
+                  Ваши расходы из Telegram <code>/ex</code>. Общий ДДС администратора остаётся полным.
+                </div>
+              </div>
+              <Input type="month" value={personalMonth} onChange={(e) => setPersonalMonth(e.target.value)} style={{ maxWidth: 150 }} />
+            </div>
+            {!user.team_expense_control_enabled && (
+              <div style={{ fontSize: 12, color: '#b45309', marginBottom: 10 }}>
+                Администратор ещё не включил контроль расходов командой для вашего аккаунта.
+              </div>
+            )}
+            {personalMsg && <div style={{ fontSize: 12, color: '#b91c1c', marginBottom: 10 }}>{personalMsg}</div>}
+            {personalRows.length === 0 ? (
+              <div style={{ fontSize: 13, color: '#94a3b8' }}>За выбранный месяц расходов нет.</div>
+            ) : (
+              <div style={{ display: 'grid', gap: 8 }}>
+                {personalRows.map((r) => (
+                  <div key={r.id} style={{ border: '1px solid #e2e8f0', borderRadius: 10, padding: '10px 12px', background: '#fff' }}>
+                    <div style={{ display: 'flex', justifyContent: 'space-between', gap: 10, fontSize: 13, fontWeight: 700 }}>
+                      <span>{r.label}</span>
+                      <span>
+                        {Number(r.amount_uzs) > 0 ? `${formatMoneyNumber(r.amount_uzs)} UZS` : ''}
+                        {Number(r.amount_usd) > 0 ? `${Number(r.amount_uzs) > 0 ? ' / ' : ''}${formatMoneyNumber(r.amount_usd)} USD` : ''}
+                      </span>
+                    </div>
+                    <div style={{ fontSize: 11, color: '#64748b', marginTop: 5 }}>
+                      {r.entry_date || personalMonth}
+                      {r.payment_id ? ` · проект #${r.payment_id}` : ''}
+                      {r.notes ? ` · ${r.notes}` : ''}
+                    </div>
+                  </div>
+                ))}
+              </div>
             )}
           </Card>
         )}

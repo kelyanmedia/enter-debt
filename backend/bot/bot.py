@@ -34,12 +34,17 @@ BOT_TOKEN = os.environ.get("BOT_TOKEN", "")
 API_URL = os.environ.get("API_URL", "http://127.0.0.1:8000").rstrip("/")
 # Какая БД/компания у бота (kelyanmedia | whiteway | enter_group_media). Совпадает с X-Company-Slug в API.
 BOT_COMPANY_SLUG = (os.environ.get("BOT_COMPANY_SLUG") or "kelyanmedia").strip().lower().replace("-", "_")
+COMPANY_OPTIONS = [
+    ("kelyanmedia", "Kelyanmedia"),
+    ("whiteway", "WhiteWay"),
+    ("enter_group_media", "Enter Group Media"),
+]
 
 TASK_REMINDER_TZ = ZoneInfo("Asia/Tashkent")
 
 
-def _api_headers(extra: dict | None = None) -> dict:
-    h = {"X-Company-Slug": BOT_COMPANY_SLUG}
+def _api_headers(extra: dict | None = None, company_slug: str | None = None) -> dict:
+    h = {"X-Company-Slug": company_slug or BOT_COMPANY_SLUG}
     if extra:
         h.update(extra)
     return h
@@ -50,6 +55,7 @@ dp = Dispatcher(storage=storage)
 
 
 class Auth(StatesGroup):
+    waiting_company = State()
     waiting_password = State()
 
 
@@ -57,13 +63,24 @@ class DividendFlow(StatesGroup):
     waiting_category = State()
 
 
-async def _submit_join_request(chat_id: int, username: str | None, full_name: str | None, access_password: str) -> dict:
+class ExpenseFlow(StatesGroup):
+    waiting_category = State()
+    waiting_project = State()
+
+
+async def _submit_join_request(
+    chat_id: int,
+    username: str | None,
+    full_name: str | None,
+    access_password: str,
+    company_slug: str,
+) -> dict:
     secret = _internal_secret()
     try:
         async with httpx.AsyncClient(timeout=15) as client:
             r = await client.post(
                 f"{API_URL}/api/telegram-join/internal/request",
-                headers=_api_headers({"X-Internal-Secret": secret}),
+                headers=_api_headers({"X-Internal-Secret": secret}, company_slug),
                 json={
                     "chat_id": chat_id,
                     "username": username,
@@ -85,6 +102,19 @@ async def _submit_join_request(chat_id: int, username: str | None, full_name: st
         return {"error": "network", "message": str(e)}
 
 
+async def _fetch_user_by_chat(chat_id: int) -> tuple[dict | None, str | None]:
+    """Бот один, компаний несколько: ищем пользователя по chat_id во всех slug."""
+    for slug, _label in COMPANY_OPTIONS:
+        try:
+            async with httpx.AsyncClient(timeout=8) as client:
+                r = await client.get(f"{API_URL}/api/users/internal/by-chat/{chat_id}", headers=_api_headers(company_slug=slug))
+            if r.status_code == 200:
+                return r.json(), slug
+        except Exception:
+            continue
+    return None, None
+
+
 async def _fetch_telegram_cc_chats(route_manager_id: Optional[int]) -> list[int]:
     try:
         async with httpx.AsyncClient(timeout=8) as client:
@@ -104,12 +134,12 @@ async def _fetch_telegram_cc_chats(route_manager_id: Optional[int]) -> list[int]
         return []
 
 
-async def _fetch_administration_chats() -> list[dict]:
+async def _fetch_administration_chats(company_slug: str | None = None) -> list[dict]:
     try:
         async with httpx.AsyncClient(timeout=8) as client:
             r = await client.get(
                 f"{API_URL}/api/users/internal/administration",
-                headers=_api_headers(),
+                headers=_api_headers(company_slug=company_slug),
             )
             if r.status_code != 200:
                 return []
@@ -119,12 +149,12 @@ async def _fetch_administration_chats() -> list[dict]:
         return []
 
 
-async def _fetch_administration_status() -> list[dict]:
+async def _fetch_administration_status(company_slug: str | None = None) -> list[dict]:
     try:
         async with httpx.AsyncClient(timeout=8) as client:
             r = await client.get(
                 f"{API_URL}/api/users/internal/administration-status",
-                headers=_api_headers(),
+                headers=_api_headers(company_slug=company_slug),
             )
             if r.status_code != 200:
                 return []
@@ -174,13 +204,13 @@ def _parse_d_command(raw: str) -> tuple[Decimal, Decimal, str]:
     return amount, Decimal("0"), note
 
 
-async def _fetch_dividend_settings(chat_id: int) -> dict:
+async def _fetch_dividend_settings(chat_id: int, company_slug: str | None = None) -> dict:
     secret = _internal_secret()
     try:
         async with httpx.AsyncClient(timeout=10) as client:
             r = await client.get(
                 f"{API_URL}/api/users/internal/telegram-dividend-settings/{chat_id}",
-                headers=_api_headers({"X-Internal-Secret": secret}),
+                headers=_api_headers({"X-Internal-Secret": secret}, company_slug),
             )
             if r.status_code >= 400:
                 try:
@@ -207,14 +237,44 @@ def _dividend_category_keyboard(rows: list[dict], default_slug: str) -> InlineKe
 
 @dp.message(Command("start"))
 async def cmd_start(message: types.Message, state: FSMContext):
-    await state.set_state(Auth.waiting_password)
+    await state.set_state(Auth.waiting_company)
+    kb = InlineKeyboardMarkup(
+        inline_keyboard=[
+            [InlineKeyboardButton(text=label, callback_data=f"authco:{slug}")]
+            for slug, label in COMPANY_OPTIONS
+        ]
+    )
     await message.answer(
         "👋 Добро пожаловать в <b>EnterDebt</b> — контроль дебиторки.\n\n"
-        "🔐 Введите <b>пароль доступа</b> (его выдаёт администратор). После проверки "
-        "заявка уйдёт на модерацию.",
+        "Сначала выберите компанию, к которой нужно привязать Telegram.",
+        parse_mode="HTML",
+        reply_markup=kb,
+    )
+
+
+@dp.callback_query(F.data.startswith("authco:"))
+async def auth_company_callback(query: types.CallbackQuery, state: FSMContext):
+    if await state.get_state() != Auth.waiting_company.state:
+        await query.answer("Уже неактуально.", show_alert=True)
+        return
+    slug = (query.data or "").split(":", 1)[1]
+    allowed = {x[0]: x[1] for x in COMPANY_OPTIONS}
+    if slug not in allowed:
+        await query.answer("Компания не найдена.", show_alert=True)
+        return
+    await state.update_data(auth_company_slug=slug)
+    await state.set_state(Auth.waiting_password)
+    try:
+        await query.message.edit_reply_markup(reply_markup=None)
+    except Exception:
+        pass
+    await query.message.answer(
+        f"🏢 Компания: <b>{html.escape(allowed[slug])}</b>\n\n"
+        "🔐 Введите <b>пароль доступа</b> (его выдаёт администратор). После проверки заявка уйдёт на модерацию.",
         parse_mode="HTML",
         reply_markup=ReplyKeyboardRemove(),
     )
+    await query.answer()
 
 
 @dp.message(Auth.waiting_password)
@@ -228,7 +288,9 @@ async def check_password(message: types.Message, state: FSMContext):
     username = message.from_user.username
     full_name = message.from_user.full_name
 
-    result = await _submit_join_request(chat_id, username, full_name, pwd)
+    st_data = await state.get_data()
+    company_slug = str(st_data.get("auth_company_slug") or BOT_COMPANY_SLUG)
+    result = await _submit_join_request(chat_id, username, full_name, pwd, company_slug)
     if "error" in result:
         await message.answer(f"❌ {result.get('message', 'Ошибка')}")
         return
@@ -270,6 +332,7 @@ async def cmd_help(message: types.Message):
         "/id — показать Chat ID\n"
         "/pay &lt;текст&gt; — админ отправляет заявку на оплату в Telegram администрации\n"
         "/d &lt;сумма&gt; [&lt;комментарий&gt;] — только для администратора: расход в ДДС, бот спросит категорию P&amp;L\n"
+        "/ex &lt;сумма&gt; [&lt;комментарий&gt;] — расход команды в ДДС, бот спросит категорию и проект\n"
         "/help — справка\n\n"
         "После одобрения заявки менеджер получает ссылку и логин в панель; "
         "бухгалтерия работает через уведомления в этом чате.\n\n"
@@ -295,15 +358,9 @@ async def cmd_pay(message: types.Message, command: CommandObject):
         return
 
     sender_chat_id = message.from_user.id
-    try:
-        async with httpx.AsyncClient(timeout=8) as client:
-            r = await client.get(f"{API_URL}/api/users/internal/by-chat/{sender_chat_id}", headers=_api_headers())
-            if r.status_code != 200:
-                await message.answer("⚠️ Вы не зарегистрированы. Используйте /start.")
-                return
-            sender = r.json()
-    except Exception:
-        await message.answer("⚠️ Не удалось проверить профиль. Попробуйте позже.")
+    sender, company_slug = await _fetch_user_by_chat(sender_chat_id)
+    if not sender or not company_slug:
+        await message.answer("⚠️ Вы не зарегистрированы. Используйте /start.")
         return
 
     if sender.get("role") != "admin":
@@ -319,9 +376,9 @@ async def cmd_pay(message: types.Message, command: CommandObject):
     if len(admins_request) > 3800:
         admins_request = admins_request[:3700] + "\n\n<i>…текст обрезан (слишком длинный).</i>"
 
-    recipients = await _fetch_administration_chats()
+    recipients = await _fetch_administration_chats(company_slug)
     if not recipients:
-        status_rows = await _fetch_administration_status()
+        status_rows = await _fetch_administration_status(company_slug)
         if not status_rows:
             await message.answer(
                 "⚠️ В этой компании нет активных пользователей роли «Администрация»."
@@ -379,15 +436,9 @@ async def cmd_dividend(message: types.Message, command: CommandObject, state: FS
         return
 
     sender_chat_id = message.from_user.id
-    try:
-        async with httpx.AsyncClient(timeout=8) as client:
-            r = await client.get(f"{API_URL}/api/users/internal/by-chat/{sender_chat_id}", headers=_api_headers())
-            if r.status_code != 200:
-                await message.answer("⚠️ Вы не зарегистрированы. Используйте /start.")
-                return
-            sender = r.json()
-    except Exception:
-        await message.answer("⚠️ Не удалось проверить профиль. Попробуйте позже.")
+    sender, company_slug = await _fetch_user_by_chat(sender_chat_id)
+    if not sender or not company_slug:
+        await message.answer("⚠️ Вы не зарегистрированы. Используйте /start.")
         return
 
     if sender.get("role") != "admin":
@@ -404,7 +455,7 @@ async def cmd_dividend(message: types.Message, command: CommandObject, state: FS
         )
         return
 
-    settings = await _fetch_dividend_settings(sender_chat_id)
+    settings = await _fetch_dividend_settings(sender_chat_id, company_slug)
     if settings.get("error"):
         await message.answer(f"⚠️ Не удалось загрузить настройки /d: {settings['error']}")
         return
@@ -420,6 +471,7 @@ async def cmd_dividend(message: types.Message, command: CommandObject, state: FS
         dividend_amount_uzs=str(amount_uzs),
         dividend_amount_usd=str(amount_usd),
         dividend_note=note or None,
+        dividend_company_slug=company_slug,
     )
     await message.answer(
         "Выберите категорию P&amp;L для этой записи.\n"
@@ -463,7 +515,7 @@ async def dividend_category_callback(query: types.CallbackQuery, state: FSMConte
         async with httpx.AsyncClient(timeout=10) as client:
             r = await client.post(
                 f"{API_URL}/api/users/internal/telegram-dividend",
-                headers=_api_headers({"X-Internal-Secret": secret}),
+                headers=_api_headers({"X-Internal-Secret": secret}, str(data.get("dividend_company_slug") or BOT_COMPANY_SLUG)),
                 json=payload,
             )
             if r.status_code >= 400:
@@ -497,6 +549,175 @@ async def dividend_category_callback(query: types.CallbackQuery, state: FSMConte
         f"Строка: <b>{html.escape(created.get('label') or 'Изъятие прибыли (/d)')}</b>\n"
         f"Дата: <code>{html.escape(created.get('entry_date') or '—')}</code>\n"
         f"Месяц: <code>{html.escape(created.get('period_month') or '—')}</code>\n"
+        f"Сумма: <code>{uzs_text} UZS</code> / <code>{usd_text} USD</code>",
+        parse_mode="HTML",
+    )
+
+
+def _expense_category_keyboard(rows: list[dict]) -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup(
+        inline_keyboard=[
+            [InlineKeyboardButton(text=str(r.get("label") or r.get("slug")), callback_data=f"excat:{r.get('slug')}")]
+            for r in rows[:24]
+        ] + [[InlineKeyboardButton(text="Отмена", callback_data="excat:cancel")]]
+    )
+
+
+def _expense_project_keyboard(projects: list[dict]) -> InlineKeyboardMarkup:
+    buttons = [[InlineKeyboardButton(text="Без проекта", callback_data="exproj:none")]]
+    for p in projects[:20]:
+        label = str(p.get("label") or f"Проект #{p.get('id')}")
+        if len(label) > 45:
+            label = label[:42] + "..."
+        buttons.append([InlineKeyboardButton(text=label, callback_data=f"exproj:{p.get('id')}")])
+    buttons.append([InlineKeyboardButton(text="Отмена", callback_data="exproj:cancel")])
+    return InlineKeyboardMarkup(inline_keyboard=buttons)
+
+
+@dp.message(Command("ex"))
+async def cmd_team_expense(message: types.Message, command: CommandObject, state: FSMContext):
+    raw = (command.args or "").strip()
+    if not raw:
+        await message.answer(
+            "Напишите команду так: <code>/ex сумма [комментарий]</code>\n\n"
+            "Примеры:\n"
+            "• <code>/ex 350000 Такси на встречу</code>\n"
+            "• <code>/ex 25 usd Домен для проекта</code>",
+            parse_mode="HTML",
+        )
+        return
+
+    sender, company_slug = await _fetch_user_by_chat(message.from_user.id)
+    if not sender or not company_slug:
+        await message.answer("⚠️ Вы не зарегистрированы. Используйте /start.")
+        return
+    if sender.get("role") != "admin" and not sender.get("team_expense_control_enabled"):
+        await message.answer("⚠️ Для вас не включено «Контролирование процесса расходов командой».")
+        return
+
+    try:
+        amount_uzs, amount_usd, note = _parse_d_command(raw)
+    except ValueError as e:
+        await message.answer(f"⚠️ {html.escape(str(e))}", parse_mode="HTML")
+        return
+
+    secret = _internal_secret()
+    try:
+        async with httpx.AsyncClient(timeout=10) as client:
+            r = await client.get(
+                f"{API_URL}/api/users/internal/team-expense-meta/{message.from_user.id}",
+                headers=_api_headers({"X-Internal-Secret": secret}, company_slug),
+            )
+        if r.status_code >= 400:
+            detail = r.json().get("detail") if r.headers.get("content-type", "").startswith("application/json") else None
+            await message.answer(f"⚠️ {detail or 'Не удалось загрузить настройки расходов'}")
+            return
+        meta = r.json()
+    except Exception:
+        await message.answer("⚠️ Не удалось связаться с сервером. Попробуйте позже.")
+        return
+
+    categories = meta.get("expense_categories") or []
+    if not categories:
+        await message.answer("⚠️ Нет категорий расходов ДДС.")
+        return
+    await state.set_state(ExpenseFlow.waiting_category)
+    await state.update_data(
+        ex_company_slug=company_slug,
+        ex_amount_uzs=str(amount_uzs),
+        ex_amount_usd=str(amount_usd),
+        ex_note=note or None,
+        ex_projects=meta.get("projects") or [],
+    )
+    await message.answer("Выберите категорию расхода для ДДС:", reply_markup=_expense_category_keyboard(categories))
+
+
+@dp.callback_query(F.data.startswith("excat:"))
+async def expense_category_callback(query: types.CallbackQuery, state: FSMContext):
+    if await state.get_state() != ExpenseFlow.waiting_category.state:
+        await query.answer("Уже неактуально.", show_alert=True)
+        return
+    slug = (query.data or "").split(":", 1)[1]
+    if slug == "cancel":
+        await state.clear()
+        await query.answer("Отменено.")
+        try:
+            await query.message.edit_reply_markup(reply_markup=None)
+        except Exception:
+            pass
+        return
+    data = await state.get_data()
+    await state.update_data(ex_flow_category=slug)
+    await state.set_state(ExpenseFlow.waiting_project)
+    try:
+        await query.message.edit_reply_markup(reply_markup=None)
+    except Exception:
+        pass
+    await query.message.answer(
+        "Привязать расход к проекту?",
+        reply_markup=_expense_project_keyboard(list(data.get("ex_projects") or [])),
+    )
+    await query.answer()
+
+
+@dp.callback_query(F.data.startswith("exproj:"))
+async def expense_project_callback(query: types.CallbackQuery, state: FSMContext):
+    if await state.get_state() != ExpenseFlow.waiting_project.state:
+        await query.answer("Уже неактуально.", show_alert=True)
+        return
+    raw = (query.data or "").split(":", 1)[1]
+    if raw == "cancel":
+        await state.clear()
+        await query.answer("Отменено.")
+        try:
+            await query.message.edit_reply_markup(reply_markup=None)
+        except Exception:
+            pass
+        return
+    data = await state.get_data()
+    payment_id = None if raw == "none" else int(raw)
+    payload = {
+        "chat_id": query.from_user.id,
+        "amount_uzs": str(data.get("ex_amount_uzs") or "0"),
+        "amount_usd": str(data.get("ex_amount_usd") or "0"),
+        "flow_category": str(data.get("ex_flow_category") or "other"),
+        "note": data.get("ex_note") or None,
+        "payment_method": "transfer",
+        "entry_date": datetime.now(TASK_REMINDER_TZ).date().isoformat(),
+        "payment_id": payment_id,
+    }
+    company_slug = str(data.get("ex_company_slug") or BOT_COMPANY_SLUG)
+    secret = _internal_secret()
+    try:
+        async with httpx.AsyncClient(timeout=10) as client:
+            r = await client.post(
+                f"{API_URL}/api/users/internal/team-expense",
+                headers=_api_headers({"X-Internal-Secret": secret}, company_slug),
+                json=payload,
+            )
+        if r.status_code >= 400:
+            detail = r.json().get("detail") if r.headers.get("content-type", "").startswith("application/json") else None
+            await query.answer("Ошибка записи", show_alert=True)
+            await query.message.answer(f"⚠️ Не удалось записать расход: {detail or 'ошибка сервера'}")
+            return
+        created = r.json()
+    except Exception:
+        await query.answer("Ошибка связи", show_alert=True)
+        await query.message.answer("⚠️ Не удалось связаться с сервером. Попробуйте позже.")
+        return
+    await state.clear()
+    try:
+        await query.message.edit_reply_markup(reply_markup=None)
+    except Exception:
+        pass
+    await query.answer("Записано.")
+    uzs_text = f"{Decimal(str(payload['amount_uzs'])):,.2f}".replace(",", " ")
+    usd_text = f"{Decimal(str(payload['amount_usd'])):,.2f}".replace(",", " ")
+    await query.message.answer(
+        "✅ Расход записан в ДДС.\n"
+        f"Категория: <b>{html.escape(created.get('flow_category_label') or payload['flow_category'])}</b>\n"
+        f"Проект: <b>{html.escape(created.get('project_label') or 'без проекта')}</b>\n"
+        f"Дата: <code>{html.escape(created.get('entry_date') or '—')}</code>\n"
         f"Сумма: <code>{uzs_text} UZS</code> / <code>{usd_text} USD</code>",
         parse_mode="HTML",
     )
@@ -588,7 +809,13 @@ def _extract_route_user_id(reply: Optional[types.Message]) -> Optional[int]:
 @dp.message(F.text)
 async def bridge_text_manager_accountant(message: types.Message, state: FSMContext):
     """Менеджер/админ → бухгалтерия; бухгалтерия (reply) → тот же менеджер."""
-    if await state.get_state() in (Auth.waiting_password.state, DividendFlow.waiting_category.state):
+    if await state.get_state() in (
+        Auth.waiting_company.state,
+        Auth.waiting_password.state,
+        DividendFlow.waiting_category.state,
+        ExpenseFlow.waiting_category.state,
+        ExpenseFlow.waiting_project.state,
+    ):
         return
 
     raw = (message.text or "").strip()

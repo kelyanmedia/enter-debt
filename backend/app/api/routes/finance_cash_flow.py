@@ -9,7 +9,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy.orm import Session, joinedload
 
 from app.core.access import filter_payments_query
-from app.core.security import require_finance_section, require_cash_flow_dds_input
+from app.core.security import get_current_user, require_finance_section, require_cash_flow_dds_input
 from app.db.database import get_db, get_request_company
 from sqlalchemy import func
 
@@ -88,7 +88,7 @@ def _pl_fx_rate_for_period(db: Session, period_month: str) -> Decimal:
 @router.get("/cash-flow/meta", response_model=CashFlowMetaOut)
 def cash_flow_meta(
     db: Session = Depends(get_db),
-    current_user: User = Depends(require_cash_flow_dds_input),
+    current_user: User = Depends(get_current_user),
 ):
     distinct = (
         db.query(CashFlowTemplateLine.template_group)
@@ -278,6 +278,40 @@ def list_entries(
     )
 
 
+@router.get("/cash-flow/personal-entries", response_model=List[CashFlowEntryOut])
+def list_personal_entries(
+    period_month: str = Query(..., description="YYYY-MM"),
+    user_id: int | None = Query(None, description="Admin: чей личный ДДС открыть; employee: свой или расшаренный"),
+    db: Session = Depends(get_db),
+    current_user: User = Depends(require_cash_flow_dds_input),
+):
+    if not _YM.match(period_month):
+        raise HTTPException(status_code=400, detail="period_month: формат YYYY-MM")
+    target_id = user_id or current_user.id
+    if current_user.role != "admin":
+        if current_user.role != "employee":
+            raise HTTPException(status_code=403, detail="Нет доступа к личному ДДС команды")
+        import json
+
+        visible = []
+        try:
+            visible = [int(x) for x in json.loads(current_user.team_expense_visible_user_ids or "[]")]
+        except Exception:
+            visible = []
+        if target_id != current_user.id and target_id not in visible:
+            raise HTTPException(status_code=403, detail="Этот личный ДДС вам не расшарен")
+    return (
+        db.query(CashFlowEntry)
+        .filter(
+            CashFlowEntry.period_month == period_month,
+            CashFlowEntry.company_slug == get_request_company(),
+            CashFlowEntry.created_by_user_id == target_id,
+        )
+        .order_by(CashFlowEntry.entry_date.desc().nullslast(), CashFlowEntry.id.desc())
+        .all()
+    )
+
+
 @router.get("/cash-flow/payment-options", response_model=List[CashFlowPaymentOptionOut])
 def payment_options(
     db: Session = Depends(get_db),
@@ -404,6 +438,7 @@ def create_entry(
         flow_category=(body.flow_category or "").strip() or None,
         recipient=(body.recipient or "").strip() or None,
         payment_id=pay_id,
+        created_by_user_id=current_user.id,
         notes=(body.notes or "").strip() or None,
         template_line_id=None,
     )
