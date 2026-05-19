@@ -305,6 +305,8 @@ export default function UsersPage() {
           payload.payment_details = form.payment_details.trim() || null
           payload.multi_company_access = form.multi_company_access === 'true'
           payload.is_ad_budget_employee = form.is_ad_budget_employee === 'true'
+        }
+        if (form.role === 'manager' || form.role === 'employee') {
           payload.team_expense_control_enabled = form.team_expense_control_enabled === 'true'
           payload.team_expense_visible_user_ids = teamExpenseVisibleUserIds
         }
@@ -340,8 +342,8 @@ export default function UsersPage() {
           payment_details: form.role === 'employee' ? (form.payment_details.trim() || null) : undefined,
           multi_company_access: form.role === 'employee' ? form.multi_company_access === 'true' : false,
           is_ad_budget_employee: form.role === 'employee' ? form.is_ad_budget_employee === 'true' : false,
-          team_expense_control_enabled: form.role === 'employee' ? form.team_expense_control_enabled === 'true' : false,
-          team_expense_visible_user_ids: form.role === 'employee' ? teamExpenseVisibleUserIds : undefined,
+          team_expense_control_enabled: (form.role === 'manager' || form.role === 'employee') ? form.team_expense_control_enabled === 'true' : false,
+          team_expense_visible_user_ids: (form.role === 'manager' || form.role === 'employee') ? teamExpenseVisibleUserIds : undefined,
           admin_telegram_notify_all: form.role === 'admin' ? form.admin_telegram_notify_all === 'true' : undefined,
           admin_telegram_notify_manager_ids: form.role === 'admin' ? adminNotifyManagerIds : undefined,
           admin_accessible_company_slugs:
@@ -991,6 +993,10 @@ export default function UsersPage() {
                 или при задаче.
               </span>
             </label>
+          </>
+        )}
+        {(form.role === 'manager' || form.role === 'employee') && (
+          <>
             <label
               style={{
                 display: 'flex',
@@ -1010,19 +1016,19 @@ export default function UsersPage() {
                 style={{ marginTop: 3 }}
               />
               <span>
-                <strong>Контролирование процесса расходов командой</strong> — сотрудник сможет писать в Telegram
+                <strong>Контролирование процесса расходов командой</strong> — пользователь сможет писать в Telegram
                 <code> /ex сумма комментарий</code>. Бот запишет расход в общий ДДС, спросит категорию и предложит привязать проект.
               </span>
             </label>
             <div style={{ marginBottom: 14 }}>
               <div style={{ fontSize: 12, fontWeight: 700, color: '#334155', marginBottom: 8 }}>
-                Расшарить личный ДДС других сотрудников
+                Расшарить личный ДДС и Telegram-уведомления
               </div>
               <div style={{ fontSize: 11, color: '#64748b', lineHeight: 1.45, marginBottom: 8 }}>
-                По умолчанию сотрудник видит только свои расходы, внесённые через /ex. Отметьте коллег, чьи личные ДДС можно сравнивать.
+                По умолчанию пользователь видит только свои расходы из /ex. Отмеченные коллеги появятся в его личном ДДС, а их новые /ex-расходы будут приходить ему в бот.
               </div>
               <div style={{ display: 'grid', gap: 6, maxHeight: 140, overflowY: 'auto', padding: '8px 10px', border: '1px solid #e2e8f0', borderRadius: 8 }}>
-                {users.filter((x) => x.role === 'employee' && x.id !== editing?.id).map((emp) => (
+                {users.filter((x) => (x.role === 'manager' || x.role === 'employee') && x.id !== editing?.id).map((emp) => (
                   <label key={emp.id} style={{ display: 'flex', gap: 8, alignItems: 'center', fontSize: 12, color: '#334155' }}>
                     <input
                       type="checkbox"
@@ -1036,8 +1042,8 @@ export default function UsersPage() {
                     {emp.name}
                   </label>
                 ))}
-                {users.filter((x) => x.role === 'employee' && x.id !== editing?.id).length === 0 && (
-                  <span style={{ fontSize: 12, color: '#94a3b8' }}>Нет других сотрудников</span>
+                {users.filter((x) => (x.role === 'manager' || x.role === 'employee') && x.id !== editing?.id).length === 0 && (
+                  <span style={{ fontSize: 12, color: '#94a3b8' }}>Нет других пользователей команды</span>
                 )}
               </div>
             </div>

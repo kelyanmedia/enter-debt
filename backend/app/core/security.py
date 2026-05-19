@@ -107,12 +107,14 @@ def require_finance_section(section: str):
 
 
 def require_cash_flow_dds_input(current_user=Depends(get_current_user)):
-    """Справочники и создание строки ДДС: админ, финансист или любая администрация (страница «Ввод ДДС»)."""
+    """Справочники и создание строки ДДС: полный ДДС, ввод администрации или личный расходный ДДС команды."""
     if current_user.role in ("admin", "financier"):
         return current_user
     if can_access_finance_section(current_user, "cashflow"):
         return current_user
     if current_user.role == "administration":
+        return current_user
+    if current_user.role in ("manager", "employee") and bool(getattr(current_user, "team_expense_control_enabled", False)):
         return current_user
     raise HTTPException(status_code=403, detail="Доступ запрещён")
 

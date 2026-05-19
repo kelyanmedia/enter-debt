@@ -721,6 +721,26 @@ async def expense_project_callback(query: types.CallbackQuery, state: FSMContext
         f"Сумма: <code>{uzs_text} UZS</code> / <code>{usd_text} USD</code>",
         parse_mode="HTML",
     )
+    notification_chat_ids = created.get("notification_chat_ids") or []
+    if isinstance(notification_chat_ids, list):
+        notify_text = (
+            "🔔 Новый расход команды в ДДС.\n"
+            f"Кто: <b>{html.escape(created.get('author_name') or 'Команда')}</b>\n"
+            f"Категория: <b>{html.escape(created.get('flow_category_label') or payload['flow_category'])}</b>\n"
+            f"Проект: <b>{html.escape(created.get('project_label') or 'без проекта')}</b>\n"
+            f"Сумма: <code>{uzs_text} UZS</code> / <code>{usd_text} USD</code>"
+        )
+        for chat_id in notification_chat_ids:
+            try:
+                cid = int(chat_id)
+            except (TypeError, ValueError):
+                continue
+            if cid == query.from_user.id:
+                continue
+            try:
+                await bot.send_message(cid, notify_text, parse_mode="HTML")
+            except Exception:
+                logging.exception("team expense notification failed")
 
 
 @dp.callback_query(F.data.startswith("edtk:"))

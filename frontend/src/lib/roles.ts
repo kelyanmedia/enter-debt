@@ -14,6 +14,7 @@ type FinanceSectionKey =
 
 type FinanceAccessUser = {
   role?: string
+  team_expense_control_enabled?: boolean
   can_view_finance_ceo?: boolean
   can_view_finance_pl?: boolean
   can_view_finance_cashflow?: boolean
@@ -38,4 +39,9 @@ export function canAccessFinanceSection(user: FinanceAccessUser | null | undefin
   if (user.role === 'admin' || user.role === 'financier') return true
   if (user.role !== 'accountant') return false
   return user[ACCOUNTANT_FINANCE_FIELD[section]] === true
+}
+
+export function canAccessPersonalCashFlow(user: FinanceAccessUser | null | undefined): boolean {
+  if (!user) return false
+  return (user.role === 'manager' || user.role === 'employee') && user.team_expense_control_enabled === true
 }

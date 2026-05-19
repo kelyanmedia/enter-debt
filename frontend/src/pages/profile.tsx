@@ -112,7 +112,7 @@ export default function ProfilePage() {
   }, [user?.role])
 
   useEffect(() => {
-    if (user?.role !== 'employee') return
+    if (user?.role !== 'employee' && user?.role !== 'manager') return
     let cancelled = false
     setPersonalMsg('')
     api
@@ -728,13 +728,13 @@ export default function ProfilePage() {
             )}
           </Card>
         )}
-        {user.role === 'employee' && (
+        {(user.role === 'employee' || user.role === 'manager') && (
           <Card style={{ padding: '18px 20px', marginTop: 16 }}>
             <div style={{ display: 'flex', justifyContent: 'space-between', gap: 12, alignItems: 'center', marginBottom: 12 }}>
               <div>
-                <div style={{ fontSize: 15, fontWeight: 800, color: '#1a1d23' }}>Личный ДДС</div>
+                <div style={{ fontSize: 15, fontWeight: 800, color: '#1a1d23' }}>Личный ДДС расходов</div>
                 <div style={{ fontSize: 12, color: '#64748b', marginTop: 4 }}>
-                  Ваши расходы из Telegram <code>/ex</code>. Общий ДДС администратора остаётся полным.
+                  Только расходы из Telegram <code>/ex</code>. Без доступных средств, курса P&L и приходов.
                 </div>
               </div>
               <Input type="month" value={personalMonth} onChange={(e) => setPersonalMonth(e.target.value)} style={{ maxWidth: 150 }} />

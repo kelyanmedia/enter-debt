@@ -3,7 +3,7 @@ from __future__ import annotations
 
 import re
 from decimal import Decimal
-from typing import List
+from typing import List, Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy.orm import Session, joinedload
@@ -281,7 +281,7 @@ def list_entries(
 @router.get("/cash-flow/personal-entries", response_model=List[CashFlowEntryOut])
 def list_personal_entries(
     period_month: str = Query(..., description="YYYY-MM"),
-    user_id: int | None = Query(None, description="Admin: чей личный ДДС открыть; employee: свой или расшаренный"),
+    user_id: Optional[int] = Query(None, description="Admin: чей личный ДДС открыть; employee: свой или расшаренный"),
     db: Session = Depends(get_db),
     current_user: User = Depends(require_cash_flow_dds_input),
 ):
@@ -289,7 +289,7 @@ def list_personal_entries(
         raise HTTPException(status_code=400, detail="period_month: формат YYYY-MM")
     target_id = user_id or current_user.id
     if current_user.role != "admin":
-        if current_user.role != "employee":
+        if current_user.role not in ("manager", "employee"):
             raise HTTPException(status_code=403, detail="Нет доступа к личному ДДС команды")
         import json
 
@@ -305,6 +305,7 @@ def list_personal_entries(
         .filter(
             CashFlowEntry.period_month == period_month,
             CashFlowEntry.company_slug == get_request_company(),
+            CashFlowEntry.direction == "expense",
             CashFlowEntry.created_by_user_id == target_id,
         )
         .order_by(CashFlowEntry.entry_date.desc().nullslast(), CashFlowEntry.id.desc())

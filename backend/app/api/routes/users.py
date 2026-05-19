@@ -17,8 +17,11 @@ from app.models.user import User
 from app.models.partner import Partner
 from app.schemas.schemas import UserOut, UserCreate, UserUpdate, AssignedPartnersBody
 from app.core.security import get_password_hash, get_current_user, require_admin, normalize_email
+from app.core.access import assert_payment_access, filter_payments_query
 
 router = APIRouter(prefix="/api/users", tags=["users"])
+
+_TEAM_EXPENSE_ROLES = ("manager", "employee")
 
 
 def _verify_internal_secret(
@@ -105,14 +108,14 @@ def _validate_team_expense_visible_user_ids(db: Session, ids: Optional[List[int]
             db.query(User)
             .filter(
                 User.id == uid,
-                User.role == "employee",
+                User.role.in_(_TEAM_EXPENSE_ROLES),
                 User.is_active == True,
                 User.company_slug == get_request_company(),
             )
             .first()
         )
         if not u:
-            raise HTTPException(status_code=400, detail=f"Сотрудник для доступа к личному ДДС не найден: {uid}")
+            raise HTTPException(status_code=400, detail=f"Пользователь для доступа к личному ДДС не найден: {uid}")
     return uniq
 
 
@@ -323,9 +326,9 @@ def create_user(data: UserCreate, db: Session = Depends(get_db), _=Depends(requi
         pd = str(data.payment_details).strip() or None
     mca = bool(getattr(data, "multi_company_access", False)) if data.role == "employee" else False
     ad_budget = bool(getattr(data, "is_ad_budget_employee", False)) if data.role == "employee" else False
-    team_expense_enabled = bool(getattr(data, "team_expense_control_enabled", False)) if data.role == "employee" else False
+    team_expense_enabled = bool(getattr(data, "team_expense_control_enabled", False)) if data.role in _TEAM_EXPENSE_ROLES else False
     team_expense_visible_json = None
-    if data.role == "employee":
+    if data.role in _TEAM_EXPENSE_ROLES:
         team_expense_visible_json = json.dumps(
             _validate_team_expense_visible_user_ids(db, getattr(data, "team_expense_visible_user_ids", None))
         )
@@ -415,7 +418,7 @@ def _apply_update(user: User, data: UserUpdate):
             if user.role == "employee":
                 user.is_ad_budget_employee = bool(value)
         elif field == "team_expense_control_enabled":
-            if user.role == "employee":
+            if user.role in _TEAM_EXPENSE_ROLES:
                 user.team_expense_control_enabled = bool(value)
         else:
             setattr(user, field, value)
@@ -482,9 +485,10 @@ def _sync_visible_managers_after_user_update(db: Session, user: User, data: User
         user.payment_details = None
         user.multi_company_access = False
         user.is_ad_budget_employee = False
+    if data.role is not None and data.role not in _TEAM_EXPENSE_ROLES:
         user.team_expense_control_enabled = False
         user.team_expense_visible_user_ids = None
-    if user.role == "employee" and data.team_expense_visible_user_ids is not None:
+    if user.role in _TEAM_EXPENSE_ROLES and data.team_expense_visible_user_ids is not None:
         user.team_expense_visible_user_ids = json.dumps(
             _validate_team_expense_visible_user_ids(db, data.team_expense_visible_user_ids)
         )
@@ -844,19 +848,17 @@ def internal_team_expense_meta(
     )
     if not user:
         raise HTTPException(status_code=404, detail="User not found")
-    if user.role != "admin" and not bool(getattr(user, "team_expense_control_enabled", False)):
+    if user.role != "admin" and (user.role not in _TEAM_EXPENSE_ROLES or not bool(getattr(user, "team_expense_control_enabled", False))):
         raise HTTPException(status_code=403, detail="Для вас не включён контроль расходов команды")
-    projects = (
-        db.query(Payment)
-        .filter(
-            Payment.is_archived == False,
+    projects_q = db.query(Payment).filter(Payment.is_archived == False)
+    if user.role == "manager":
+        projects_q = filter_payments_query(projects_q, db, user)
+    else:
+        projects_q = projects_q.filter(
             Payment.trashed_at.is_(None),
             Payment.company_slug == get_request_company(),
         )
-        .order_by(Payment.description.asc(), Payment.id.desc())
-        .limit(30)
-        .all()
-    )
+    projects = projects_q.order_by(Payment.description.asc(), Payment.id.desc()).limit(30).all()
     return {
         "user": {"id": user.id, "name": user.name, "role": user.role},
         "expense_categories": expense_categories_for_api(),
@@ -885,7 +887,7 @@ def internal_team_expense(
     )
     if not user:
         raise HTTPException(status_code=404, detail="User not found")
-    if user.role != "admin" and not bool(getattr(user, "team_expense_control_enabled", False)):
+    if user.role != "admin" and (user.role not in _TEAM_EXPENSE_ROLES or not bool(getattr(user, "team_expense_control_enabled", False))):
         raise HTTPException(status_code=403, detail="Для вас не включён контроль расходов команды")
 
     chosen_category = (body.flow_category or "").strip().lower()
@@ -907,6 +909,8 @@ def internal_team_expense(
         )
         if not p:
             raise HTTPException(status_code=404, detail="Проект не найден")
+        if user.role == "manager":
+            assert_payment_access(db, user, p)
         project_label = (p.description or "").strip() or f"Проект #{p.id}"
 
     entry_date = body.entry_date or datetime.now(timezone.utc).date()
@@ -939,9 +943,29 @@ def internal_team_expense(
     db.add(row)
     db.commit()
     db.refresh(row)
+    notify_rows = (
+        db.query(User)
+        .filter(
+            User.is_active == True,
+            User.telegram_chat_id.isnot(None),
+            User.company_slug == get_request_company(),
+        )
+        .all()
+    )
+    notification_chat_ids = []
+    for receiver in notify_rows:
+        if receiver.id == user.id or receiver.role not in _TEAM_EXPENSE_ROLES:
+            continue
+        try:
+            visible_ids = [int(x) for x in json.loads(receiver.team_expense_visible_user_ids or "[]")]
+        except Exception:
+            visible_ids = []
+        if user.id in visible_ids:
+            notification_chat_ids.append(int(receiver.telegram_chat_id))
     return {
         "ok": True,
         "entry_id": row.id,
+        "author_name": user.name,
         "period_month": row.period_month,
         "entry_date": str(row.entry_date) if row.entry_date else None,
         "label": row.label,
@@ -949,6 +973,7 @@ def internal_team_expense(
         "flow_category_label": category_label,
         "payment_id": row.payment_id,
         "project_label": project_label,
+        "notification_chat_ids": notification_chat_ids,
     }
 
 

@@ -6,7 +6,7 @@ import { useAuth } from '@/context/AuthContext'
 import { NotificationBell } from '@/components/NotificationDrawer'
 import { EmployeeQaDrawer } from '@/components/EmployeeSidebarGuide'
 import { companyDisplayName, getCompanySlug, getTokenForSlug } from '@/lib/company'
-import { canAccessFinanceSection } from '@/lib/roles'
+import { canAccessFinanceSection, canAccessPersonalCashFlow } from '@/lib/roles'
 
 type NavItem = {
   href: string
@@ -464,11 +464,16 @@ export default function Layout({ children }: { children: ReactNode }) {
                 n.financeTeam &&
                 user.role !== 'admin' &&
                 user.role !== 'financier' &&
-                user.role !== 'accountant'
+                user.role !== 'accountant' &&
+                !(n.financeSectionKey === 'cashflow' && canAccessPersonalCashFlow(user))
               ) {
                 return false
               }
-              if (n.financeSectionKey && !canAccessFinanceSection(user, n.financeSectionKey)) return false
+              if (
+                n.financeSectionKey &&
+                !canAccessFinanceSection(user, n.financeSectionKey) &&
+                !(n.financeSectionKey === 'cashflow' && canAccessPersonalCashFlow(user))
+              ) return false
               if (n.accountantHidden && user.role === 'accountant') return false
               if (n.administrationHidden && user.role === 'administration') return false
               if (n.managerHidden && (user.role === 'manager' || user.role === 'administration')) return false

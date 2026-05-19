@@ -18,7 +18,7 @@ import {
 } from '@/components/ui'
 import { useAuth } from '@/context/AuthContext'
 import api from '@/lib/api'
-import { canAccessFinanceSection } from '@/lib/roles'
+import { canAccessFinanceSection, canAccessPersonalCashFlow } from '@/lib/roles'
 
 interface Meta {
   payment_methods: { id: string; label: string }[]
@@ -43,6 +43,7 @@ interface AvailableFundsResponse {
 interface CFEntry {
   id: number
   period_month: string
+  entry_date?: string | null
   direction: 'income' | 'expense'
   label: string
   amount_uzs: string
@@ -53,6 +54,7 @@ interface CFEntry {
   recipient?: string | null
   payment_id?: number | null
   notes?: string | null
+  created_by_user_id?: number | null
 }
 
 interface PayOpt {
@@ -285,10 +287,12 @@ export default function FinanceCashflowPage() {
   const [fxSaving, setFxSaving] = useState(false)
   /** Показ сумм только пока указатель в колонке (чистый CSS :hover с filter часто «залипает» после ухода курсора). */
   const [afReveal, setAfReveal] = useState({ account: false, cards: false, deposits: false })
+  const fullCashflowMode = Boolean(user && canAccessFinanceSection(user, 'cashflow'))
+  const personalCashflowMode = Boolean(user && !fullCashflowMode && canAccessPersonalCashFlow(user))
 
   useEffect(() => {
-    if (!loading && user && !canAccessFinanceSection(user, 'cashflow')) router.replace('/')
-  }, [loading, user, router])
+    if (!loading && user && !fullCashflowMode && !personalCashflowMode) router.replace('/')
+  }, [loading, user, router, fullCashflowMode, personalCashflowMode])
 
   useEffect(() => {
     setAfReveal({ account: false, cards: false, deposits: false })
@@ -314,8 +318,9 @@ export default function FinanceCashflowPage() {
   )
 
   const loadMeta = useCallback(() => {
+    if (!user || (!fullCashflowMode && !personalCashflowMode)) return
     api.get<Meta>('finance/cash-flow/meta').then((r) => setMeta(r.data))
-  }, [])
+  }, [user, fullCashflowMode, personalCashflowMode])
 
   const loadTemplates = useCallback(() => {
     if (!user || !canAccessFinanceSection(user, 'cashflow')) return
@@ -326,14 +331,17 @@ export default function FinanceCashflowPage() {
   }, [user])
 
   const loadEntries = useCallback(() => {
-    if (!user || !canAccessFinanceSection(user, 'cashflow')) return
+    if (!user || (!fullCashflowMode && !personalCashflowMode)) return
     setBusy(true)
+    const url = personalCashflowMode
+      ? `finance/cash-flow/personal-entries?period_month=${encodeURIComponent(ym)}`
+      : `finance/cash-flow/entries?period_month=${encodeURIComponent(ym)}`
     api
-      .get<CFEntry[]>(`finance/cash-flow/entries?period_month=${encodeURIComponent(ym)}`)
+      .get<CFEntry[]>(url)
       .then((r) => setEntries(r.data || []))
       .catch(() => setEntries([]))
       .finally(() => setBusy(false))
-  }, [user, ym])
+  }, [user, ym, fullCashflowMode, personalCashflowMode])
 
   const loadAvailableFunds = useCallback(() => {
     if (!user || !canAccessFinanceSection(user, 'cashflow')) return
@@ -734,7 +742,89 @@ export default function FinanceCashflowPage() {
     }
   }
 
-  if (loading || !user || !canAccessFinanceSection(user, 'cashflow')) return null
+  if (loading || !user || (!fullCashflowMode && !personalCashflowMode)) return null
+
+  if (personalCashflowMode) {
+    const totalUzs = expenseRows.reduce((sum, r) => sum + parseMoneyRaw(r.amount_uzs), 0)
+    const totalUsd = expenseRows.reduce((sum, r) => sum + parseMoneyRaw(r.amount_usd), 0)
+    return (
+      <Layout>
+        <PageHeader
+          title="Личный ДДС расходов"
+          subtitle="Только расходы, которые вы фиксируете через Telegram /ex. Приходы, доступные средства и курс P&L здесь не показываются."
+        />
+        <div style={{ flex: 1, overflowY: 'auto', padding: '22px 24px', display: 'flex', flexDirection: 'column', gap: 16 }}>
+          <Card style={{ padding: '16px 18px' }}>
+            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12, flexWrap: 'wrap' }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+                <BtnOutline type="button" onClick={() => setYm((x) => shiftYM(x, -1))} disabled={busy}>
+                  ←
+                </BtnOutline>
+                <span style={{ fontWeight: 800, minWidth: 150, textAlign: 'center' }}>{ymTitle(ym)}</span>
+                <BtnOutline type="button" onClick={() => setYm((x) => shiftYM(x, 1))} disabled={busy}>
+                  →
+                </BtnOutline>
+                <input
+                  type="month"
+                  value={ym}
+                  onChange={(e) => setYm(e.target.value)}
+                  style={{ padding: 6, borderRadius: 8, border: '1px solid #e2e8f0', fontFamily: 'inherit' }}
+                />
+              </div>
+              <BtnOutline type="button" onClick={loadEntries} disabled={busy}>
+                Обновить
+              </BtnOutline>
+            </div>
+          </Card>
+
+          <Card style={{ padding: '16px 18px' }}>
+            <div style={{ fontSize: 13, color: '#64748b', marginBottom: 10 }}>
+              Внести новый расход можно в Telegram: <code>/ex сумма комментарий</code>. Бот спросит категорию и предложит привязать проект.
+            </div>
+            <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap' }}>
+              <div style={{ padding: '10px 12px', borderRadius: 10, background: '#fff7ed', border: '1px solid #fed7aa' }}>
+                <div style={{ fontSize: 11, color: '#9a3412', fontWeight: 700 }}>Расходы UZS</div>
+                <div style={{ fontSize: 18, fontWeight: 900, color: '#7c2d12' }}>{formatMoneyNumber(totalUzs)} сум</div>
+              </div>
+              <div style={{ padding: '10px 12px', borderRadius: 10, background: '#eff6ff', border: '1px solid #bfdbfe' }}>
+                <div style={{ fontSize: 11, color: '#1d4ed8', fontWeight: 700 }}>Расходы USD</div>
+                <div style={{ fontSize: 18, fontWeight: 900, color: '#1e3a8a' }}>{formatMoneyNumber(totalUsd)} USD</div>
+              </div>
+            </div>
+          </Card>
+
+          <Card style={{ padding: '16px 18px' }}>
+            <div style={{ fontSize: 14, fontWeight: 800, color: '#1e293b', marginBottom: 12 }}>Расходы за месяц</div>
+            {expenseRows.length === 0 ? (
+              <div style={{ fontSize: 13, color: '#94a3b8' }}>Пока нет расходов за выбранный месяц.</div>
+            ) : (
+              <div style={{ display: 'grid', gap: 8 }}>
+                {expenseRows.map((r) => (
+                  <div key={r.id} style={{ ...entryRowShell, border: '1px solid #fee2e2', alignItems: 'flex-start' }}>
+                    <div style={{ flex: 1, minWidth: 0 }}>
+                      <div style={{ display: 'flex', justifyContent: 'space-between', gap: 10, flexWrap: 'wrap' }}>
+                        <div style={{ fontWeight: 800, color: '#7f1d1d' }}>{r.label}</div>
+                        <div style={{ fontWeight: 900, color: '#7f1d1d' }}>
+                          {parseMoneyRaw(r.amount_uzs) > 0 ? `${formatMoneyNumber(r.amount_uzs)} сум` : ''}
+                          {parseMoneyRaw(r.amount_usd) > 0 ? `${parseMoneyRaw(r.amount_uzs) > 0 ? ' / ' : ''}${formatMoneyNumber(r.amount_usd)} USD` : ''}
+                        </div>
+                      </div>
+                      <div style={{ fontSize: 12, color: '#64748b', marginTop: 5 }}>
+                        {r.entry_date || r.period_month}
+                        {r.flow_category ? ` · ${expCatLabel(meta, r.flow_category)}` : ''}
+                        {r.payment_id ? ` · проект #${r.payment_id}` : ''}
+                      </div>
+                      {r.notes ? <div style={{ fontSize: 12, color: '#475569', marginTop: 5 }}>{r.notes}</div> : null}
+                    </div>
+                  </div>
+                ))}
+              </div>
+            )}
+          </Card>
+        </div>
+      </Layout>
+    )
+  }
 
   return (
     <Layout>
