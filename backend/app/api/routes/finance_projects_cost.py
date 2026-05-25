@@ -34,6 +34,7 @@ from app.schemas.schemas import (
     PLManualLineOut,
     PLManualCellPut,
     ProjectCostBreakdownPut,
+    ProjectCostProfitPut,
     ProjectCostRowOut,
     ProjectCostScheduleMonthOut,
 )
@@ -456,6 +457,89 @@ def put_projects_cost_breakdown(
     )
     pct_map = _commission_percent_by_payment_id(db)
     task_amap = _task_allocated_cost_uzs_by_payment(db)
+    return _payment_to_project_cost_row(p, pct_map.get(p.id), task_amap.get(p.id))
+
+
+def _sum_paid_for_payment(p: Payment) -> Decimal:
+    sum_paid = Decimal("0")
+    for pm in p.months or []:
+        if pm.status == "paid":
+            sum_paid += Decimal(str(pm.amount or 0))
+    if not (p.months or []) and p.status == "paid" and p.paid_at:
+        sum_paid = Decimal(str(p.amount or 0))
+    return sum_paid.quantize(Decimal("0.01"))
+
+
+def _profit_basis_amount(p: Payment, sum_paid: Decimal) -> Decimal:
+    rec = _is_recurring_billing(p)
+    if rec:
+        return sum_paid
+    return Decimal(str(p.amount or 0)).quantize(Decimal("0.01"))
+
+
+@router.put("/projects-cost/{payment_id}/profit", response_model=ProjectCostRowOut)
+def put_projects_cost_profit(
+    payment_id: int,
+    body: ProjectCostProfitPut,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(require_projects_cost_access),
+):
+    """Маржа вручную: себестоимость = стоимость − маржа; ручная часть уходит в первую статью (дизайн)."""
+    q = (
+        db.query(Payment)
+        .options(
+            joinedload(Payment.partner).joinedload(Partner.manager),
+            joinedload(Payment.months),
+        )
+        .filter(
+            Payment.id == payment_id,
+            Payment.is_archived == False,
+            Payment.trashed_at.is_(None),
+        )
+    )
+    q = filter_payments_query(q, db, current_user)
+    p = q.first()
+    if not p:
+        raise HTTPException(status_code=404, detail="Проект не найден")
+
+    profit = Decimal(str(body.profit_uzs)).quantize(Decimal("0.01"))
+    sum_paid = _sum_paid_for_payment(p)
+    basis = _profit_basis_amount(p, sum_paid)
+    if profit > basis:
+        raise HTTPException(
+            status_code=400,
+            detail="Маржа не может быть больше стоимости договора или суммы оплат по графику",
+        )
+
+    task_amap = _task_allocated_cost_uzs_by_payment(db)
+    ta = task_amap.get(p.id) or {}
+    tasks_sum = sum(Decimal(str(ta.get(k, 0))) for k in ("design", "dev", "other", "seo")).quantize(Decimal("0.01"))
+    target_internal = (basis - profit).quantize(Decimal("0.01"))
+    manual_total = (target_internal - tasks_sum).quantize(Decimal("0.01"))
+    if manual_total < 0:
+        raise HTTPException(
+            status_code=400,
+            detail="Маржа слишком велика: себестоимость из задач «Команда» уже больше, чем стоимость минус маржа",
+        )
+
+    p.projects_cost_design_uzs = manual_total
+    p.projects_cost_dev_uzs = Decimal("0")
+    p.projects_cost_other_uzs = Decimal("0")
+    p.projects_cost_seo_uzs = Decimal("0")
+    db.commit()
+    p = (
+        db.query(Payment)
+        .options(
+            joinedload(Payment.partner).joinedload(Partner.manager),
+            joinedload(Payment.months),
+        )
+        .filter(
+            Payment.id == payment_id,
+            Payment.company_slug == get_request_company(),
+        )
+        .first()
+    )
+    pct_map = _commission_percent_by_payment_id(db)
     return _payment_to_project_cost_row(p, pct_map.get(p.id), task_amap.get(p.id))
 
 

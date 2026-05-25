@@ -208,6 +208,10 @@ export default function FinanceProjectsCostPage() {
   const [costDraft, setCostDraft] = useState('')
   const [costSaving, setCostSaving] = useState(false)
   const costDraftRef = useRef('')
+  const [profitEdit, setProfitEdit] = useState<number | null>(null)
+  const [profitDraft, setProfitDraft] = useState('')
+  const [profitSaving, setProfitSaving] = useState(false)
+  const profitDraftRef = useRef('')
   const [segmentTab, setSegmentTab] = useState<ProjectsCostSegment>('services')
   const [tableSearch, setTableSearch] = useState('')
   const [costFieldLabels, setCostFieldLabels] = useState<Record<CostFieldApi, string>>(DEFAULT_COST_FIELD_LABELS)
@@ -370,6 +374,39 @@ export default function FinanceProjectsCostPage() {
     setCostDraft(v)
     costDraftRef.current = v
   }, [])
+
+  const cancelProfitEdit = useCallback(() => {
+    setProfitEdit(null)
+    setProfitDraft('')
+    profitDraftRef.current = ''
+  }, [])
+
+  const startProfitEdit = useCallback((row: ProjectCostRow) => {
+    const v = moneyCellString(String(row.profit_actual ?? '0'))
+    setProfitEdit(row.payment_id)
+    setProfitDraft(v)
+    profitDraftRef.current = v
+  }, [])
+
+  const commitProfitEdit = useCallback(
+    async (row: ProjectCostRow) => {
+      if (profitSaving) return
+      setProfitSaving(true)
+      try {
+        const v = profitDraftRef.current.trim() || '0'
+        const res = await api.put<ProjectCostRow>(`finance/projects-cost/${row.payment_id}/profit`, {
+          profit_uzs: v,
+        })
+        setRows((prev) => prev.map((x) => (x.payment_id === row.payment_id ? res.data : x)))
+        cancelProfitEdit()
+      } catch (e) {
+        alert(formatApiError(e))
+      } finally {
+        setProfitSaving(false)
+      }
+    },
+    [profitSaving, cancelProfitEdit],
+  )
 
   const commitCostEdit = useCallback(
     async (row: ProjectCostRow, field: CostFieldApi) => {
@@ -563,7 +600,7 @@ export default function FinanceProjectsCostPage() {
     <Layout>
       <PageHeader
         title="Projects Cost"
-        subtitle="Проекты из «Проекты» и график оплат. Раздел «Услуги» — все категории кроме «Хостинг/домен»; хостинг и домен вынесены в отдельный раздел и не смешиваются с итогами услуг. «Прибыль» для разового договора — сумма договора (колонка «Стоимость») минус себестоимость; для рекуррента/сервиса — оплаченные строки графика минус себестоимость. Далее из маржи вычитается резерв под % менеджера из «Комиссия», если строка привязана. Период — пересечение интервала работы с выбранными месяцами. «Показать всё» открывает статьи себестоимости и график; отметка периода «оплата прошла» здесь — то же действие, что в «Проекты» (влияет на выручку и P&L). Себестоимость по статьям вводите заранее в развёрнутом блоке."
+        subtitle="Проекты из «Проекты» и график оплат. Можно ввести маржу в колонке «Прибыль» — тогда «Себест.» и первая статья расходника (дизайн) посчитаются как стоимость минус маржа. Либо вручную правьте статьи себестоимости в «Показать всё». Для разового договора база — сумма договора; для рекуррента — оплаты по графику. Из маржи вычитается резерв % менеджера из «Комиссия», если строка привязана."
       />
       <div style={{ padding: '22px 24px', display: 'flex', flexDirection: 'column', gap: 14, minHeight: 0 }}>
         <div style={{ display: 'flex', flexWrap: 'wrap', alignItems: 'center', gap: 10 }}>
@@ -821,20 +858,63 @@ export default function FinanceProjectsCostPage() {
                             {formatMoneyNumber(Number(r.internal_cost_sum))}
                           </Td>
                           <Td style={{ fontWeight: 700, color: '#1e3a5f', whiteSpace: 'nowrap', lineHeight: 1.35 }}>
-                            <div
-                              title={
-                                Number(r.manager_commission_reserved_uzs) > 0
-                                  ? `Маржа: ${formatMoneyNumber(Number(r.profit_actual))}, резерв под комиссию: ${formatMoneyNumber(Number(r.manager_commission_reserved_uzs))}`
-                                  : undefined
-                              }
-                            >
-                              <div>{formatMoneyNumber(Number(r.profit_after_manager_uzs ?? r.profit_actual))}</div>
-                              {Number(r.manager_commission_reserved_uzs) > 0 && (
-                                <div style={{ fontSize: 10, color: '#64748b', fontWeight: 500 }}>
-                                  маржа {formatMoneyNumber(Number(r.profit_actual))}
-                                </div>
-                              )}
-                            </div>
+                            {profitEdit === r.payment_id ? (
+                              <MoneyInput
+                                value={profitDraft}
+                                onChange={(v) => {
+                                  setProfitDraft(v)
+                                  profitDraftRef.current = v
+                                }}
+                                autoFocus
+                                disabled={profitSaving}
+                                onKeyDown={(e) => {
+                                  if (e.key === 'Enter') {
+                                    e.preventDefault()
+                                    void commitProfitEdit(r)
+                                  }
+                                  if (e.key === 'Escape') {
+                                    e.preventDefault()
+                                    cancelProfitEdit()
+                                  }
+                                }}
+                                onBlur={() => void commitProfitEdit(r)}
+                                style={{ minWidth: 110, fontSize: 12, padding: '4px 6px' }}
+                              />
+                            ) : (
+                              <div
+                                title={
+                                  Number(r.manager_commission_reserved_uzs) > 0
+                                    ? `Маржа: ${formatMoneyNumber(Number(r.profit_actual))}, резерв под комиссию: ${formatMoneyNumber(Number(r.manager_commission_reserved_uzs))}. Нажмите, чтобы изменить маржу — себестоимость пересчитается автоматически.`
+                                    : 'Нажмите, чтобы ввести маржу: себестоимость = стоимость − маржа'
+                                }
+                              >
+                                <button
+                                  type="button"
+                                  disabled={profitSaving || costSaving}
+                                  onClick={() => startProfitEdit(r)}
+                                  style={{
+                                    border: 'none',
+                                    background: 'transparent',
+                                    padding: 0,
+                                    margin: 0,
+                                    font: 'inherit',
+                                    fontWeight: 700,
+                                    color: '#1e3a5f',
+                                    cursor: profitSaving ? 'wait' : 'pointer',
+                                    textAlign: 'left',
+                                    textDecoration: 'underline dotted',
+                                    textUnderlineOffset: 3,
+                                  }}
+                                >
+                                  {formatMoneyNumber(Number(r.profit_after_manager_uzs ?? r.profit_actual))}
+                                </button>
+                                {Number(r.manager_commission_reserved_uzs) > 0 && (
+                                  <div style={{ fontSize: 10, color: '#64748b', fontWeight: 500 }}>
+                                    маржа {formatMoneyNumber(Number(r.profit_actual))}
+                                  </div>
+                                )}
+                              </div>
+                            )}
                           </Td>
                           <Td style={{ fontWeight: 700, color: '#166534', whiteSpace: 'nowrap' }}>
                             {formatMoneyNumber(Number(r.sum_paid_actual))}
@@ -1020,10 +1100,9 @@ export default function FinanceProjectsCostPage() {
         </Card>
 
         <div style={{ fontSize: 12, color: '#64748b', lineHeight: 1.55, maxWidth: 900 }}>
-          Себестоимость по проекту = сумма четырёх колонок (каждая показывает итог: ваш ручной ввод в ячейке плюс распределение
-          из задач «Команда», где строка привязана к этому проекту и статье). Редактирование ячейки меняет только ручную часть.
-          Для USD-задач в сводку попадают суммы по курсу месяца даты задачи из «Доступные средства». Колонка «Прибыль» для
-          разового проекта считается от суммы договора (стоимость), для рекуррента — от фактически оплаченных сумм по графику.
+          Себестоимость по проекту = сумма четырёх колонок (ручной ввод + задачи «Команда»). Клик по «Прибыль» задаёт маржу:
+          себестоимость = стоимость − маржа, сумма уходит в первую статью (дизайн). Редактирование ячеек статей меняет только
+          ручную часть. Для USD-задач в сводку попадают суммы по курсу месяца даты задачи из «Доступные средства».
           Строка «Итого» относится
           только к текущему разделу («Услуги» или «Хостинг/домен»); при поиске суммируются видимые строки. В свёрнутой строке
           колонки статей скрыты; «Показать всё» раскрывает их и график. Фиксация «оплата прошла» по периоду здесь совпадает с

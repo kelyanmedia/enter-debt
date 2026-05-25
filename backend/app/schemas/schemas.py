@@ -926,6 +926,12 @@ class ProjectCostBreakdownPut(BaseModel):
     cost_seo_uzs: Decimal = Field(ge=Decimal("0"), default=Decimal("0"))
 
 
+class ProjectCostProfitPut(BaseModel):
+    """Маржа по проекту: себестоимость = стоимость договора (или оплата факт) − маржа."""
+
+    profit_uzs: Decimal = Field(ge=Decimal("0"))
+
+
 class ProjectCostRowOut(BaseModel):
     """Сводка по проекту для отчёта «Projects Cost»: синхронизировано с payments / payment_months.
 
