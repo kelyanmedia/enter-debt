@@ -180,6 +180,17 @@ function moneyCellString(v: string | undefined) {
   return String(Number(v) || 0)
 }
 
+function parseMoneyInput(v: string): number {
+  const normalized = String(v || '').replace(/\s/g, '').replace(',', '.')
+  const n = Number(normalized)
+  return Number.isFinite(n) ? n : 0
+}
+
+function profitBasisAmount(row: ProjectCostRow): number {
+  if (row.is_recurring_billing) return Number(row.sum_paid_actual) || 0
+  return Number(row.billing_unit_amount) || 0
+}
+
 const breakdownBtnStyle: CSSProperties = {
   border: 'none',
   background: 'transparent',
@@ -834,6 +845,21 @@ export default function FinanceProjectsCostPage() {
                         ? `${formatMoneyNumber(Number(r.paid_percent))} %`
                         : '—'
                     const open = expanded.has(r.payment_id)
+                    const basisAmount = profitBasisAmount(r)
+                    const editingProfit = profitEdit === r.payment_id
+                    const previewInternal = editingProfit
+                      ? Math.max(0, basisAmount - parseMoneyInput(profitDraft))
+                      : Number(r.internal_cost_sum) || 0
+                    const previewDesign = editingProfit
+                      ? Math.max(
+                          0,
+                          previewInternal -
+                            (Number(r.tasks_cost_design_uzs) || 0) -
+                            (Number(r.tasks_cost_dev_uzs) || 0) -
+                            (Number(r.tasks_cost_other_uzs) || 0) -
+                            (Number(r.tasks_cost_seo_uzs) || 0),
+                        )
+                      : Number(r.cost_design_uzs) || 0
                     return (
                       <Fragment key={r.payment_id}>
                         <tr
@@ -855,7 +881,7 @@ export default function FinanceProjectsCostPage() {
                           </Td>
                           <Td style={{ fontWeight: 600, fontSize: 13, whiteSpace: 'nowrap' }}>{costDisplay(isRec, r.billing_unit_amount)}</Td>
                           <Td style={{ fontSize: 13, fontWeight: 600, color: '#334155', whiteSpace: 'nowrap' }}>
-                            {formatMoneyNumber(Number(r.internal_cost_sum))}
+                            {formatMoneyNumber(previewInternal)}
                           </Td>
                           <Td style={{ fontWeight: 700, color: '#1e3a5f', whiteSpace: 'nowrap', lineHeight: 1.35 }}>
                             {profitEdit === r.payment_id ? (
@@ -927,7 +953,9 @@ export default function FinanceProjectsCostPage() {
                           </Td>
                           {open ? (
                             <>
-                              <Td style={{ fontSize: 12, verticalAlign: 'middle' }}>{renderBreakdownCell(r, 'cost_design_uzs')}</Td>
+                              <Td style={{ fontSize: 12, verticalAlign: 'middle' }}>
+                                {editingProfit ? formatMoneyNumber(previewDesign) : renderBreakdownCell(r, 'cost_design_uzs')}
+                              </Td>
                               <Td style={{ fontSize: 12, verticalAlign: 'middle' }}>{renderBreakdownCell(r, 'cost_dev_uzs')}</Td>
                               <Td style={{ fontSize: 12, verticalAlign: 'middle' }}>{renderBreakdownCell(r, 'cost_other_uzs')}</Td>
                               <Td style={{ fontSize: 12, verticalAlign: 'middle' }}>{renderBreakdownCell(r, 'cost_seo_uzs')}</Td>
@@ -939,7 +967,7 @@ export default function FinanceProjectsCostPage() {
                                   title="Итого по скрытым статьям: дизайн + разработка + прочее + SEO"
                                   style={{ fontSize: 13, fontWeight: 700, color: '#334155' }}
                                 >
-                                  {formatMoneyNumber(Number(r.internal_cost_sum))}
+                                  {formatMoneyNumber(previewInternal)}
                                 </span>
                                 <button
                                   type="button"

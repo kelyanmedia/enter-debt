@@ -11,6 +11,13 @@ import {
   saveTokenForSlug,
   setCompanySlug as persistCompanySlug,
 } from '@/lib/company'
+import {
+  clearAllLoginCreds,
+  clearLoginCreds,
+  getRememberLogin,
+  saveLoginCreds,
+  setRememberLogin,
+} from '@/lib/login-cache'
 
 interface User {
   id: number
@@ -148,9 +155,13 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       password: password.trim(),
     })
     saveTokenForSlug(slug, r.data.access_token, remember)
+    setRememberLogin(remember)
     if (remember) {
+      saveLoginCreds(slug, emailKey, password)
       localStorage.setItem('saved_email', emailKey)
     } else {
+      clearLoginCreds(slug)
+      clearAllLoginCreds()
       localStorage.removeItem('saved_email')
     }
     const me = await api.get<User>('auth/me')

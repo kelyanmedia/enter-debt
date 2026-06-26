@@ -1,34 +1,58 @@
 import { useState, FormEvent, useEffect } from 'react'
 import { useRouter } from 'next/router'
 import { useAuth } from '@/context/AuthContext'
-import { getCompanySlug, setCompanySlug as persistCompanySlug, companyDisplayName, DEFAULT_COMPANY_SLUG } from '@/lib/company'
+import {
+  getCompanySlug,
+  setCompanySlug as persistCompanySlug,
+  companyDisplayName,
+  DEFAULT_COMPANY_SLUG,
+} from '@/lib/company'
+import { getRememberLogin, getSavedLoginCreds } from '@/lib/login-cache'
 
 /** Совпадает с backend/app/core/config.py (ADMIN_EMAIL / ADMIN_PASSWORD) и seed в main.py */
 const DEV_LOGIN_EMAIL = 'agasi@gmail.com'
 const DEV_LOGIN_PASSWORD = 'KM2026admin_controlpanel'
 
+function loadFormForWorkspace(slug: string, isDev: boolean) {
+  const saved = getSavedLoginCreds(slug)
+  if (saved) {
+    return { email: saved.email, password: saved.password, remember: getRememberLogin() }
+  }
+  if (isDev) {
+    return { email: DEV_LOGIN_EMAIL, password: DEV_LOGIN_PASSWORD, remember: true }
+  }
+  const legacyEmail = typeof window !== 'undefined' ? localStorage.getItem('saved_email') : null
+  return { email: legacyEmail || '', password: '', remember: getRememberLogin() }
+}
+
 export default function LoginPage() {
   const { login, companies } = useAuth()
   const router = useRouter()
   const isDev = process.env.NODE_ENV === 'development'
-  const [email, setEmail] = useState(isDev ? DEV_LOGIN_EMAIL : '')
-  const [password, setPassword] = useState(isDev ? DEV_LOGIN_PASSWORD : '')
-  const [remember, setRemember] = useState(false)
+  const [workspace, setWorkspace] = useState(DEFAULT_COMPANY_SLUG)
+  const [email, setEmail] = useState('')
+  const [password, setPassword] = useState('')
+  const [remember, setRemember] = useState(true)
   const [error, setError] = useState('')
   const [loading, setLoading] = useState(false)
-  const [workspace, setWorkspace] = useState(DEFAULT_COMPANY_SLUG)
 
   useEffect(() => {
-    setWorkspace(getCompanySlug())
-  }, [])
+    const slug = getCompanySlug()
+    setWorkspace(slug)
+    const form = loadFormForWorkspace(slug, isDev)
+    setEmail(form.email)
+    setPassword(form.password)
+    setRemember(form.remember)
+  }, [isDev])
 
-  useEffect(() => {
-    const saved = localStorage.getItem('saved_email')
-    if (saved) {
-      setEmail(saved)
-      setRemember(true)
-    }
-  }, [])
+  const handleWorkspaceChange = (slug: string) => {
+    persistCompanySlug(slug)
+    setWorkspace(slug)
+    const form = loadFormForWorkspace(slug, isDev)
+    setEmail(form.email)
+    setPassword(form.password)
+    setRemember(form.remember)
+  }
 
   const handleSubmit = async (e: FormEvent) => {
     e.preventDefault()
@@ -96,11 +120,7 @@ export default function LoginPage() {
             <label style={{ display: 'block', fontSize: 11, fontWeight: 600, color: '#8a8fa8', textTransform: 'uppercase', letterSpacing: '.05em', marginBottom: 5 }}>Компания</label>
             <select
               value={workspace}
-              onChange={(e) => {
-                const s = e.target.value
-                persistCompanySlug(s)
-                setWorkspace(s)
-              }}
+              onChange={(e) => handleWorkspaceChange(e.target.value)}
               aria-label="Компания"
               style={{
                 width: '100%',
@@ -123,7 +143,7 @@ export default function LoginPage() {
               ))}
             </select>
             <div style={{ fontSize: 11, color: '#8a8fa8', marginTop: 6, lineHeight: 1.4 }}>
-              Данные привязаны к выбранной компании и не пересекаются с другими (изоляция по компании в системе).
+              Компания, логин и пароль сохраняются в браузере для каждой организации отдельно.
             </div>
           </div>
           <div style={{ marginBottom: 14 }}>
@@ -147,6 +167,7 @@ export default function LoginPage() {
               value={password}
               onChange={e => setPassword(e.target.value)}
               placeholder="••••••••"
+              autoComplete="current-password"
               style={{ width: '100%', border: '1px solid #e8e9ef', borderRadius: 9, padding: '10px 13px', fontSize: 14, outline: 'none', color: '#1a1d23', boxSizing: 'border-box' }}
             />
           </div>
@@ -168,7 +189,9 @@ export default function LoginPage() {
                 </svg>
               )}
             </div>
-            <span style={{ fontSize: 13, color: '#444' }} onClick={() => setRemember(v => !v)}>Запомнить меня</span>
+            <span style={{ fontSize: 13, color: '#444' }} onClick={() => setRemember(v => !v)}>
+              Запомнить компанию, логин и пароль
+            </span>
           </label>
 
           {error && <div style={{ background: '#fef0f0', color: '#e84040', borderRadius: 8, padding: '9px 12px', fontSize: 13, marginBottom: 14 }}>{error}</div>}
