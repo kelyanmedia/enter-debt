@@ -4,6 +4,7 @@ import Link from 'next/link'
 import Layout from '@/components/Layout'
 import { PageHeader } from '@/components/ui'
 import { useAuth } from '@/context/AuthContext'
+import { hasSalesCompaniesAccess } from '@/lib/salesAccess'
 import { SalesCompaniesTable } from '@/components/SalesCompaniesTable'
 
 /**
@@ -14,22 +15,15 @@ export default function SalesCompaniesPage() {
   const { user, loading } = useAuth()
   const router = useRouter()
 
+  const hasSalesAccess = hasSalesCompaniesAccess(user)
+
   useEffect(() => {
-    if (
-      !loading &&
-      user &&
-      user.role !== 'admin' &&
-      (!['manager', 'administration'].includes(user.role) || user.can_view_sales !== true)
-    ) {
+    if (!loading && user && !hasSalesAccess) {
       void router.replace('/')
     }
-  }, [loading, user, router])
+  }, [loading, user, hasSalesAccess, router])
 
-  if (
-    loading ||
-    !user ||
-    (user.role !== 'admin' && (!['manager', 'administration'].includes(user.role) || user.can_view_sales !== true))
-  ) return null
+  if (loading || !user || !hasSalesAccess) return null
 
   const isAdmin = user.role === 'admin'
 

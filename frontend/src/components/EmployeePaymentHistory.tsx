@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useState } from 'react'
+import DatePicker from '@/components/DatePicker'
 import api from '@/lib/api'
 import { useAuth } from '@/context/AuthContext'
 import {
@@ -281,7 +282,7 @@ export function EmployeePaymentHistory({
           </div>
         )}
         <Field label="Дата выплаты *">
-          <Input type="date" value={form.paid_on} onChange={(e) => setForm((f) => ({ ...f, paid_on: e.target.value }))} />
+          <DatePicker value={form.paid_on} onChange={v => setForm(f => ({ ...f, paid_on: v }))} />
         </Field>
         <div style={{ fontSize: 12, fontWeight: 600, color: '#64748b', marginBottom: 8 }}>Период (за какой месяц работы), необязательно</div>
         <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10, marginBottom: 14 }}>

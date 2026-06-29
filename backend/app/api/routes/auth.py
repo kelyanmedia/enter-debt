@@ -299,12 +299,62 @@ def patch_me(
             user.payment_details_updated_at = datetime.now(timezone.utc)
             changed = True
 
+    if "mop_default_commission_percent" in payload:
+        if user.role != "mop":
+            raise HTTPException(status_code=400, detail="Процент комиссии доступен только для МОП")
+        from decimal import Decimal as D
+
+        raw = payload["mop_default_commission_percent"]
+        if raw is None:
+            new_pct = D("10")
+        else:
+            new_pct = D(str(raw)).quantize(D("0.01"))
+            if new_pct < 1 or new_pct > 20:
+                raise HTTPException(status_code=400, detail="% комиссии: от 1 до 20")
+        old_pct = user.mop_default_commission_percent
+        if old_pct is None or D(str(old_pct)) != new_pct:
+            user.mop_default_commission_percent = new_pct
+            changed = True
+
     if not changed:
         raise HTTPException(
             status_code=400,
             detail="Нет изменений: другой email, новый пароль или обновлённые реквизиты",
         )
 
+    db.commit()
+    db.refresh(user)
+    return UserOut.model_validate(user)
+
+
+class _MopPctUpdate(BaseModel):
+    mop_default_commission_percent: float
+
+
+@router.patch("/me/commission-percent", response_model=UserOut)
+def patch_mop_commission_percent(
+    body: _MopPctUpdate,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """Только для МОП: обновить свой дефолтный % комиссии без смены пароля."""
+    if current_user.role != "mop":
+        raise HTTPException(status_code=403, detail="Только для МОП")
+    user = (
+        db.query(User)
+        .filter(User.id == current_user.id, User.company_slug == get_request_company())
+        .first()
+    )
+    if not user:
+        raise HTTPException(status_code=404, detail="User not found")
+    from decimal import Decimal as D
+    try:
+        new_pct = D(str(body.mop_default_commission_percent)).quantize(D("0.01"))
+    except Exception:
+        raise HTTPException(status_code=422, detail="Неверный формат числа")
+    if new_pct < 1 or new_pct > 20:
+        raise HTTPException(status_code=400, detail="% комиссии: от 1 до 20")
+    user.mop_default_commission_percent = new_pct
     db.commit()
     db.refresh(user)
     return UserOut.model_validate(user)

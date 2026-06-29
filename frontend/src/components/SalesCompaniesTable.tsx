@@ -1,6 +1,8 @@
-import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties } from 'react'
-import { Card, Th, Td, Empty, Input, Field, BtnOutline, BtnPrimary, Modal } from '@/components/ui'
+import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties, type ReactNode } from 'react'
+import DatePicker from '@/components/DatePicker'
+import { Card, Th, Td, Input, Field, BtnOutline, BtnPrimary, Modal } from '@/components/ui'
 import api from '@/lib/api'
+import * as XLSX from 'xlsx'
 
 interface UserOption {
   id: number
@@ -121,6 +123,27 @@ interface WishlistActivateState {
   assigned_manager_id: string
 }
 
+interface ImportCompanyDraft {
+  company_name: string
+  brand_name: string
+  client_type: string
+  group_name: string
+  status: string
+  position: string
+  contact_name: string
+  phone: string
+  email: string
+  contact_actuality_date: string
+  lpr_name: string
+  lpr_role: string
+  lvr_name: string
+  lvr_role: string
+  brought_by_name: string
+  comment: string
+  previous_jobs: string
+  manager_name: string
+}
+
 const emptyForm = (): FormState => ({
   company_name: '',
   brand_name: '',
@@ -189,6 +212,17 @@ const textareaStyle: CSSProperties = {
   resize: 'vertical',
 }
 
+const previewTd: CSSProperties = {
+  padding: '9px 10px',
+  borderBottom: '1px solid #f1f5f9',
+  color: '#334155',
+  verticalAlign: 'top',
+  whiteSpace: 'nowrap',
+  maxWidth: 180,
+  overflow: 'hidden',
+  textOverflow: 'ellipsis',
+}
+
 const STATUS_OPTIONS = [
   'Новый',
   'Написал',
@@ -245,12 +279,215 @@ function formatApiError(e: unknown): string {
   return err.message || 'Ошибка'
 }
 
+const IMPORT_HEADERS = [
+  'Компания*',
+  'Бренд',
+  'Тип (A/B/C)',
+  'Ниша',
+  'Статус',
+  'Должность',
+  'Имя контакта',
+  'Телефон',
+  'Email',
+  'Дата актуальности (YYYY-MM-DD)',
+  'ЛПР имя',
+  'ЛПР роль',
+  'ЛВР имя',
+  'ЛВР роль',
+  'Кто привёл',
+  'Комментарий',
+  'Прошлые места',
+  'Менеджер (ID или имя)',
+]
+
+function importCell(row: Record<string, unknown>, aliases: string[]) {
+  for (const alias of aliases) {
+    if (row[alias] != null && String(row[alias]).trim()) return String(row[alias]).trim()
+  }
+  return ''
+}
+
+function normalizeImportDate(v: string) {
+  const raw = v.trim()
+  if (!raw) return ''
+  if (/^\d{4}-\d{2}-\d{2}$/.test(raw)) return raw
+  if (/^\d{1,2}\.\d{1,2}\.\d{4}$/.test(raw)) {
+    const [d, m, y] = raw.split('.')
+    return `${y}-${m.padStart(2, '0')}-${d.padStart(2, '0')}`
+  }
+  return raw
+}
+
+function parseImportWorkbook(buffer: ArrayBuffer): ImportCompanyDraft[] {
+  const wb = XLSX.read(buffer, { type: 'array' })
+  const sheet = wb.Sheets['Компании'] || wb.Sheets[wb.SheetNames[0]]
+  if (!sheet) return []
+  const rows = XLSX.utils.sheet_to_json<Record<string, unknown>>(sheet, { defval: '' })
+  return rows
+    .map((row) => ({
+      company_name: importCell(row, ['Компания*', 'Компания', 'company_name']),
+      brand_name: importCell(row, ['Бренд', 'brand_name']),
+      client_type: importCell(row, ['Тип (A/B/C)', 'Тип', 'client_type']).toUpperCase(),
+      group_name: importCell(row, ['Ниша', 'group_name']),
+      status: importCell(row, ['Статус', 'status']),
+      position: importCell(row, ['Должность', 'position']),
+      contact_name: importCell(row, ['Имя контакта', 'Контакт', 'contact_name']),
+      phone: importCell(row, ['Телефон', 'phone']),
+      email: importCell(row, ['Email', 'email']),
+      contact_actuality_date: normalizeImportDate(importCell(row, ['Дата актуальности (YYYY-MM-DD)', 'Дата актуальности', 'contact_actuality_date'])),
+      lpr_name: importCell(row, ['ЛПР имя', 'lpr_name']),
+      lpr_role: importCell(row, ['ЛПР роль', 'lpr_role']),
+      lvr_name: importCell(row, ['ЛВР имя', 'lvr_name']),
+      lvr_role: importCell(row, ['ЛВР роль', 'lvr_role']),
+      brought_by_name: importCell(row, ['Кто привёл', 'brought_by_name']),
+      comment: importCell(row, ['Комментарий', 'comment']),
+      previous_jobs: importCell(row, ['Прошлые места', 'previous_jobs']),
+      manager_name: importCell(row, ['Менеджер (ID или имя)', 'Менеджер', 'assigned_manager']),
+    }))
+    .filter((row) => row.company_name)
+}
+
+function downloadImportTemplate() {
+  const instruction = [
+    ['Инструкция'],
+    ['1. Заполняй лист "Компании" в таком же формате.'],
+    ['2. Обязательная колонка только "Компания*". Остальные можно оставить пустыми.'],
+    ['3. Тип клиента заполняй A, B или C.'],
+    ['4. Дата актуальности: формат YYYY-MM-DD, например 2026-06-29.'],
+    ['5. Ниша должна совпадать с существующей нишей в клиентской базе, иначе импортируется без ниши.'],
+    ['6. Менеджер: можно указать ID менеджера или его имя как в системе.'],
+    ['7. Сохрани файл и загрузи его через кнопку "Импорт". Всё будет работать.'],
+  ]
+  const sample = [
+    IMPORT_HEADERS,
+    [
+      'Example Company LLC',
+      'Example Brand',
+      'A',
+      'Маркетинг',
+      'Новый',
+      'CEO',
+      'Иван Иванов',
+      '+998 99 999 9999',
+      'ivan@example.com',
+      '2026-06-29',
+      'Иван Иванов',
+      'CEO',
+      'Мария Петрова',
+      'Маркетолог',
+      'Рекомендация',
+      'Первичный импорт из Excel',
+      'Agency, Startup',
+      '',
+    ],
+  ]
+  const wb = XLSX.utils.book_new()
+  XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet(instruction), 'Инструкция')
+  XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet(sample), 'Компании')
+  XLSX.writeFile(wb, 'sales-companies-import-template.xlsx')
+}
+
 function statusStyle(status: string | null | undefined): CSSProperties {
   const s = (status || '').toLowerCase()
-  if (s.includes('кп') || s.includes('переговор')) return { background: '#dcfce7', color: '#166534' }
-  if (s.includes('уже') || s.includes('готов') || s.includes('сделано')) return { background: '#fef3c7', color: '#92400e' }
-  if (s.includes('нет') || s.includes('отказ') || s.includes('не работает')) return { background: '#fee2e2', color: '#991b1b' }
-  return { background: '#eef2ff', color: '#3730a3' }
+  if (s.includes('кп') || s.includes('переговор')) return { background: '#ecfdf5', color: '#047857', border: '1px solid #a7f3d0' }
+  if (s.includes('уже') || s.includes('готов') || s.includes('сделано')) return { background: '#fffbeb', color: '#b45309', border: '1px solid #fde68a' }
+  if (s.includes('нет') || s.includes('отказ') || s.includes('не работает')) return { background: '#fef2f2', color: '#b91c1c', border: '1px solid #fecaca' }
+  return { background: '#f1f5f9', color: '#475569', border: '1px solid #e2e8f0' }
+}
+
+const CHEVRON_SVG =
+  'url("data:image/svg+xml,%3Csvg xmlns=%27http://www.w3.org/2000/svg%27 width=%2712%27 height=%2712%27 viewBox=%270 0 12 12%27%3E%3Cpath fill=%27none%27 stroke=%27%2364748b%27 stroke-width=%271.5%27 stroke-linecap=%27round%27 d=%27M3 4.5L6 7.5L9 4.5%27/%3E%3C/svg%3E")'
+
+const selectChevronStyle: CSSProperties = {
+  appearance: 'none',
+  WebkitAppearance: 'none',
+  MozAppearance: 'none',
+  backgroundImage: CHEVRON_SVG,
+  backgroundRepeat: 'no-repeat',
+  backgroundPosition: 'right 12px center',
+  backgroundSize: '12px 12px',
+  paddingRight: 34,
+}
+
+const filterSelectStyle: CSSProperties = {
+  border: '1px solid #e2e8f0',
+  borderRadius: 8,
+  padding: '7px 34px 7px 12px',
+  fontSize: 13,
+  fontWeight: 500,
+  color: '#334155',
+  backgroundColor: '#fff',
+  fontFamily: 'inherit',
+  cursor: 'pointer',
+  outline: 'none',
+  ...selectChevronStyle,
+}
+
+function personHue(name: string) {
+  const hues = ['#3b82f6', '#8b5cf6', '#ec4899', '#0ea5e9', '#22c55e', '#f59e0b', '#6366f1']
+  let h = 0
+  for (let i = 0; i < name.length; i++) h = (h + name.charCodeAt(i) * 13) % hues.length
+  return hues[h]
+}
+
+function personInitials(name: string) {
+  return name.trim().split(/\s+/).map(w => w[0]).join('').slice(0, 2).toUpperCase() || '?'
+}
+
+function CompanyAvatar({ name }: { name: string }) {
+  const hue = personHue(name)
+  return (
+    <div style={{
+      width: 36, height: 36, borderRadius: '50%', flexShrink: 0,
+      background: `${hue}14`, border: `1.5px solid ${hue}33`,
+      display: 'flex', alignItems: 'center', justifyContent: 'center',
+      fontSize: 13, fontWeight: 700, color: hue,
+    }}>
+      {personInitials(name)}
+    </div>
+  )
+}
+
+function StatusBadge({ status }: { status: string }) {
+  const st = statusStyle(status)
+  return (
+    <span style={{
+      display: 'inline-flex', alignItems: 'center', gap: 6,
+      padding: '4px 10px 4px 8px', borderRadius: 999,
+      fontSize: 12, fontWeight: 600, whiteSpace: 'nowrap',
+      ...st,
+    }}>
+      <span style={{ width: 6, height: 6, borderRadius: '50%', background: st.color as string, flexShrink: 0 }} />
+      {status}
+    </span>
+  )
+}
+
+function TypeBadge({ type }: { type: string }) {
+  const t = type.toUpperCase()
+  const colors: Record<string, { bg: string; color: string; border: string }> = {
+    A: { bg: '#eff6ff', color: '#1d4ed8', border: '#bfdbfe' },
+    B: { bg: '#f5f3ff', color: '#6d28d9', border: '#ddd6fe' },
+    C: { bg: '#f8fafc', color: '#475569', border: '#e2e8f0' },
+  }
+  const c = colors[t] || colors.C
+  return (
+    <span style={{
+      display: 'inline-flex', alignItems: 'center', justifyContent: 'center',
+      minWidth: 28, padding: '3px 8px', borderRadius: 6,
+      fontSize: 12, fontWeight: 700, background: c.bg, color: c.color, border: `1px solid ${c.border}`,
+    }}>
+      {t}
+    </span>
+  )
+}
+
+function ColHeader({ children }: { children: ReactNode }) {
+  return (
+    <span style={{ display: 'inline-flex', alignItems: 'center', gap: 6, fontSize: 12, fontWeight: 500, color: '#64748b', letterSpacing: '.01em', textTransform: 'none' }}>
+      {children}
+    </span>
+  )
 }
 
 function compactLines(parts: Array<string | null | undefined>) {
@@ -296,6 +533,11 @@ export function SalesCompaniesTable({ scope, isAdmin }: { scope: 'all' | 'mine';
   const groupsPopupRef = useRef<HTMLDivElement | null>(null)
   const [modalOpen, setModalOpen] = useState(false)
   const [wishlistOpen, setWishlistOpen] = useState(false)
+  const [importOpen, setImportOpen] = useState(false)
+  const [importRows, setImportRows] = useState<ImportCompanyDraft[]>([])
+  const [importFileName, setImportFileName] = useState('')
+  const [importBusy, setImportBusy] = useState(false)
+  const [importError, setImportError] = useState('')
   const [wishlistRows, setWishlistRows] = useState<WishlistItem[]>([])
   const [wishlistFetching, setWishlistFetching] = useState(false)
   const [wishlistSaving, setWishlistSaving] = useState(false)
@@ -371,6 +613,92 @@ export function SalesCompaniesTable({ scope, isAdmin }: { scope: 'all' | 'mine';
       setWishlistFetching(false)
     }
   }, [scope])
+
+  const closeImport = () => {
+    if (importBusy) return
+    setImportOpen(false)
+    setImportRows([])
+    setImportFileName('')
+    setImportError('')
+  }
+
+  const handleImportFile = async (file: File | null) => {
+    setImportError('')
+    setImportRows([])
+    setImportFileName(file?.name || '')
+    if (!file) return
+    try {
+      const rows = parseImportWorkbook(await file.arrayBuffer())
+      if (!rows.length) {
+        setImportError('В файле не найдено строк с заполненной колонкой «Компания*».')
+        return
+      }
+      setImportRows(rows)
+    } catch (e) {
+      setImportError(formatApiError(e) || 'Не удалось прочитать Excel-файл')
+    }
+  }
+
+  const resolveManagerId = (value: string) => {
+    const raw = value.trim()
+    if (!raw) return null
+    const byId = managers.find((m) => String(m.id) === raw)
+    if (byId) return byId.id
+    const low = raw.toLowerCase()
+    return managers.find((m) => m.name.toLowerCase() === low)?.id ?? null
+  }
+
+  const resolveGroupId = (value: string) => {
+    const raw = value.trim()
+    if (!raw) return null
+    const low = raw.toLowerCase()
+    return groups.find((g) => g.name.toLowerCase() === low)?.id ?? null
+  }
+
+  const importCompanies = async () => {
+    if (!importRows.length) {
+      setImportError('Сначала загрузите Excel-файл.')
+      return
+    }
+    setImportBusy(true)
+    setImportError('')
+    let created = 0
+    try {
+      for (const row of importRows) {
+        await api.post('sales/companies', {
+          company_name: row.company_name,
+          brand_name: row.brand_name || null,
+          client_type: ['A', 'B', 'C'].includes(row.client_type) ? row.client_type : null,
+          group_id: resolveGroupId(row.group_name),
+          status: row.status || 'Новый',
+          comment: row.comment || null,
+          assigned_manager_id: resolveManagerId(row.manager_name),
+          brought_by_manager_id: null,
+          brought_by_name: row.brought_by_name || null,
+          position: row.position || null,
+          contact_name: row.contact_name || null,
+          phone: row.phone || null,
+          email: row.email || null,
+          contact_actuality_date: row.contact_actuality_date || null,
+          contact: null,
+          lpr_name: row.lpr_name || null,
+          lpr_role: row.lpr_role || null,
+          lvr_name: row.lvr_name || null,
+          lvr_role: row.lvr_role || null,
+          previous_jobs: row.previous_jobs || null,
+        })
+        created += 1
+      }
+      await load()
+      await loadGroups()
+      alert(`Импортировано компаний: ${created}`)
+      closeImport()
+    } catch (e) {
+      setImportError(`Импорт остановлен. Создано: ${created}. Ошибка: ${formatApiError(e)}`)
+    } finally {
+      setImportBusy(false)
+    }
+  }
 
   useEffect(() => {
     void load()
@@ -874,401 +1202,351 @@ export function SalesCompaniesTable({ scope, isAdmin }: { scope: 'all' | 'mine';
     : viewerStatusValue.trim()
       ? '__custom'
       : ''
-  const visibleColumnCount = selectionMode ? 15 : 14
+  const visibleColumnCount = selectionMode ? 13 : 12
   const toggleGroupFilter = (value: string) => {
     setGroupFilters((prev) => (prev.includes(value) ? prev.filter((x) => x !== value) : [...prev, value]))
   }
 
   return (
     <>
-      <div style={{ display: 'flex', flexWrap: 'wrap', alignItems: 'center', gap: 10 }}>
-        <BtnPrimary type="button" onClick={openCreate}>
-          Добавить компанию
-        </BtnPrimary>
-        <BtnOutline
-          type="button"
-          onClick={() => {
-            setSelectionMode((v) => !v)
-            if (selectionMode) setSelectedIds([])
-          }}
-          style={{ fontSize: 12, padding: '6px 12px', color: selectionMode ? '#1a6b3c' : undefined }}
-        >
-          {selectionMode ? 'Готово' : 'Отметить'}
-        </BtnOutline>
-        <BtnOutline type="button" onClick={openWishlist} style={{ fontSize: 12, padding: '6px 12px' }}>
-          Wishlist
-        </BtnOutline>
-        <BtnOutline type="button" onClick={() => void load()} disabled={fetching} style={{ fontSize: 12, padding: '6px 12px' }}>
-          {fetching ? 'Загрузка…' : 'Обновить'}
-        </BtnOutline>
-        {selectedIds.length > 0 ? (
-          <span style={{ fontSize: 12, fontWeight: 700, color: '#1a6b3c' }}>
-            Отмечено: {selectedIds.length}
-          </span>
-        ) : null}
-      </div>
-
-      {(selectionMode || isAdmin) && (
-        <div
-          style={{
-            display: 'flex',
-            flexWrap: 'wrap',
-            alignItems: 'center',
-            gap: 10,
-            padding: '10px 12px',
-            background: '#f0fdf4',
-            borderRadius: 10,
-            border: '1px solid #bbf7d0',
-          }}
-        >
-          <span style={{ fontSize: 11, fontWeight: 800, color: '#166534' }}>МАССОВЫЕ ДЕЙСТВИЯ</span>
-          {isAdmin ? (
-            <>
-              <select
-                value={bulkTargetManagerId}
-                onChange={(e) => setBulkTargetManagerId(e.target.value)}
-                style={{ minWidth: 190, border: '1px solid #bbf7d0', borderRadius: 9, padding: '7px 10px', fontSize: 13, background: '#fff' }}
-              >
-                <option value="">Кому передать</option>
-                {managers.map((m) => (
-                  <option key={m.id} value={m.id}>{m.name}</option>
-                ))}
-              </select>
-              <BtnOutline type="button" onClick={() => void assignSelectedManager()} disabled={bulkSaving || selectedIds.length === 0} style={{ fontSize: 12, padding: '6px 10px' }}>
-                Передать отмеченные
-              </BtnOutline>
-              <span style={{ width: 1, height: 20, background: '#bbf7d0' }} aria-hidden />
-              <select
-                value={bulkSourceManagerId}
-                onChange={(e) => setBulkSourceManagerId(e.target.value)}
-                style={{ minWidth: 190, border: '1px solid #bbf7d0', borderRadius: 9, padding: '7px 10px', fontSize: 13, background: '#fff' }}
-              >
-                <option value="">Все компании менеджера</option>
-                {managers.map((m) => (
-                  <option key={m.id} value={m.id}>{m.name}</option>
-                ))}
-              </select>
-              <BtnOutline type="button" onClick={() => void assignManagerPortfolio()} disabled={bulkSaving || !bulkSourceManagerId || !bulkTargetManagerId} style={{ fontSize: 12, padding: '6px 10px' }}>
-                Передать весь список
-              </BtnOutline>
-            </>
-          ) : null}
-          <span style={{ width: 1, height: 20, background: '#bbf7d0' }} aria-hidden />
-          <select
-            value={bulkGroupId}
-            onChange={(e) => setBulkGroupId(e.target.value)}
-            style={{ minWidth: 180, border: '1px solid #bbf7d0', borderRadius: 9, padding: '7px 10px', fontSize: 13, background: '#fff' }}
-          >
-            <option value="">Без ниши</option>
-            {groups.map((g) => (
-              <option key={g.id} value={g.id}>{g.name}</option>
-            ))}
-          </select>
-          <BtnOutline type="button" onClick={() => void assignSelectedGroup()} disabled={bulkSaving || selectedIds.length === 0} style={{ fontSize: 12, padding: '6px 10px' }}>
-            В нишу отмеченные
+      <div style={{
+        background: '#fff',
+        border: '1px solid #e8eaef',
+        borderRadius: 14,
+        overflow: 'hidden',
+        boxShadow: '0 1px 3px rgba(15,23,42,.04)',
+      }}>
+        {/* Верхняя панель */}
+        <div style={{
+          display: 'flex', flexWrap: 'wrap', alignItems: 'center', gap: 10,
+          padding: '16px 20px', borderBottom: '1px solid #f1f5f9',
+        }}>
+          <BtnPrimary type="button" onClick={openCreate} style={{ padding: '9px 18px', fontSize: 13, borderRadius: 8 }}>
+            + Добавить компанию
+          </BtnPrimary>
+          <BtnOutline type="button" onClick={() => setImportOpen(true)} style={{ fontSize: 13, padding: '8px 14px', borderRadius: 8 }}>
+            Импорт
           </BtnOutline>
-        </div>
-      )}
-
-      <div
-        style={{
-          display: 'flex',
-          flexWrap: 'wrap',
-          alignItems: 'flex-start',
-          gap: 12,
-          padding: '10px 12px',
-          background: '#f8fafc',
-          borderRadius: 10,
-          border: '1px solid #e8e9ef',
-        }}
-      >
-        <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap', minWidth: 280 }}>
-          <span style={{ fontSize: 11, fontWeight: 700, color: '#64748b' }}>ПОИСК</span>
-          <Input
-            value={tableSearch}
-            onChange={(e) => setTableSearch(e.target.value)}
-            placeholder="Компания, статус, менеджер, контакт…"
-            autoComplete="off"
-            style={{ width: 300, maxWidth: '100%' }}
-          />
-          {tableSearch.trim() !== '' && (
-            <BtnOutline type="button" onClick={() => setTableSearch('')} style={{ fontSize: 12, padding: '6px 10px' }}>
-              Сбросить
-            </BtnOutline>
-          )}
-        </div>
-
-        <span style={{ width: 1, alignSelf: 'stretch', background: '#e2e8f0' }} aria-hidden />
-
-        <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap', minWidth: 280, position: 'relative' }} ref={groupsPopupRef}>
-          <span style={{ fontSize: 11, fontWeight: 800, color: '#64748b' }}>НИШИ / ПАПКИ</span>
-          <button
-            type="button"
-            onClick={() => setGroupsPopupOpen((v) => !v)}
-            style={{
-              border: '1px solid #e2e8f0',
-              background: '#fff',
-              borderRadius: 10,
-              padding: '6px 12px',
-              fontSize: 13,
-              fontWeight: 700,
-              color: '#334155',
-              cursor: 'pointer',
-              fontFamily: 'inherit',
-            }}
-          >
-            {groupFilters.length === 0 ? 'Выбрать ниши' : `Выбрано: ${groupFilters.length}`} +
-          </button>
-          {groupFilters.map((key) => {
-            const label = key === 'none' ? 'Без ниши' : groups.find((g) => String(g.id) === key)?.name || key
-            return (
-              <span key={key} style={{ display: 'inline-flex', alignItems: 'center', gap: 6, padding: '5px 8px', borderRadius: 999, background: '#f1f5f9', color: '#334155', fontSize: 12, fontWeight: 700 }}>
-                {label}
-                <button type="button" onClick={() => toggleGroupFilter(key)} style={{ border: 0, background: 'transparent', color: '#b91c1c', cursor: 'pointer', fontWeight: 800, padding: 0 }}>×</button>
-              </span>
-            )
-          })}
-          {groupsPopupOpen ? (
-            <div
-              style={{
-                position: 'absolute',
-                top: 'calc(100% + 8px)',
-                left: 0,
-                zIndex: 20,
-                width: 360,
-                maxWidth: 'min(92vw, 420px)',
-                maxHeight: 420,
-                overflow: 'auto',
-                background: '#fff',
-                border: '1px solid #e2e8f0',
-                borderRadius: 12,
-                boxShadow: '0 12px 28px rgba(15,23,42,.15)',
-                padding: 10,
-                display: 'flex',
-                flexDirection: 'column',
-                gap: 8,
-              }}
-            >
-              <div style={{ display: 'flex', gap: 8 }}>
-                <Input
-                  value={newGroupName}
-                  onChange={(e) => setNewGroupName(e.target.value)}
-                  placeholder="Новая ниша..."
-                  autoComplete="off"
-                  onKeyDown={(e) => {
-                    if (e.key === 'Enter') void createGroup()
-                  }}
-                  style={{ flex: 1 }}
-                />
-                <BtnOutline type="button" onClick={() => void createGroup()} disabled={groupSaving} style={{ color: '#1a6b3c', padding: '6px 10px' }}>
-                  +
-                </BtnOutline>
-              </div>
-              <button type="button" onClick={() => setGroupFilters([])} style={{ textAlign: 'left', border: 0, background: '#f8fafc', borderRadius: 9, padding: '8px 10px', cursor: 'pointer', fontWeight: 700, color: '#334155' }}>
-                {groupFilters.length === 0 ? '✓ ' : ''}Все ниши
-              </button>
-              <button type="button" onClick={() => toggleGroupFilter('none')} style={{ textAlign: 'left', border: 0, background: groupFilters.includes('none') ? '#e8f5ee' : '#fff', borderRadius: 9, padding: '8px 10px', cursor: 'pointer' }}>
-                {groupFilters.includes('none') ? '✓ ' : ''}Без ниши
-              </button>
-              {groups.map((g) => (
-                <div key={g.id} style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8 }}>
-                  <button
-                    type="button"
-                    onClick={() => toggleGroupFilter(String(g.id))}
-                    style={{ flex: 1, textAlign: 'left', border: 0, background: groupFilters.includes(String(g.id)) ? '#e8f5ee' : '#fff', borderRadius: 9, padding: '8px 10px', cursor: 'pointer' }}
-                  >
-                    {groupFilters.includes(String(g.id)) ? '✓ ' : ''}{g.name}
-                  </button>
-                  <button type="button" onClick={() => void deleteGroup(g)} disabled={groupSaving} title="Удалить нишу" style={{ border: '1px solid #fee2e2', background: '#fff', color: '#b91c1c', borderRadius: 8, padding: '4px 8px', cursor: 'pointer' }}>
-                    ×
-                  </button>
-                </div>
-              ))}
-            </div>
-          ) : null}
-        </div>
-
-        <span style={{ width: 1, alignSelf: 'stretch', background: '#e2e8f0' }} aria-hidden />
-
-        <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap', minWidth: 280 }}>
-          <span style={{ fontSize: 11, fontWeight: 700, color: '#64748b' }}>ФИЛЬТР</span>
-        {(['', 'A', 'B', 'C'] as const).map((key) => {
-          const active = clientTypeFilter === key
-          return (
-            <button
-              key={key || 'all'}
-              type="button"
-              onClick={() => setClientTypeFilter(key)}
-              style={{
-                fontSize: 12,
-                fontWeight: 700,
-                color: active ? '#fff' : '#334155',
-                background: active ? '#1a6b3c' : '#fff',
-                border: active ? '1px solid #1a6b3c' : '1px solid #e2e8f0',
-                borderRadius: 8,
-                padding: '6px 11px',
-                cursor: 'pointer',
-                fontFamily: 'inherit',
-              }}
-            >
-              {key || 'Все типы'}
-            </button>
-          )
-        })}
-        <span style={{ width: 1, height: 20, background: '#e2e8f0', margin: '0 2px' }} aria-hidden />
-        <select
-          value={managerFilter}
-          onChange={(e) => setManagerFilter(e.target.value)}
-          style={{
-            minWidth: 190,
-            border: '1px solid #e8e9ef',
-            borderRadius: 9,
-            padding: '7px 10px',
-            fontSize: 13,
-            color: '#1a1d23',
-            background: '#fff',
-            fontFamily: 'inherit',
-          }}
-        >
-          <option value="">Все менеджеры</option>
-          {managers.map((m) => (
-            <option key={m.id} value={m.id}>
-              {m.name}
-            </option>
-          ))}
-        </select>
-        {(clientTypeFilter || managerFilter || groupFilters.length > 0) && (
           <BtnOutline
             type="button"
             onClick={() => {
-              setClientTypeFilter('')
-              setManagerFilter('')
-              setGroupFilters([])
+              setSelectionMode((v) => !v)
+              if (selectionMode) setSelectedIds([])
             }}
-            style={{ fontSize: 12, padding: '6px 10px' }}
+            style={{ fontSize: 13, padding: '8px 14px', borderRadius: 8, color: selectionMode ? '#1a6b3c' : '#475569', borderColor: selectionMode ? '#bbf7d0' : '#e2e8f0', background: selectionMode ? '#f0fdf4' : '#fff' }}
           >
-            Сбросить фильтр
+            {selectionMode ? '✓ Готово' : 'Выбрать'}
           </BtnOutline>
-        )}
+          <BtnOutline type="button" onClick={openWishlist} style={{ fontSize: 13, padding: '8px 14px', borderRadius: 8 }}>
+            Wishlist
+          </BtnOutline>
+          <BtnOutline type="button" onClick={() => void load()} disabled={fetching} style={{ fontSize: 13, padding: '8px 14px', borderRadius: 8 }}>
+            {fetching ? '…' : 'Обновить'}
+          </BtnOutline>
+          {selectedIds.length > 0 ? (
+            <span style={{ fontSize: 12, fontWeight: 600, color: '#1a6b3c', background: '#f0fdf4', padding: '5px 10px', borderRadius: 6 }}>
+              Выбрано: {selectedIds.length}
+            </span>
+          ) : null}
+          <div style={{ flex: 1, minWidth: 120 }} />
+          <div style={{ position: 'relative', width: 280, maxWidth: '100%' }}>
+            <span style={{ position: 'absolute', left: 12, top: '50%', transform: 'translateY(-50%)', color: '#94a3b8', fontSize: 14, pointerEvents: 'none' }}>⌕</span>
+            <Input
+              value={tableSearch}
+              onChange={(e) => setTableSearch(e.target.value)}
+              placeholder="Поиск: компания, статус, менеджер…"
+              autoComplete="off"
+              style={{ width: '100%', paddingLeft: 34, borderRadius: 8, border: '1px solid #e2e8f0', fontSize: 13 }}
+            />
+          </div>
         </div>
-      </div>
 
-      <Card style={{ padding: 0, overflow: 'hidden', display: 'flex', flexDirection: 'column', minHeight: 0 }}>
+        {/* Фильтры */}
+        <div style={{
+          display: 'flex', flexWrap: 'wrap', alignItems: 'center', gap: 8,
+          padding: '12px 20px', background: '#fafbfc', borderBottom: '1px solid #f1f5f9',
+        }}>
+          <span style={{ fontSize: 12, fontWeight: 600, color: '#94a3b8', marginRight: 4 }}>Фильтр</span>
+          {(['', 'A', 'B', 'C'] as const).map((key) => {
+            const active = clientTypeFilter === key
+            return (
+              <button
+                key={key || 'all'}
+                type="button"
+                onClick={() => setClientTypeFilter(key)}
+                style={{
+                  fontSize: 13, fontWeight: 500,
+                  color: active ? '#fff' : '#475569',
+                  background: active ? '#1a6b3c' : '#fff',
+                  border: `1px solid ${active ? '#1a6b3c' : '#e2e8f0'}`,
+                  borderRadius: 8, padding: '6px 12px',
+                  cursor: 'pointer', fontFamily: 'inherit',
+                }}
+              >
+                {key || 'Все типы'}
+              </button>
+            )
+          })}
+          <div style={{ position: 'relative' }} ref={groupsPopupRef}>
+            <button
+              type="button"
+              onClick={() => setGroupsPopupOpen((v) => !v)}
+              style={{
+                ...filterSelectStyle,
+                display: 'inline-flex', alignItems: 'center', gap: 6,
+                fontWeight: 500, minWidth: 140,
+              }}
+            >
+              {groupFilters.length === 0 ? 'Ниши / папки' : `Ниши: ${groupFilters.length}`}
+            </button>
+            {groupFilters.map((key) => {
+              const label = key === 'none' ? 'Без ниши' : groups.find((g) => String(g.id) === key)?.name || key
+              return (
+                <span key={key} style={{ display: 'inline-flex', alignItems: 'center', gap: 4, marginLeft: 6, padding: '4px 8px', borderRadius: 6, background: '#e8f5ee', color: '#166534', fontSize: 12, fontWeight: 600 }}>
+                  {label}
+                  <button type="button" onClick={() => toggleGroupFilter(key)} style={{ border: 0, background: 'transparent', color: '#166534', cursor: 'pointer', padding: 0, lineHeight: 1 }}>×</button>
+                </span>
+              )
+            })}
+            {groupsPopupOpen ? (
+              <div
+                style={{
+                  position: 'absolute', top: 'calc(100% + 6px)', left: 0, zIndex: 20,
+                  width: 320, maxHeight: 360, overflow: 'auto',
+                  background: '#fff', border: '1px solid #e2e8f0', borderRadius: 12,
+                  boxShadow: '0 12px 32px rgba(15,23,42,.12)', padding: 10,
+                  display: 'flex', flexDirection: 'column', gap: 6,
+                }}
+              >
+                <div style={{ display: 'flex', gap: 8 }}>
+                  <Input
+                    value={newGroupName}
+                    onChange={(e) => setNewGroupName(e.target.value)}
+                    placeholder="Новая ниша…"
+                    autoComplete="off"
+                    onKeyDown={(e) => { if (e.key === 'Enter') void createGroup() }}
+                    style={{ flex: 1, fontSize: 13, borderRadius: 8 }}
+                  />
+                  <BtnOutline type="button" onClick={() => void createGroup()} disabled={groupSaving} style={{ padding: '6px 12px' }}>+</BtnOutline>
+                </div>
+                <button type="button" onClick={() => setGroupFilters([])} style={{ textAlign: 'left', border: 0, background: groupFilters.length === 0 ? '#f0fdf4' : '#fff', borderRadius: 8, padding: '8px 10px', cursor: 'pointer', fontSize: 13 }}>
+                  {groupFilters.length === 0 ? '✓ ' : ''}Все ниши
+                </button>
+                <button type="button" onClick={() => toggleGroupFilter('none')} style={{ textAlign: 'left', border: 0, background: groupFilters.includes('none') ? '#f0fdf4' : '#fff', borderRadius: 8, padding: '8px 10px', cursor: 'pointer', fontSize: 13 }}>
+                  {groupFilters.includes('none') ? '✓ ' : ''}Без ниши
+                </button>
+                {groups.map((g) => (
+                  <div key={g.id} style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                    <button
+                      type="button"
+                      onClick={() => toggleGroupFilter(String(g.id))}
+                      style={{ flex: 1, textAlign: 'left', border: 0, background: groupFilters.includes(String(g.id)) ? '#f0fdf4' : '#fff', borderRadius: 8, padding: '8px 10px', cursor: 'pointer', fontSize: 13 }}
+                    >
+                      {groupFilters.includes(String(g.id)) ? '✓ ' : ''}{g.name}
+                    </button>
+                    <button type="button" onClick={() => void deleteGroup(g)} disabled={groupSaving} style={{ border: '1px solid #fee2e2', background: '#fff', color: '#b91c1c', borderRadius: 6, padding: '4px 8px', cursor: 'pointer', fontSize: 12 }}>×</button>
+                  </div>
+                ))}
+              </div>
+            ) : null}
+          </div>
+          <select
+            value={managerFilter}
+            onChange={(e) => setManagerFilter(e.target.value)}
+            style={{ ...filterSelectStyle, minWidth: 170 }}
+          >
+            <option value="">Все менеджеры</option>
+            {managers.map((m) => (
+              <option key={m.id} value={m.id}>{m.name}</option>
+            ))}
+          </select>
+          {(clientTypeFilter || managerFilter || groupFilters.length > 0 || tableSearch.trim()) && (
+            <button
+              type="button"
+              onClick={() => {
+                setClientTypeFilter('')
+                setManagerFilter('')
+                setGroupFilters([])
+                setTableSearch('')
+              }}
+              style={{ border: 'none', background: 'transparent', color: '#64748b', fontSize: 13, cursor: 'pointer', fontFamily: 'inherit', padding: '6px 8px' }}
+            >
+              Сбросить
+            </button>
+          )}
+          <span style={{ marginLeft: 'auto', fontSize: 12, color: '#94a3b8', fontWeight: 500 }}>
+            {filteredRows.length} из {rows.length}
+          </span>
+        </div>
+
+        {(selectionMode || isAdmin) && (
+          <div style={{
+            display: 'flex', flexWrap: 'wrap', alignItems: 'center', gap: 8,
+            padding: '10px 20px', background: '#f8fafc', borderBottom: '1px solid #f1f5f9',
+          }}>
+            <span style={{ fontSize: 11, fontWeight: 700, color: '#64748b', letterSpacing: '.04em' }}>МАССОВЫЕ</span>
+            {isAdmin ? (
+              <>
+                <select value={bulkTargetManagerId} onChange={(e) => setBulkTargetManagerId(e.target.value)} style={{ ...filterSelectStyle, minWidth: 160 }}>
+                  <option value="">Кому передать</option>
+                  {managers.map((m) => <option key={m.id} value={m.id}>{m.name}</option>)}
+                </select>
+                <BtnOutline type="button" onClick={() => void assignSelectedManager()} disabled={bulkSaving || selectedIds.length === 0} style={{ fontSize: 12, padding: '6px 12px', borderRadius: 8 }}>
+                  Передать отмеченные
+                </BtnOutline>
+                <select value={bulkSourceManagerId} onChange={(e) => setBulkSourceManagerId(e.target.value)} style={{ ...filterSelectStyle, minWidth: 160 }}>
+                  <option value="">Все компании менеджера</option>
+                  {managers.map((m) => <option key={m.id} value={m.id}>{m.name}</option>)}
+                </select>
+                <BtnOutline type="button" onClick={() => void assignManagerPortfolio()} disabled={bulkSaving || !bulkSourceManagerId || !bulkTargetManagerId} style={{ fontSize: 12, padding: '6px 12px', borderRadius: 8 }}>
+                  Передать весь список
+                </BtnOutline>
+              </>
+            ) : null}
+            <select value={bulkGroupId} onChange={(e) => setBulkGroupId(e.target.value)} style={{ ...filterSelectStyle, minWidth: 150 }}>
+              <option value="">Без ниши</option>
+              {groups.map((g) => <option key={g.id} value={g.id}>{g.name}</option>)}
+            </select>
+            <BtnOutline type="button" onClick={() => void assignSelectedGroup()} disabled={bulkSaving || selectedIds.length === 0} style={{ fontSize: 12, padding: '6px 12px', borderRadius: 8 }}>
+              В нишу
+            </BtnOutline>
+          </div>
+        )}
+
+        {/* Таблица */}
         <div
           role="region"
           aria-label="Таблица продаж"
-          style={{
-            maxHeight: 'min(72vh, calc(100vh - 200px))',
-            overflow: 'auto',
-            overflowX: 'auto',
-            overscrollBehavior: 'contain',
-          }}
+          style={{ overflow: 'auto', maxHeight: 'min(68vh, calc(100vh - 280px))' }}
         >
-          <table style={{ width: '100%', borderCollapse: 'collapse', minWidth: selectionMode ? 1660 : 1580 }}>
-            <thead style={{ position: 'sticky', top: 0, zIndex: 3, boxShadow: '0 1px 0 #e2e8f0' }}>
-              <tr style={{ background: '#f8fafc' }}>
+          <table style={{ width: '100%', borderCollapse: 'collapse', minWidth: selectionMode ? 1300 : 1220 }}>
+            <thead style={{ position: 'sticky', top: 0, zIndex: 2, background: '#fff' }}>
+              <tr>
                 {selectionMode ? (
-                  <Th style={{ width: 42 }}>
-                    <input type="checkbox" checked={allFilteredSelected} onChange={toggleAllFiltered} aria-label="Отметить все видимые компании" />
+                  <Th style={{ width: 48, padding: '14px 16px', background: '#fff', borderBottom: '1px solid #eef2f7', textTransform: 'none' }}>
+                    <input type="checkbox" checked={allFilteredSelected} onChange={toggleAllFiltered} aria-label="Отметить все" style={{ width: 16, height: 16, accentColor: '#1a6b3c' }} />
                   </Th>
                 ) : null}
-                <Th style={{ width: 40 }}>№</Th>
-                <Th style={{ minWidth: 260 }}>Компания</Th>
-                <Th>Тип</Th>
-                <Th>Ниша</Th>
-                <Th>Статус</Th>
-                <Th>Должность</Th>
-                <Th style={{ minWidth: 180 }}>ЛПР</Th>
-                <Th style={{ minWidth: 180 }}>ЛВР</Th>
-                <Th style={{ minWidth: 180 }}>Прошлые места работы</Th>
-                <Th>Кто прорабатывает</Th>
-                <Th>Кто привёл</Th>
-                <Th style={{ minWidth: 130 }}>Актуальность</Th>
-                <Th style={{ width: 130 }}>Действия</Th>
+                <Th style={{ width: 48, padding: '14px 20px', background: '#fff', borderBottom: '1px solid #eef2f7', textTransform: 'none' }}>
+                  <ColHeader>№</ColHeader>
+                </Th>
+                <Th style={{ minWidth: 260, padding: '14px 20px', background: '#fff', borderBottom: '1px solid #eef2f7', textTransform: 'none' }}>
+                  <ColHeader>Компания</ColHeader>
+                </Th>
+                <Th style={{ padding: '14px 16px', background: '#fff', borderBottom: '1px solid #eef2f7', textTransform: 'none' }}>
+                  <ColHeader>Тип</ColHeader>
+                </Th>
+                <Th style={{ padding: '14px 16px', background: '#fff', borderBottom: '1px solid #eef2f7', textTransform: 'none' }}>
+                  <ColHeader>Ниша</ColHeader>
+                </Th>
+                <Th style={{ padding: '14px 16px', background: '#fff', borderBottom: '1px solid #eef2f7', textTransform: 'none' }}>
+                  <ColHeader>Статус</ColHeader>
+                </Th>
+                <Th style={{ padding: '14px 16px', background: '#fff', borderBottom: '1px solid #eef2f7', textTransform: 'none' }}>
+                  <ColHeader>Должность</ColHeader>
+                </Th>
+                <Th style={{ minWidth: 160, padding: '14px 16px', background: '#fff', borderBottom: '1px solid #eef2f7', textTransform: 'none' }}>
+                  <ColHeader>ЛПР</ColHeader>
+                </Th>
+                <Th style={{ minWidth: 160, padding: '14px 16px', background: '#fff', borderBottom: '1px solid #eef2f7', textTransform: 'none' }}>
+                  <ColHeader>ЛВР</ColHeader>
+                </Th>
+                <Th style={{ minWidth: 160, padding: '14px 16px', background: '#fff', borderBottom: '1px solid #eef2f7', textTransform: 'none' }}>
+                  <ColHeader>Прошлые места</ColHeader>
+                </Th>
+                <Th style={{ minWidth: 120, padding: '14px 16px', background: '#fff', borderBottom: '1px solid #eef2f7', textTransform: 'none' }}>
+                  <ColHeader>Актуальность</ColHeader>
+                </Th>
+                <Th style={{ width: 100, padding: '14px 16px', background: '#fff', borderBottom: '1px solid #eef2f7', textTransform: 'none' }} />
               </tr>
             </thead>
             <tbody>
               {filteredRows.length === 0 && !fetching ? (
                 <tr>
-                  <Td colSpan={visibleColumnCount} style={{ padding: 0, border: 'none', verticalAlign: 'top' }}>
-                    <Empty text="Компаний пока нет. Нажмите «Добавить компанию» и заполните карточку." />
+                  <Td colSpan={visibleColumnCount} style={{ padding: 48, border: 'none', textAlign: 'center', color: '#94a3b8', fontSize: 14 }}>
+                    Компаний пока нет. Нажмите «Добавить компанию».
                   </Td>
                 </tr>
               ) : (
                 filteredRows.map((row, idx) => (
                   <tr
                     key={row.id}
-                    style={{ borderBottom: '1px solid #eef2f7', cursor: 'pointer' }}
+                    style={{ borderBottom: '1px solid #f1f5f9', cursor: 'pointer', background: '#fff', transition: 'background .12s' }}
                     onClick={() => openViewer(row)}
-                    title="Открыть карточку компании"
+                    onMouseEnter={(e) => { e.currentTarget.style.background = '#f8fafc' }}
+                    onMouseLeave={(e) => { e.currentTarget.style.background = '#fff' }}
+                    title="Открыть карточку"
                   >
                     {selectionMode ? (
-                      <Td>
+                      <Td style={{ padding: '14px 16px', borderBottom: 'none' }}>
                         <input
                           type="checkbox"
                           checked={selectedSet.has(row.id)}
                           onChange={() => toggleSelected(row.id)}
                           onClick={(e) => e.stopPropagation()}
                           aria-label={`Отметить ${row.company_name}`}
+                          style={{ width: 16, height: 16, accentColor: '#1a6b3c' }}
                         />
                       </Td>
                     ) : null}
-                    <Td style={{ fontWeight: 600 }}>{idx + 1}</Td>
-                    <Td style={{ fontWeight: 700, minWidth: 260, maxWidth: 360, color: '#1a6b3c', whiteSpace: 'normal', lineHeight: 1.35 }}>
-                      {row.company_name}
-                      {row.brand_name?.trim() ? <span style={{ color: '#475569', fontWeight: 600 }}> ({row.brand_name.trim()})</span> : null}
+                    <Td style={{ padding: '14px 20px', color: '#94a3b8', fontSize: 13, fontWeight: 500, borderBottom: 'none' }}>{idx + 1}</Td>
+                    <Td style={{ padding: '12px 20px', borderBottom: 'none', minWidth: 260 }}>
+                      <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
+                        <CompanyAvatar name={row.company_name} />
+                        <div style={{ minWidth: 0 }}>
+                          <div style={{ fontWeight: 600, fontSize: 14, color: '#0f172a', lineHeight: 1.3 }}>{row.company_name}</div>
+                          {row.brand_name?.trim() ? (
+                            <div style={{ fontSize: 12, color: '#64748b', marginTop: 2 }}>{row.brand_name.trim()}</div>
+                          ) : null}
+                        </div>
+                      </div>
                     </Td>
-                    <Td style={{ fontSize: 13, fontWeight: 800, color: '#1e3a5f', textAlign: 'center' }}>{row.client_type || '—'}</Td>
-                    <Td style={{ fontSize: 13, fontWeight: 700, color: row.group_name ? '#1a6b3c' : '#94a3b8' }}>{row.group_name || '—'}</Td>
-                    <Td>
-                      {row.status?.trim() ? (
-                        <span
-                          style={{
-                            display: 'inline-flex',
-                            padding: '4px 8px',
-                            borderRadius: 999,
-                            fontSize: 11,
-                            fontWeight: 700,
-                            ...statusStyle(row.status),
-                          }}
-                        >
-                          {row.status}
-                        </span>
-                      ) : '—'}
+                    <Td style={{ padding: '14px 16px', borderBottom: 'none' }}>
+                      {row.client_type ? <TypeBadge type={row.client_type} /> : <span style={{ color: '#cbd5e1' }}>—</span>}
                     </Td>
-                    <Td style={{ fontSize: 13, color: '#475569', maxWidth: 180 }}>{row.position?.trim() || '—'}</Td>
-                    <Td style={{ fontSize: 13, color: '#475569', maxWidth: 200, whiteSpace: 'pre-wrap' }}>
-                      {compactLines([row.lpr_name, row.lpr_role]).join('\n') || '—'}
+                    <Td style={{ padding: '14px 16px', fontSize: 13, color: row.group_name ? '#334155' : '#cbd5e1', fontWeight: 500, borderBottom: 'none' }}>
+                      {row.group_name || '—'}
                     </Td>
-                    <Td style={{ fontSize: 13, color: '#475569', maxWidth: 200, whiteSpace: 'pre-wrap' }}>
-                      {compactLines([row.lvr_name, row.lvr_role]).join('\n') || '—'}
+                    <Td style={{ padding: '14px 16px', borderBottom: 'none' }}>
+                      {row.status?.trim() ? <StatusBadge status={row.status} /> : <span style={{ color: '#cbd5e1' }}>—</span>}
                     </Td>
-                    <Td style={{ fontSize: 13, color: '#475569', maxWidth: 220, whiteSpace: 'pre-wrap' }}>{row.previous_jobs?.trim() || '—'}</Td>
-                    <Td style={{ fontSize: 13, fontWeight: 700 }}>{row.assigned_manager_name || '—'}</Td>
-                    <Td style={{ fontSize: 13, fontWeight: 700, color: '#1e3a5f' }}>{row.brought_by_manager_name || row.brought_by_name || '—'}</Td>
-                    <Td style={{ fontSize: 13, fontWeight: 700, color: row.contact_actuality_date ? '#1a6b3c' : '#94a3b8' }}>
+                    <Td style={{ padding: '14px 16px', fontSize: 13, color: '#64748b', maxWidth: 160, borderBottom: 'none' }}>{row.position?.trim() || '—'}</Td>
+                    <Td style={{ padding: '14px 16px', fontSize: 13, color: '#475569', maxWidth: 180, whiteSpace: 'pre-wrap', borderBottom: 'none' }}>
+                      {compactLines([row.lpr_name, row.lpr_role]).join(' · ') || '—'}
+                    </Td>
+                    <Td style={{ padding: '14px 16px', fontSize: 13, color: '#475569', maxWidth: 180, whiteSpace: 'pre-wrap', borderBottom: 'none' }}>
+                      {compactLines([row.lvr_name, row.lvr_role]).join(' · ') || '—'}
+                    </Td>
+                    <Td style={{ padding: '14px 16px', fontSize: 13, color: '#64748b', maxWidth: 200, borderBottom: 'none' }}>{row.previous_jobs?.trim() || '—'}</Td>
+                    <Td style={{ padding: '14px 16px', fontSize: 13, color: row.contact_actuality_date ? '#334155' : '#cbd5e1', fontWeight: 500, borderBottom: 'none' }}>
                       {row.contact_actuality_date ? formatDate(row.contact_actuality_date) : '—'}
                     </Td>
-                    <Td>
-                      <div style={{ display: 'flex', gap: 8 }} onClick={(e) => e.stopPropagation()}>
-                        <BtnOutline
+                    <Td style={{ padding: '14px 16px', borderBottom: 'none' }}>
+                      <div style={{ display: 'flex', gap: 4 }} onClick={(e) => e.stopPropagation()}>
+                        <button
                           type="button"
                           onClick={() => openEdit(row)}
                           title="Редактировать"
-                          aria-label="Редактировать компанию"
-                          style={{ fontSize: 15, padding: '5px 10px', minWidth: 36, lineHeight: 1 }}
+                          style={{
+                            width: 32, height: 32, borderRadius: 8, border: '1px solid #e2e8f0',
+                            background: '#fff', color: '#64748b', cursor: 'pointer', fontSize: 14,
+                            display: 'flex', alignItems: 'center', justifyContent: 'center',
+                          }}
                         >
                           ✎
-                        </BtnOutline>
-                        <BtnOutline
+                        </button>
+                        <button
                           type="button"
                           onClick={() => void remove(row)}
                           title="Удалить"
-                          aria-label="Удалить компанию"
-                          style={{ fontSize: 15, padding: '5px 10px', minWidth: 36, color: '#b91c1c', lineHeight: 1 }}
+                          style={{
+                            width: 32, height: 32, borderRadius: 8, border: '1px solid #fee2e2',
+                            background: '#fff', color: '#dc2626', cursor: 'pointer', fontSize: 14,
+                            display: 'flex', alignItems: 'center', justifyContent: 'center',
+                          }}
                         >
-                          🗑
-                        </BtnOutline>
+                          ×
+                        </button>
                       </div>
                     </Td>
                   </tr>
@@ -1277,7 +1555,7 @@ export function SalesCompaniesTable({ scope, isAdmin }: { scope: 'all' | 'mine';
             </tbody>
           </table>
         </div>
-      </Card>
+      </div>
 
       {viewerRow ? (
         <div
@@ -1489,10 +1767,9 @@ export function SalesCompaniesTable({ scope, isAdmin }: { scope: 'all' | 'mine';
                   <div style={{ border: '1px dashed #cbd5e1', borderRadius: 10, padding: 10, marginBottom: 10, background: '#f8fafc' }}>
                     <div style={{ display: 'grid', gridTemplateColumns: '130px minmax(0, 1fr) 140px', gap: 8 }}>
                       <Field label="Дата">
-                        <Input
-                          type="date"
+                        <DatePicker
                           value={viewerInteractionForm.interaction_date}
-                          onChange={(e) => setViewerInteractionForm((f) => ({ ...f, interaction_date: e.target.value }))}
+                          onChange={v => setViewerInteractionForm(f => ({ ...f, interaction_date: v }))}
                         />
                       </Field>
                       <Field label="Проект / тема">
@@ -1740,6 +2017,125 @@ export function SalesCompaniesTable({ scope, isAdmin }: { scope: 'all' | 'mine';
       </Modal>
 
       <Modal
+        open={importOpen}
+        onClose={closeImport}
+        title="Импорт клиентской базы из Excel"
+        width={860}
+        footer={
+          <>
+            <BtnOutline type="button" onClick={closeImport} disabled={importBusy}>
+              Отмена
+            </BtnOutline>
+            <BtnPrimary type="button" onClick={() => void importCompanies()} disabled={importBusy || importRows.length === 0}>
+              {importBusy ? 'Импортируем…' : `Импортировать (${importRows.length})`}
+            </BtnPrimary>
+          </>
+        }
+      >
+        <div style={{ display: 'grid', gap: 16 }}>
+          <div style={{
+            padding: 16,
+            borderRadius: 14,
+            background: '#f8fafc',
+            border: '1px solid #e2e8f0',
+            color: '#475569',
+            fontSize: 14,
+            lineHeight: 1.55,
+          }}>
+            <div style={{ fontWeight: 800, color: '#0f172a', marginBottom: 6 }}>Как импортировать</div>
+            Скачайте шаблон, заполните лист <b>Компании</b> в таком же формате и загрузите файл сюда.
+            Обязательная колонка только <b>Компания*</b>. Ниша и менеджер сопоставляются с уже существующими значениями.
+          </div>
+
+          <div style={{ display: 'flex', flexWrap: 'wrap', gap: 10, alignItems: 'center' }}>
+            <BtnOutline type="button" onClick={downloadImportTemplate}>
+              Скачать шаблон Excel
+            </BtnOutline>
+            <label style={{
+              display: 'inline-flex',
+              alignItems: 'center',
+              justifyContent: 'center',
+              padding: '10px 14px',
+              borderRadius: 10,
+              border: '1px dashed #94a3b8',
+              background: '#fff',
+              color: '#334155',
+              fontSize: 13,
+              fontWeight: 700,
+              cursor: 'pointer',
+            }}>
+              Загрузить Excel
+              <input
+                type="file"
+                accept=".xlsx,.xls"
+                style={{ display: 'none' }}
+                onChange={(e) => void handleImportFile(e.target.files?.[0] || null)}
+              />
+            </label>
+            {importFileName && (
+              <span style={{ fontSize: 13, color: '#64748b', fontWeight: 600 }}>
+                {importFileName}
+              </span>
+            )}
+          </div>
+
+          {importError && (
+            <div style={{
+              padding: '10px 12px',
+              borderRadius: 10,
+              background: '#fef2f2',
+              border: '1px solid #fecaca',
+              color: '#b91c1c',
+              fontSize: 13,
+              whiteSpace: 'pre-wrap',
+            }}>
+              {importError}
+            </div>
+          )}
+
+          {importRows.length > 0 && (
+            <div style={{ border: '1px solid #e2e8f0', borderRadius: 12, overflow: 'hidden' }}>
+              <div style={{ padding: '10px 12px', background: '#f8fafc', fontSize: 13, fontWeight: 800, color: '#0f172a' }}>
+                Предпросмотр: {importRows.length} строк
+              </div>
+              <div style={{ maxHeight: 300, overflow: 'auto' }}>
+                <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 12 }}>
+                  <thead>
+                    <tr style={{ background: '#fff' }}>
+                      {['Компания', 'Тип', 'Ниша', 'Статус', 'Контакт', 'Телефон', 'Email', 'Менеджер'].map((h) => (
+                        <th key={h} style={{ textAlign: 'left', padding: '9px 10px', color: '#64748b', borderBottom: '1px solid #e2e8f0', whiteSpace: 'nowrap' }}>
+                          {h}
+                        </th>
+                      ))}
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {importRows.slice(0, 30).map((row, i) => (
+                      <tr key={`${row.company_name}-${i}`}>
+                        <td style={previewTd}>{row.company_name}</td>
+                        <td style={previewTd}>{row.client_type || '—'}</td>
+                        <td style={previewTd}>{row.group_name || '—'}</td>
+                        <td style={previewTd}>{row.status || 'Новый'}</td>
+                        <td style={previewTd}>{row.contact_name || '—'}</td>
+                        <td style={previewTd}>{row.phone || '—'}</td>
+                        <td style={previewTd}>{row.email || '—'}</td>
+                        <td style={previewTd}>{row.manager_name || '—'}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+              {importRows.length > 30 && (
+                <div style={{ padding: '8px 12px', fontSize: 12, color: '#94a3b8', background: '#fafafa' }}>
+                  Показаны первые 30 строк.
+                </div>
+              )}
+            </div>
+          )}
+        </div>
+      </Modal>
+
+      <Modal
         open={modalOpen}
         onClose={closeModal}
         title={editingId == null ? 'Новая компания' : 'Редактировать компанию'}
@@ -1956,10 +2352,9 @@ export function SalesCompaniesTable({ scope, isAdmin }: { scope: 'all' | 'mine';
             />
           </Field>
           <Field label="Актуальность контакта">
-            <Input
-              type="date"
+            <DatePicker
               value={form.contact_actuality_date}
-              onChange={(e) => setForm((f) => ({ ...f, contact_actuality_date: e.target.value }))}
+              onChange={v => setForm(f => ({ ...f, contact_actuality_date: v }))}
             />
           </Field>
         </div>
@@ -2034,10 +2429,9 @@ export function SalesCompaniesTable({ scope, isAdmin }: { scope: 'all' | 'mine';
             <>
               <div style={{ display: 'grid', gridTemplateColumns: '140px minmax(0, 1fr) 160px', gap: 10 }}>
                 <Field label="Дата">
-                  <Input
-                    type="date"
+                  <DatePicker
                     value={interactionForm.interaction_date}
-                    onChange={(e) => setInteractionForm((f) => ({ ...f, interaction_date: e.target.value }))}
+                    onChange={v => setInteractionForm(f => ({ ...f, interaction_date: v }))}
                   />
                 </Field>
                 <Field label="Проект / тема">

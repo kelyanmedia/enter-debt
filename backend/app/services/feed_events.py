@@ -104,6 +104,14 @@ def _visible_for_user(n: FeedNotification, user: User, db: Session) -> bool:
         return False
     if n.kind == "user_created":
         return user.role == "admin"
+    if n.kind.startswith("sale_task"):
+        if user.role in ("admin", "mop"):
+            return True
+        if user.role in ("manager", "administration") and (
+            getattr(user, "can_view_sales", False) or getattr(user, "can_view_crm", False)
+        ):
+            return True
+        return False
     if n.partner_id is None:
         return False
     allowed: Optional[Set[int]] = accessible_partner_ids(db, user)

@@ -1,6 +1,7 @@
 import { useEffect } from 'react'
 import { useRouter } from 'next/router'
 import { useAuth } from '@/context/AuthContext'
+import { hasCrmPipelineAccess, hasSalesCompaniesAccess } from '@/lib/salesAccess'
 
 /** /sales — перенаправление на первый доступный подраздел. */
 export default function SalesIndexPage() {
@@ -13,7 +14,11 @@ export default function SalesIndexPage() {
       void router.replace('/sales/client-base')
       return
     }
-    if ((user.role === 'manager' || user.role === 'administration') && user.can_view_sales === true) {
+    if (hasCrmPipelineAccess(user)) {
+      void router.replace('/sales/pipeline')
+      return
+    }
+    if (hasSalesCompaniesAccess(user)) {
       void router.replace('/sales/companies')
       return
     }

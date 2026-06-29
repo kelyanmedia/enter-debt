@@ -30,8 +30,13 @@ import app.models.telegram_join  # noqa: F401 — таблица telegram_join_r
 import app.models.feed_notification  # noqa: F401 — лента событий
 import app.models.ceo_metric_override  # noqa: F401 — ручные значения CEO dashboard
 from app.api.routes import auth, users, partners, payments, dashboard, notifications, archive, payment_months, telegram_join, feed_notifications, contract_requests, employee_tasks, employee_payment_records, finance_projects_cost, finance_cash_flow, finance_lending, sales_companies, trash
-from app.api.routes import commissions, subscription_items, access_entries, company_ui
+from app.api.routes import commissions, subscription_items, access_entries, company_ui, pm_commissions
+from app.api.routes import sale_pipelines
+from app.api.routes import sales_analytics
+from app.api.routes import sales_calendar
 import app.models.commission  # noqa: F401
+import app.models.pm_commission_log  # noqa: F401
+import app.models.sale_pipeline  # noqa: F401 — CRM воронки продаж
 import app.models.employee_task  # noqa: F401
 import app.models.subscription_item  # noqa: F401
 import app.models.employee_payment_record  # noqa: F401
@@ -43,6 +48,7 @@ import app.models.pl_manual_line  # noqa: F401 — ручные строки P&L
 import app.models.available_funds_manual  # noqa: F401
 import app.models.lending_record  # noqa: F401 — кредитование
 import app.models.sales_company  # noqa: F401 — продажи / CRM-lite
+import app.models.sale_deal_task  # noqa: F401 — задачи по сделкам
 from app.core.config import settings
 from app.core.security import get_current_user, get_password_hash, normalize_email
 from app.models.user import User
@@ -122,6 +128,15 @@ def _employee_task_reminders_job():
         finally:
             db.close()
             reset_company_context(tok)
+
+
+def _sale_deal_task_reminders_job():
+    from app.services.sale_deal_task_reminders import process_sale_deal_task_reminders
+
+    try:
+        process_sale_deal_task_reminders()
+    except Exception:
+        log.exception("Sale deal task reminders failed")
 
 
 def _trash_purge_job():
@@ -206,7 +221,11 @@ app.include_router(finance_projects_cost.router_finance_no_api_prefix)
 app.include_router(finance_cash_flow.router)
 app.include_router(finance_lending.router)
 app.include_router(sales_companies.router)
+app.include_router(sale_pipelines.router)
+app.include_router(sales_analytics.router)
+app.include_router(sales_calendar.router)
 app.include_router(commissions.router)
+app.include_router(pm_commissions.router)
 app.include_router(subscription_items.router)
 app.include_router(access_entries.router)
 app.include_router(company_ui.router)
@@ -267,6 +286,13 @@ def startup():
             replace_existing=True,
         )
         _scheduler.add_job(
+            _sale_deal_task_reminders_job,
+            "interval",
+            minutes=1,
+            id="sale_deal_task_reminders",
+            replace_existing=True,
+        )
+        _scheduler.add_job(
             _trash_purge_job,
             "cron",
             hour=3,
@@ -301,6 +327,8 @@ def _migrate():
         "ALTER TABLE users ADD COLUMN IF NOT EXISTS can_view_subscriptions BOOLEAN NOT NULL DEFAULT FALSE",
         "ALTER TABLE users ADD COLUMN IF NOT EXISTS can_view_accesses BOOLEAN NOT NULL DEFAULT FALSE",
         "ALTER TABLE users ADD COLUMN IF NOT EXISTS can_view_sales BOOLEAN NOT NULL DEFAULT FALSE",
+        "ALTER TABLE users ADD COLUMN IF NOT EXISTS can_view_crm BOOLEAN NOT NULL DEFAULT FALSE",
+        "ALTER TABLE users ADD COLUMN IF NOT EXISTS is_sales_rop BOOLEAN NOT NULL DEFAULT FALSE",
         "UPDATE users SET web_access = TRUE WHERE web_access IS NULL",
         "ALTER TABLE users ADD COLUMN IF NOT EXISTS see_all_partners BOOLEAN DEFAULT FALSE",
         "ALTER TABLE users ADD COLUMN IF NOT EXISTS team_expense_control_enabled BOOLEAN NOT NULL DEFAULT FALSE",
@@ -356,6 +384,8 @@ def _migrate():
         "ALTER TABLE users ADD COLUMN IF NOT EXISTS admin_accessible_company_slugs TEXT",
         "ALTER TABLE users ADD COLUMN IF NOT EXISTS can_enter_cash_flow BOOLEAN NOT NULL DEFAULT FALSE",
         "ALTER TABLE users ADD COLUMN IF NOT EXISTS can_view_sales BOOLEAN NOT NULL DEFAULT FALSE",
+        "ALTER TABLE users ADD COLUMN IF NOT EXISTS can_view_crm BOOLEAN NOT NULL DEFAULT FALSE",
+        "ALTER TABLE users ADD COLUMN IF NOT EXISTS is_sales_rop BOOLEAN NOT NULL DEFAULT FALSE",
         "ALTER TABLE users ADD COLUMN IF NOT EXISTS can_view_finance_ceo BOOLEAN NOT NULL DEFAULT FALSE",
         "ALTER TABLE users ADD COLUMN IF NOT EXISTS can_view_finance_pl BOOLEAN NOT NULL DEFAULT FALSE",
         "ALTER TABLE users ADD COLUMN IF NOT EXISTS can_view_finance_cashflow BOOLEAN NOT NULL DEFAULT FALSE",
@@ -629,6 +659,9 @@ def _migrate():
         "ALTER TABLE cash_flow_entries ADD COLUMN IF NOT EXISTS company_slug VARCHAR(32) NOT NULL DEFAULT 'kelyanmedia'",
         "ALTER TABLE cash_flow_entries ADD COLUMN IF NOT EXISTS created_by_user_id INTEGER REFERENCES users(id) ON DELETE SET NULL",
         "CREATE INDEX IF NOT EXISTS ix_cash_flow_entries_created_by_user_id ON cash_flow_entries (created_by_user_id)",
+        "ALTER TABLE cash_flow_entries ADD COLUMN IF NOT EXISTS cost_category VARCHAR(20)",
+        "ALTER TABLE cash_flow_entries ADD COLUMN IF NOT EXISTS employee_task_id INTEGER REFERENCES employee_tasks(id) ON DELETE CASCADE",
+        "CREATE INDEX IF NOT EXISTS ix_cash_flow_entries_employee_task_id ON cash_flow_entries (employee_task_id)",
         "ALTER TABLE ceo_metric_overrides ADD COLUMN IF NOT EXISTS company_slug VARCHAR(32) NOT NULL DEFAULT 'kelyanmedia'",
         "ALTER TABLE feed_notifications ADD COLUMN IF NOT EXISTS company_slug VARCHAR(32) NOT NULL DEFAULT 'kelyanmedia'",
         "ALTER TABLE telegram_join_requests ADD COLUMN IF NOT EXISTS company_slug VARCHAR(32) NOT NULL DEFAULT 'kelyanmedia'",
@@ -694,6 +727,141 @@ def _migrate():
         )""",
         "CREATE UNIQUE INDEX IF NOT EXISTS uq_pl_manual_cell_line_month ON pl_manual_month_cells (line_id, period_month)",
         "CREATE INDEX IF NOT EXISTS ix_pl_manual_month_cells_line ON pl_manual_month_cells (line_id)",
+        # ── Комиссия проектного менеджера (ПМ) ─────────────────────────────────
+        "ALTER TABLE payments ADD COLUMN IF NOT EXISTS planned_deadline DATE",
+        "ALTER TABLE payments ADD COLUMN IF NOT EXISTS effective_planned_deadline DATE",
+        "ALTER TABLE payments ADD COLUMN IF NOT EXISTS actual_close_date DATE",
+        "ALTER TABLE payments ADD COLUMN IF NOT EXISTS quality_ok BOOLEAN NOT NULL DEFAULT TRUE",
+        "ALTER TABLE payments ADD COLUMN IF NOT EXISTS quality_fail_reason TEXT",
+        "ALTER TABLE payments ADD COLUMN IF NOT EXISTS nps_score INTEGER",
+        "ALTER TABLE payments ADD COLUMN IF NOT EXISTS portfolio_case BOOLEAN",
+        "ALTER TABLE payments ADD COLUMN IF NOT EXISTS deadline_shift_reason TEXT",
+        "ALTER TABLE payments ADD COLUMN IF NOT EXISTS pm_commission_rate NUMERIC(5,2)",
+        "ALTER TABLE payments ADD COLUMN IF NOT EXISTS pm_commission_amount NUMERIC(15,2)",
+        "ALTER TABLE payments ADD COLUMN IF NOT EXISTS pm_commission_status VARCHAR(20) NOT NULL DEFAULT 'forecast'",
+        "ALTER TABLE payments ADD COLUMN IF NOT EXISTS pm_commission_paid_uzs NUMERIC(15,2) NOT NULL DEFAULT 0",
+        "ALTER TABLE payments ADD COLUMN IF NOT EXISTS pm_closed_at TIMESTAMP WITH TIME ZONE",
+        "ALTER TABLE users ADD COLUMN IF NOT EXISTS admin_stored_password TEXT",
+        """CREATE TABLE IF NOT EXISTS pm_commission_logs (
+            id SERIAL PRIMARY KEY,
+            company_slug VARCHAR(32) NOT NULL DEFAULT 'kelyanmedia',
+            payment_id INTEGER NOT NULL REFERENCES payments(id) ON DELETE CASCADE,
+            pm_id INTEGER REFERENCES users(id) ON DELETE SET NULL,
+            action VARCHAR(32) NOT NULL,
+            rate_percent NUMERIC(5,2),
+            amount NUMERIC(15,2),
+            profit NUMERIC(15,2),
+            inputs_json TEXT,
+            actor_user_id INTEGER REFERENCES users(id) ON DELETE SET NULL,
+            override_reason TEXT,
+            created_at TIMESTAMP WITH TIME ZONE DEFAULT now()
+        )""",
+        "CREATE INDEX IF NOT EXISTS ix_pm_commission_logs_payment_id ON pm_commission_logs (payment_id)",
+        "CREATE INDEX IF NOT EXISTS ix_pm_commission_logs_company_slug ON pm_commission_logs (company_slug)",
+        # ── CRM: Воронки продаж ─────────────────────────────────────────────────
+        """CREATE TABLE IF NOT EXISTS sale_pipelines (
+            id SERIAL PRIMARY KEY,
+            company_slug VARCHAR(32) NOT NULL,
+            name VARCHAR(200) NOT NULL,
+            sort_order INTEGER NOT NULL DEFAULT 0,
+            created_by_user_id INTEGER REFERENCES users(id) ON DELETE SET NULL,
+            created_at TIMESTAMP WITH TIME ZONE DEFAULT now(),
+            updated_at TIMESTAMP WITH TIME ZONE
+        )""",
+        "CREATE INDEX IF NOT EXISTS ix_sale_pipelines_company_slug ON sale_pipelines (company_slug)",
+        """CREATE TABLE IF NOT EXISTS sale_pipeline_stages (
+            id SERIAL PRIMARY KEY,
+            company_slug VARCHAR(32) NOT NULL,
+            pipeline_id INTEGER NOT NULL REFERENCES sale_pipelines(id) ON DELETE CASCADE,
+            name VARCHAR(200) NOT NULL,
+            color VARCHAR(20),
+            sort_order INTEGER NOT NULL DEFAULT 0,
+            is_closed_won BOOLEAN NOT NULL DEFAULT FALSE,
+            is_closed_lost BOOLEAN NOT NULL DEFAULT FALSE,
+            created_at TIMESTAMP WITH TIME ZONE DEFAULT now()
+        )""",
+        "CREATE INDEX IF NOT EXISTS ix_sale_pipeline_stages_pipeline_id ON sale_pipeline_stages (pipeline_id)",
+        """CREATE TABLE IF NOT EXISTS sale_deals (
+            id SERIAL PRIMARY KEY,
+            company_slug VARCHAR(32) NOT NULL,
+            pipeline_id INTEGER NOT NULL REFERENCES sale_pipelines(id) ON DELETE CASCADE,
+            stage_id INTEGER REFERENCES sale_pipeline_stages(id) ON DELETE SET NULL,
+            title VARCHAR(300) NOT NULL,
+            contact_name VARCHAR(220),
+            company_name VARCHAR(300),
+            budget NUMERIC(15,2),
+            currency VARCHAR(3) NOT NULL DEFAULT 'USD',
+            notes TEXT,
+            tags TEXT,
+            assigned_user_id INTEGER REFERENCES users(id) ON DELETE SET NULL,
+            sales_company_id INTEGER REFERENCES sales_companies(id) ON DELETE SET NULL,
+            created_by_user_id INTEGER REFERENCES users(id) ON DELETE SET NULL,
+            sort_order INTEGER NOT NULL DEFAULT 0,
+            created_at TIMESTAMP WITH TIME ZONE DEFAULT now(),
+            updated_at TIMESTAMP WITH TIME ZONE,
+            closed_at TIMESTAMP WITH TIME ZONE
+        )""",
+        "CREATE INDEX IF NOT EXISTS ix_sale_deals_company_slug ON sale_deals (company_slug)",
+        "CREATE INDEX IF NOT EXISTS ix_sale_deals_pipeline_id ON sale_deals (pipeline_id)",
+        "CREATE INDEX IF NOT EXISTS ix_sale_deals_stage_id ON sale_deals (stage_id)",
+        """CREATE TABLE IF NOT EXISTS sale_deal_comments (
+            id SERIAL PRIMARY KEY,
+            company_slug VARCHAR(32) NOT NULL,
+            deal_id INTEGER NOT NULL REFERENCES sale_deals(id) ON DELETE CASCADE,
+            body TEXT NOT NULL,
+            kind VARCHAR(20) NOT NULL DEFAULT 'comment',
+            meta_json TEXT,
+            created_by_user_id INTEGER REFERENCES users(id) ON DELETE SET NULL,
+            created_at TIMESTAMP WITH TIME ZONE DEFAULT now()
+        )""",
+        "CREATE INDEX IF NOT EXISTS ix_sale_deal_comments_deal_id ON sale_deal_comments (deal_id)",
+        "ALTER TABLE sale_deals ADD COLUMN IF NOT EXISTS short_note TEXT",
+        "ALTER TABLE sale_deals ADD COLUMN IF NOT EXISTS phone VARCHAR(80)",
+        "ALTER TABLE sale_deals ADD COLUMN IF NOT EXISTS email VARCHAR(220)",
+        "ALTER TABLE sale_deals ADD COLUMN IF NOT EXISTS source VARCHAR(120)",
+        "ALTER TABLE sale_deals ADD COLUMN IF NOT EXISTS client_geo VARCHAR(8) NOT NULL DEFAULT 'UZ'",
+        "ALTER TABLE sale_deals ADD COLUMN IF NOT EXISTS service_type VARCHAR(40) NOT NULL DEFAULT 'seo'",
+        """CREATE TABLE IF NOT EXISTS sale_meetings (
+            id SERIAL PRIMARY KEY,
+            company_slug VARCHAR(32) NOT NULL,
+            contact_name VARCHAR(220) NOT NULL,
+            company_name VARCHAR(300) NOT NULL,
+            sales_company_id INTEGER REFERENCES sales_companies(id) ON DELETE SET NULL,
+            sale_deal_id INTEGER REFERENCES sale_deals(id) ON DELETE SET NULL,
+            service_type VARCHAR(40) NOT NULL DEFAULT 'discovery',
+            starts_at TIMESTAMP WITH TIME ZONE NOT NULL,
+            duration_minutes INTEGER NOT NULL DEFAULT 60,
+            notes TEXT,
+            created_by_user_id INTEGER REFERENCES users(id) ON DELETE SET NULL,
+            created_at TIMESTAMP WITH TIME ZONE DEFAULT now(),
+            updated_at TIMESTAMP WITH TIME ZONE
+        )""",
+        "CREATE INDEX IF NOT EXISTS ix_sale_meetings_company_slug ON sale_meetings (company_slug)",
+        "CREATE INDEX IF NOT EXISTS ix_sale_meetings_starts_at ON sale_meetings (starts_at)",
+        """CREATE TABLE IF NOT EXISTS sale_meeting_participants (
+            id SERIAL PRIMARY KEY,
+            meeting_id INTEGER NOT NULL REFERENCES sale_meetings(id) ON DELETE CASCADE,
+            user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE
+        )""",
+        "CREATE INDEX IF NOT EXISTS ix_sale_meeting_participants_meeting_id ON sale_meeting_participants (meeting_id)",
+        """CREATE TABLE IF NOT EXISTS sale_deal_tasks (
+            id SERIAL PRIMARY KEY,
+            company_slug VARCHAR(32) NOT NULL,
+            deal_id INTEGER NOT NULL REFERENCES sale_deals(id) ON DELETE CASCADE,
+            task_type VARCHAR(40) NOT NULL DEFAULT 'call',
+            title VARCHAR(300),
+            notes TEXT,
+            due_at TIMESTAMP WITH TIME ZONE NOT NULL,
+            remind_minutes_before INTEGER NOT NULL DEFAULT 15,
+            reminder_sent_at TIMESTAMP WITH TIME ZONE,
+            status VARCHAR(20) NOT NULL DEFAULT 'pending',
+            assigned_user_id INTEGER REFERENCES users(id) ON DELETE SET NULL,
+            created_by_user_id INTEGER REFERENCES users(id) ON DELETE SET NULL,
+            created_at TIMESTAMP WITH TIME ZONE DEFAULT now(),
+            completed_at TIMESTAMP WITH TIME ZONE
+        )""",
+        "CREATE INDEX IF NOT EXISTS ix_sale_deal_tasks_deal_id ON sale_deal_tasks (deal_id)",
+        "CREATE INDEX IF NOT EXISTS ix_sale_deal_tasks_due_at ON sale_deal_tasks (due_at)",
     ]
     for sql in migrations:
         # Защита от случайного удаления данных (разрешены DROP CONSTRAINT / DROP INDEX для миграций схемы)
@@ -782,6 +950,14 @@ def _migrate():
             missing.append(
                 "ALTER TABLE users ADD COLUMN can_view_sales BOOLEAN NOT NULL DEFAULT FALSE"
             )
+        if "can_view_crm" not in cols:
+            missing.append(
+                "ALTER TABLE users ADD COLUMN can_view_crm BOOLEAN NOT NULL DEFAULT FALSE"
+            )
+        if "is_sales_rop" not in cols:
+            missing.append(
+                "ALTER TABLE users ADD COLUMN is_sales_rop BOOLEAN NOT NULL DEFAULT FALSE"
+            )
         if "can_view_finance_ceo" not in cols:
             missing.append(
                 "ALTER TABLE users ADD COLUMN can_view_finance_ceo BOOLEAN NOT NULL DEFAULT FALSE"
@@ -851,6 +1027,41 @@ def _migrate():
         ],
         "cash_flow_entries": [
             ("created_by_user_id", "ALTER TABLE cash_flow_entries ADD COLUMN created_by_user_id INTEGER REFERENCES users(id) ON DELETE SET NULL"),
+            ("cost_category", "ALTER TABLE cash_flow_entries ADD COLUMN cost_category VARCHAR(20)"),
+            ("employee_task_id", "ALTER TABLE cash_flow_entries ADD COLUMN employee_task_id INTEGER REFERENCES employee_tasks(id) ON DELETE CASCADE"),
+        ],
+        "sale_deals": [
+            ("short_note", "ALTER TABLE sale_deals ADD COLUMN short_note TEXT"),
+            ("phone", "ALTER TABLE sale_deals ADD COLUMN phone VARCHAR(80)"),
+            ("email", "ALTER TABLE sale_deals ADD COLUMN email VARCHAR(220)"),
+            ("source", "ALTER TABLE sale_deals ADD COLUMN source VARCHAR(120)"),
+            ("notes", "ALTER TABLE sale_deals ADD COLUMN notes TEXT"),
+            ("tags", "ALTER TABLE sale_deals ADD COLUMN tags TEXT"),
+            ("sales_company_id", "ALTER TABLE sale_deals ADD COLUMN sales_company_id INTEGER REFERENCES sales_companies(id) ON DELETE SET NULL"),
+            ("closed_at", "ALTER TABLE sale_deals ADD COLUMN closed_at TIMESTAMP"),
+            ("payment_id", "ALTER TABLE sale_deals ADD COLUMN payment_id INTEGER REFERENCES payments(id) ON DELETE SET NULL"),
+            ("commission_id", "ALTER TABLE sale_deals ADD COLUMN commission_id INTEGER REFERENCES commissions(id) ON DELETE SET NULL"),
+            ("client_geo", "ALTER TABLE sale_deals ADD COLUMN client_geo VARCHAR(8) NOT NULL DEFAULT 'UZ'"),
+            ("service_type", "ALTER TABLE sale_deals ADD COLUMN service_type VARCHAR(40) NOT NULL DEFAULT 'seo'"),
+        ],
+        "users": [
+            ("admin_stored_password", "ALTER TABLE users ADD COLUMN admin_stored_password TEXT"),
+            ("mop_default_commission_percent", "ALTER TABLE users ADD COLUMN mop_default_commission_percent NUMERIC(5,2)"),
+        ],
+        "payments": [
+            ("planned_deadline", "ALTER TABLE payments ADD COLUMN planned_deadline DATE"),
+            ("effective_planned_deadline", "ALTER TABLE payments ADD COLUMN effective_planned_deadline DATE"),
+            ("actual_close_date", "ALTER TABLE payments ADD COLUMN actual_close_date DATE"),
+            ("quality_ok", "ALTER TABLE payments ADD COLUMN quality_ok BOOLEAN NOT NULL DEFAULT 1"),
+            ("quality_fail_reason", "ALTER TABLE payments ADD COLUMN quality_fail_reason TEXT"),
+            ("nps_score", "ALTER TABLE payments ADD COLUMN nps_score INTEGER"),
+            ("portfolio_case", "ALTER TABLE payments ADD COLUMN portfolio_case BOOLEAN"),
+            ("deadline_shift_reason", "ALTER TABLE payments ADD COLUMN deadline_shift_reason TEXT"),
+            ("pm_commission_rate", "ALTER TABLE payments ADD COLUMN pm_commission_rate NUMERIC(5,2)"),
+            ("pm_commission_amount", "ALTER TABLE payments ADD COLUMN pm_commission_amount NUMERIC(15,2)"),
+            ("pm_commission_status", "ALTER TABLE payments ADD COLUMN pm_commission_status VARCHAR(20) NOT NULL DEFAULT 'forecast'"),
+            ("pm_commission_paid_uzs", "ALTER TABLE payments ADD COLUMN pm_commission_paid_uzs NUMERIC(15,2) NOT NULL DEFAULT 0"),
+            ("pm_closed_at", "ALTER TABLE payments ADD COLUMN pm_closed_at TIMESTAMP"),
         ],
     }
     for _slug, eng in iter_company_engines():
@@ -961,6 +1172,7 @@ def seed_initial_data():
                         name=u["name"],
                         email=normalize_email(u["email"]),
                         hashed_password=get_password_hash(u["password"]),
+                        admin_stored_password=u["password"],
                         role=u["role"],
                         is_active=True,
                         web_access=True,

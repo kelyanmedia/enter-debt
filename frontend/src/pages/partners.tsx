@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react'
+import DatePicker from '@/components/DatePicker'
 import { useAuth } from '@/context/AuthContext'
 import Layout from '@/components/Layout'
 import { PageHeader, Card, Th, Td, PartnerAvatar, statusBadge, BtnPrimary, BtnOutline, BtnIconEdit, BtnIconDelete, Modal, ConfirmModal, Field, Input, Select, Empty, formatDate } from '@/components/ui'
@@ -229,17 +230,15 @@ export default function PartnersPage() {
         </div>
         <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
           <Field label="Начало работы с клиентом">
-            <Input
-              type="date"
+            <DatePicker
               value={form.cooperation_start_date}
-              onChange={e => setForm(f => ({ ...f, cooperation_start_date: e.target.value }))}
+              onChange={v => setForm(f => ({ ...f, cooperation_start_date: v }))}
             />
           </Field>
           <Field label="Старт работы (приход в компанию)">
-            <Input
-              type="date"
+            <DatePicker
               value={form.client_joined_date}
-              onChange={e => setForm(f => ({ ...f, client_joined_date: e.target.value }))}
+              onChange={v => setForm(f => ({ ...f, client_joined_date: v }))}
             />
           </Field>
         </div>

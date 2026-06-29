@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useState, type CSSProperties } from 'react'
+import DatePicker from '@/components/DatePicker'
 import { useRouter } from 'next/router'
 import Layout from '@/components/Layout'
 import {
@@ -570,18 +571,15 @@ export default function FinanceLendingPage() {
             </select>
           </Field>
           <Field label="Дата выдачи">
-            <Input
-              type="date"
+            <DatePicker
               value={form.issued_on}
-              onChange={(e) => setForm((f) => ({ ...f, issued_on: e.target.value }))}
+              onChange={v => setForm(f => ({ ...f, issued_on: v }))}
             />
           </Field>
           <Field label="Дедлайн возврата">
-            <Input
-              type="date"
+            <DatePicker
               value={form.deadline_date}
-              onChange={(e) => setForm((f) => ({ ...f, deadline_date: e.target.value }))}
-              title="Можно оставить пустым — запись будет бессрочной, расчёт пойдёт на сегодня"
+              onChange={v => setForm(f => ({ ...f, deadline_date: v }))}
             />
           </Field>
         </div>

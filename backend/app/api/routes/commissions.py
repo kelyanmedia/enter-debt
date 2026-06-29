@@ -18,14 +18,16 @@ from app.schemas.schemas import (
     CommissionOut,
     CommissionStatsOut,
     CommissionLinkablePaymentOut,
+    PmCommissionSnippetOut,
 )
 from app.core.security import get_current_user
+from app.services.pm_commission import build_pm_commission_state
 
 router = APIRouter(prefix="/api/commissions", tags=["commissions"])
 
 
 def _require_commissions_role(user: User) -> None:
-    if user.role == "administration":
+    if user.role in ("administration", "employee"):
         raise HTTPException(
             status_code=403,
             detail="Раздел комиссий менеджеров недоступен для роли «Администрация».",
@@ -70,7 +72,7 @@ def _validate_payment_for_commission(db: Session, payment_id: int) -> None:
         )
 
 
-def _enrich(c: Commission) -> CommissionOut:
+def _enrich(c: Commission, db: Optional[Session] = None) -> CommissionOut:
     out = CommissionOut.model_validate(c)
     cost = Decimal(str(c.project_cost or 0))
     prod = Decimal(str(c.production_cost or 0))
@@ -88,6 +90,16 @@ def _enrich(c: Commission) -> CommissionOut:
     if pay is not None:
         out.linked_payment_description = (pay.description or "").strip() or None
         out.linked_partner_name = (pay.partner.name if pay.partner else None) or None
+        if db is not None and pay.partner:
+            pm_state = build_pm_commission_state(pay)
+            out.pm = PmCommissionSnippetOut(
+                pm_id=pm_state.get("pm_id"),
+                pm_name=pm_state.get("pm_name"),
+                rate_percent=pm_state["rate_percent"],
+                amount=pm_state["amount"],
+                status=pm_state["status"],
+                hint_next_rate=pm_state.get("hint_next_rate"),
+            )
     else:
         out.linked_payment_description = None
         out.linked_partner_name = None
@@ -97,14 +109,23 @@ def _enrich(c: Commission) -> CommissionOut:
 def _commission_load_options(q):
     return q.options(
         joinedload(Commission.manager),
-        joinedload(Commission.payment).joinedload(Payment.partner),
+        joinedload(Commission.payment).joinedload(Payment.partner).joinedload(Partner.manager),
+        joinedload(Commission.payment).joinedload(Payment.months),
     )
+
+
+def _commission_owned_by(user: User, c: Commission) -> bool:
+    if user.role in ("admin", "accountant", "financier"):
+        return True
+    if user.role in ("manager", "mop") and c.manager_id == user.id:
+        return True
+    return False
 
 
 def _base_query(db: Session, current_user: User, year: Optional[int], month: Optional[int], manager_id: Optional[int]):
     q = db.query(Commission).filter(Commission.company_slug == get_request_company())
     q = _commission_load_options(q)
-    if current_user.role == "manager":
+    if current_user.role in ("manager", "mop"):
         q = q.filter(Commission.manager_id == current_user.id)
     elif manager_id:
         q = q.filter(Commission.manager_id == manager_id)
@@ -125,7 +146,8 @@ def linkable_payments(
     ),
 ):
     """Активные проекты «Проекты» для привязки. Для раздела «Комиссия» передавайте for_commission=true."""
-    _require_commissions_role(current_user)
+    if current_user.role in ("administration", "employee", "mop"):
+        raise HTTPException(status_code=403, detail="Нет доступа")
 
     q = (
         db.query(Payment)
@@ -170,7 +192,8 @@ def get_stats(
 ):
     _require_commissions_role(current_user)
     rows = _base_query(db, current_user, year, month, manager_id).all()
-    total_cost = total_profit = total_mgr = total_recv = Decimal(0)
+    total_cost = total_profit = total_mgr = total_recv = total_pm_plan = total_pm_debt = Decimal(0)
+    payment_ids: set[int] = set()
     for c in rows:
         cost = Decimal(str(c.project_cost or 0))
         prod = Decimal(str(c.production_cost or 0))
@@ -180,6 +203,12 @@ def get_stats(
         total_profit += profit
         total_mgr += profit * pct / 100
         total_recv += Decimal(str(c.received_amount_1 or 0)) + Decimal(str(c.received_amount_2 or 0))
+        pay = getattr(c, "payment", None)
+        if pay is not None and pay.id not in payment_ids:
+            payment_ids.add(pay.id)
+            pm_st = build_pm_commission_state(pay)
+            total_pm_plan += Decimal(str(pm_st["amount"]))
+            total_pm_debt += Decimal(str(pm_st["debt_uzs"]))
     pending = total_mgr - total_recv
     return CommissionStatsOut(
         total_projects=len(rows),
@@ -188,6 +217,8 @@ def get_stats(
         total_manager_income=total_mgr.quantize(Decimal("0.01")),
         total_received=total_recv,
         total_pending=max(Decimal(0), pending).quantize(Decimal("0.01")),
+        total_pm_income_plan=total_pm_plan.quantize(Decimal("0.01")),
+        total_pm_debt=total_pm_debt.quantize(Decimal("0.01")),
     )
 
 
@@ -205,7 +236,7 @@ def list_commissions(
         .order_by(Commission.project_date.desc(), Commission.id.desc())
         .all()
     )
-    return [_enrich(c) for c in rows]
+    return [_enrich(c, db) for c in rows]
 
 
 @router.post("", response_model=CommissionOut)
@@ -218,6 +249,8 @@ def create_commission(
     mgr_id = current_user.id
     if current_user.role in ("admin", "accountant") and data.manager_id:
         mgr_id = data.manager_id
+    elif current_user.role == "mop":
+        mgr_id = current_user.id
 
     dup_n = max(0, min(36, int(data.duplicate_months or 0)))
     pid = data.payment_id
@@ -255,7 +288,7 @@ def create_commission(
         .filter(Commission.id == first_id, Commission.company_slug == get_request_company())
         .first()
     )
-    return _enrich(row)
+    return _enrich(row, db)
 
 
 @router.put("/{cid}", response_model=CommissionOut)
@@ -273,9 +306,25 @@ def update_commission(
     )
     if not c:
         raise HTTPException(404, "Не найдено")
-    if current_user.role == "manager" and c.manager_id != current_user.id:
+    if not _commission_owned_by(current_user, c):
         raise HTTPException(403, "Нет доступа")
     patch = data.model_dump(exclude_unset=True)
+    if current_user.role == "mop":
+        allowed = {
+            "manager_percent",
+            "received_amount_1",
+            "received_amount_2",
+            "received_amount_1_on",
+            "received_amount_2_on",
+            "note",
+        }
+        patch = {k: v for k, v in patch.items() if k in allowed}
+        if not patch:
+            raise HTTPException(status_code=400, detail="Нет допустимых полей для изменения")
+        if "manager_percent" in patch and patch["manager_percent"] is not None:
+            pct = Decimal(str(patch["manager_percent"]))
+            if pct < 1 or pct > 20:
+                raise HTTPException(status_code=400, detail="% комиссии: от 1 до 20")
     for field, val in patch.items():
         setattr(c, field, val)
     if c.payment_id is not None:
@@ -286,7 +335,7 @@ def update_commission(
         .filter(Commission.id == cid, Commission.company_slug == get_request_company())
         .first()
     )
-    return _enrich(row)
+    return _enrich(row, db)
 
 
 @router.post("/{cid}/duplicate-next-month", response_model=CommissionOut)
@@ -304,7 +353,7 @@ def duplicate_commission_next_month(
     )
     if not src:
         raise HTTPException(404, "Не найдено")
-    if current_user.role == "manager" and src.manager_id != current_user.id:
+    if not _commission_owned_by(current_user, src):
         raise HTTPException(403, "Нет доступа")
     new = Commission(
         company_slug=get_request_company(),
@@ -331,7 +380,7 @@ def duplicate_commission_next_month(
         .filter(Commission.id == new.id, Commission.company_slug == get_request_company())
         .first()
     )
-    return _enrich(row)
+    return _enrich(row, db)
 
 
 @router.post("/{cid}/shift-next-month", response_model=CommissionOut)
@@ -349,7 +398,7 @@ def shift_commission_next_month(
     )
     if not c:
         raise HTTPException(404, "Не найдено")
-    if current_user.role == "manager" and c.manager_id != current_user.id:
+    if not _commission_owned_by(current_user, c):
         raise HTTPException(403, "Нет доступа")
     c.project_date = _add_calendar_months(c.project_date, 1)
     db.commit()
@@ -358,7 +407,7 @@ def shift_commission_next_month(
         .filter(Commission.id == cid, Commission.company_slug == get_request_company())
         .first()
     )
-    return _enrich(row)
+    return _enrich(row, db)
 
 
 @router.delete("/{cid}")
@@ -375,7 +424,7 @@ def delete_commission(
     )
     if not c:
         raise HTTPException(404, "Не найдено")
-    if current_user.role == "manager" and c.manager_id != current_user.id:
+    if not _commission_owned_by(current_user, c):
         raise HTTPException(403, "Нет доступа")
     db.delete(c)
     db.commit()

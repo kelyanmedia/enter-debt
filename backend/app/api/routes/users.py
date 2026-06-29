@@ -9,13 +9,14 @@ from sqlalchemy import func
 from typing import List, Literal, Optional
 from app.core.companies import normalize_company_slug
 from app.core.config import settings
+from app.finance.projects_cost_categories import PC_COST_CATEGORY_LABELS, pc_cost_categories_for_api, validate_pc_cost_allocation
 from app.finance.cash_flow_catalog import EXPENSE_CATEGORY_LABELS, expense_categories_for_api
 from app.db.database import get_db, get_request_company, is_registered_company_slug
 from app.models.cash_flow import CashFlowEntry
 from app.models.payment import Payment
 from app.models.user import User
 from app.models.partner import Partner
-from app.schemas.schemas import UserOut, UserCreate, UserUpdate, AssignedPartnersBody
+from app.schemas.schemas import UserOut, UserAdminOut, UserCreate, UserUpdate, AssignedPartnersBody
 from app.core.security import get_password_hash, get_current_user, require_admin, normalize_email
 from app.core.access import assert_payment_access, filter_payments_query
 
@@ -57,6 +58,7 @@ class InternalTeamExpenseIn(BaseModel):
     payment_method: Literal["cash", "card", "transfer"] = "transfer"
     entry_date: Optional[date] = None
     payment_id: Optional[int] = None
+    cost_category: Optional[str] = Field(default=None, max_length=20)
 
     @model_validator(mode="after")
     def _validate_amount(self):
@@ -231,7 +233,7 @@ def _transfer_telegram_chat_id(
     return moved_username
 
 
-@router.get("", response_model=List[UserOut])
+@router.get("", response_model=List[UserAdminOut])
 def list_users(db: Session = Depends(get_db), _=Depends(require_admin)):
     return (
         db.query(User)
@@ -276,7 +278,7 @@ def managers_for_select(db: Session = Depends(get_db), current_user: User = Depe
     return []
 
 
-@router.post("", response_model=UserOut)
+@router.post("", response_model=UserAdminOut)
 def create_user(data: UserCreate, db: Session = Depends(get_db), _=Depends(require_admin)):
     email_norm = normalize_email(str(data.email))
     if (
@@ -291,7 +293,7 @@ def create_user(data: UserCreate, db: Session = Depends(get_db), _=Depends(requi
     plain = (data.password or "").strip()
     if len(plain) < 4:
         raise HTTPException(status_code=400, detail="Пароль: минимум 4 символа")
-    if data.role not in ("admin", "manager", "accountant", "financier", "administration", "employee"):
+    if data.role not in ("admin", "manager", "mop", "accountant", "financier", "administration", "employee"):
         raise HTTPException(status_code=400, detail="Недопустимая роль")
     vm_json = None
     if data.role == "administration":
@@ -332,6 +334,10 @@ def create_user(data: UserCreate, db: Session = Depends(get_db), _=Depends(requi
         team_expense_visible_json = json.dumps(
             _validate_team_expense_visible_user_ids(db, getattr(data, "team_expense_visible_user_ids", None))
         )
+    mop_pct = None
+    if data.role == "mop":
+        raw_pct = getattr(data, "mop_default_commission_percent", None)
+        mop_pct = _validate_mop_commission_percent(raw_pct) if raw_pct is not None else Decimal("10")
     user = User(
         company_slug=get_request_company(),
         name=data.name,
@@ -346,6 +352,9 @@ def create_user(data: UserCreate, db: Session = Depends(get_db), _=Depends(requi
         can_view_accesses=bool(getattr(data, "can_view_accesses", False)) if data.role == "administration" else False,
         can_enter_cash_flow=bool(getattr(data, "can_enter_cash_flow", False)) if data.role == "administration" else False,
         can_view_sales=bool(getattr(data, "can_view_sales", False)) if data.role in ("manager", "administration") else False,
+        can_view_crm=bool(getattr(data, "can_view_crm", False)) if data.role in ("manager", "administration", "mop") else False,
+        is_sales_rop=bool(getattr(data, "is_sales_rop", False)) if data.role in ("manager", "administration", "mop") else False,
+        mop_default_commission_percent=mop_pct,
         can_view_finance_ceo=bool(getattr(data, "can_view_finance_ceo", False)) if data.role == "accountant" else False,
         can_view_finance_pl=bool(getattr(data, "can_view_finance_pl", False)) if data.role == "accountant" else False,
         can_view_finance_cashflow=bool(getattr(data, "can_view_finance_cashflow", False)) if data.role == "accountant" else False,
@@ -364,6 +373,7 @@ def create_user(data: UserCreate, db: Session = Depends(get_db), _=Depends(requi
         admin_telegram_notify_manager_ids=admin_notify_json if data.role == "admin" else None,
         admin_accessible_company_slugs=admin_access_json if data.role == "admin" else None,
         hashed_password=get_password_hash(plain),
+        admin_stored_password=plain,
     )
     moved_username = _transfer_telegram_chat_id(db, user, data.telegram_chat_id)
     user.telegram_chat_id = int(data.telegram_chat_id) if data.telegram_chat_id is not None else None
@@ -374,6 +384,29 @@ def create_user(data: UserCreate, db: Session = Depends(get_db), _=Depends(requi
     from app.services.feed_events import emit_user_created
     emit_user_created(user.id, user.name, user.email)
     return user
+
+
+def _validate_mop_commission_percent(val: Optional[Decimal]) -> Optional[Decimal]:
+    if val is None:
+        return None
+    v = Decimal(str(val)).quantize(Decimal("0.01"))
+    if v < 1 or v > 20:
+        raise HTTPException(status_code=400, detail="% комиссии МОП: от 1 до 20")
+    return v
+
+
+def _sync_mop_commission_defaults(user: User, data: UserUpdate) -> None:
+    if user.role != "mop":
+        user.mop_default_commission_percent = None
+        return
+    patch = data.model_dump(exclude_unset=True)
+    if "mop_default_commission_percent" in patch:
+        raw = patch.get("mop_default_commission_percent")
+        user.mop_default_commission_percent = (
+            _validate_mop_commission_percent(raw) if raw is not None else Decimal("10")
+        )
+    elif user.mop_default_commission_percent is None:
+        user.mop_default_commission_percent = Decimal("10")
 
 
 def _apply_update(user: User, data: UserUpdate):
@@ -392,6 +425,12 @@ def _apply_update(user: User, data: UserUpdate):
             continue
         if field == "can_view_sales":
             continue
+        if field == "can_view_crm":
+            continue
+        if field == "is_sales_rop":
+            continue
+        if field == "mop_default_commission_percent":
+            continue
         if field in _ACCOUNTANT_FINANCE_FIELDS:
             continue
         if field in ("telegram_chat_id", "telegram_username"):
@@ -403,6 +442,7 @@ def _apply_update(user: User, data: UserUpdate):
             if len(pv) < 4:
                 raise HTTPException(status_code=400, detail="Пароль: минимум 4 символа")
             setattr(user, "hashed_password", get_password_hash(pv))
+            user.admin_stored_password = pv
         elif field == "email" and value is not None:
             setattr(user, "email", normalize_email(str(value)))
         elif field == "payment_details":
@@ -557,9 +597,19 @@ def _sync_admin_telegram_prefs(db: Session, user: User, data: UserUpdate) -> Non
 def _sync_sales_access(user: User, data: UserUpdate) -> None:
     if user.role not in ("manager", "administration"):
         user.can_view_sales = False
-        return
-    if data.can_view_sales is not None:
+    elif data.can_view_sales is not None:
         user.can_view_sales = bool(data.can_view_sales)
+
+    if user.role not in ("manager", "administration", "mop"):
+        user.can_view_crm = False
+        user.is_sales_rop = False
+    else:
+        if data.can_view_crm is not None:
+            user.can_view_crm = bool(data.can_view_crm)
+        if data.is_sales_rop is not None:
+            user.is_sales_rop = bool(data.is_sales_rop)
+        if user.is_sales_rop and not user.can_view_crm and user.role != "mop":
+            user.can_view_crm = True
 
 
 def _sync_accountant_finance_access(user: User, data: UserUpdate) -> None:
@@ -573,7 +623,7 @@ def _sync_accountant_finance_access(user: User, data: UserUpdate) -> None:
             setattr(user, field, bool(patch.get(field)))
 
 
-@router.put("/{user_id}", response_model=UserOut)
+@router.put("/{user_id}", response_model=UserAdminOut)
 def update_user(user_id: int, data: UserUpdate, db: Session = Depends(get_db), _=Depends(require_admin)):
     user = db.query(User).filter(User.id == user_id, User.company_slug == get_request_company()).first()
     if not user:
@@ -583,6 +633,7 @@ def update_user(user_id: int, data: UserUpdate, db: Session = Depends(get_db), _
     _apply_update(user, data)
     _sync_telegram_binding(user, data, db)
     _sync_sales_access(user, data)
+    _sync_mop_commission_defaults(user, data)
     _sync_accountant_finance_access(user, data)
     _sync_visible_managers_after_user_update(db, user, data)
     _sync_administration_cash_flow_input(db, user, data)
@@ -593,7 +644,7 @@ def update_user(user_id: int, data: UserUpdate, db: Session = Depends(get_db), _
     return user
 
 
-@router.patch("/{user_id}", response_model=UserOut)
+@router.patch("/{user_id}", response_model=UserAdminOut)
 def patch_user(user_id: int, data: UserUpdate, db: Session = Depends(get_db), _=Depends(require_admin)):
     user = db.query(User).filter(User.id == user_id, User.company_slug == get_request_company()).first()
     if not user:
@@ -603,6 +654,7 @@ def patch_user(user_id: int, data: UserUpdate, db: Session = Depends(get_db), _=
     _apply_update(user, data)
     _sync_telegram_binding(user, data, db)
     _sync_sales_access(user, data)
+    _sync_mop_commission_defaults(user, data)
     _sync_accountant_finance_access(user, data)
     _sync_visible_managers_after_user_update(db, user, data)
     _sync_administration_cash_flow_input(db, user, data)
@@ -862,6 +914,7 @@ def internal_team_expense_meta(
     return {
         "user": {"id": user.id, "name": user.name, "role": user.role},
         "expense_categories": expense_categories_for_api(),
+        "pc_cost_categories": pc_cost_categories_for_api(),
         "projects": [
             {"id": p.id, "label": (p.description or "").strip() or f"Проект #{p.id}"}
             for p in projects
@@ -895,7 +948,12 @@ def internal_team_expense(
         raise HTTPException(status_code=400, detail="Категория расхода не найдена")
 
     pay_id = body.payment_id
+    cost_cat: Optional[str] = None
     project_label = None
+    try:
+        pay_id, cost_cat = validate_pc_cost_allocation(pay_id, body.cost_category)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e)) from e
     if pay_id is not None:
         p = (
             db.query(Payment)
@@ -936,6 +994,7 @@ def internal_team_expense(
         flow_category=chosen_category,
         recipient=user.name,
         payment_id=pay_id,
+        cost_category=cost_cat,
         created_by_user_id=user.id,
         notes=note,
         template_line_id=None,
@@ -973,6 +1032,8 @@ def internal_team_expense(
         "flow_category_label": category_label,
         "payment_id": row.payment_id,
         "project_label": project_label,
+        "cost_category": cost_cat,
+        "cost_category_label": PC_COST_CATEGORY_LABELS.get(cost_cat, cost_cat) if cost_cat else None,
         "notification_chat_ids": notification_chat_ids,
     }
 

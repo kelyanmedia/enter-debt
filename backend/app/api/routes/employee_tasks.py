@@ -7,6 +7,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy.orm import Session, joinedload
 from sqlalchemy import extract, func
 
+from app.finance.projects_cost_categories import PC_COST_CATEGORY_LABELS, validate_pc_cost_allocation
 from app.db.database import get_db, get_request_company
 from app.models.user import User
 from app.models.employee_task import EmployeeTask
@@ -20,6 +21,7 @@ from app.schemas.schemas import (
     StaffPendingPaymentMonthOut,
 )
 from app.services.pl_payroll_fx_lock import sync_employee_task_pl_fx_lock
+from app.services.employee_task_cash_flow import sync_employee_task_cash_flow
 from app.core.security import get_current_user, require_admin
 
 router = APIRouter(prefix="/api/employee-tasks", tags=["employee-tasks"])
@@ -83,19 +85,12 @@ def _validate_task_cost_allocation(
     category: Optional[str],
 ) -> tuple[Optional[int], Optional[str]]:
     """Пара проект + категория: оба заданы или оба сняты."""
-    cat_raw = str(category).strip().lower() if category is not None else ""
-    if category is not None and not str(category).strip():
-        cat_raw = ""
-    pid: Optional[int] = int(payment_id) if payment_id is not None else None
-    if pid is None and not cat_raw:
+    try:
+        pid, cat_raw = validate_pc_cost_allocation(payment_id, category)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e)) from e
+    if pid is None:
         return None, None
-    if pid is None or not cat_raw:
-        raise HTTPException(
-            status_code=400,
-            detail="Укажите и проект из «Проекты», и категорию себестоимости, либо снимите оба поля.",
-        )
-    if cat_raw not in ("design", "dev", "other", "seo"):
-        raise HTTPException(status_code=400, detail="Категория: design, dev, other или seo.")
     p = (
         db.query(Payment)
         .filter(
@@ -121,7 +116,7 @@ def _allocated_payment_label(t: EmployeeTask) -> Optional[str]:
         pn = (ap.partner.name or "").strip()
     base = desc + (f" · {pn}" if pn else "")
     cat = (t.cost_category or "").strip().lower()
-    cats = {"design": "дизайн", "dev": "разработка", "other": "прочее", "seo": "SEO"}
+    cats = {k: v.lower() for k, v in PC_COST_CATEGORY_LABELS.items()}
     tail = f" → {cats.get(cat, cat)}" if cat else ""
     return base + tail
 
@@ -472,6 +467,8 @@ def create_task(
     db.add(t)
     db.flush()
     sync_employee_task_pl_fx_lock(db, t, refresh=True)
+    owner = db.query(User).filter(User.id == target_uid).first()
+    sync_employee_task_cash_flow(db, t, owner=owner)
     db.commit()
     db.refresh(t)
     t = (
@@ -584,8 +581,6 @@ def update_task(
         t.budget_amount = Decimal(str(t.amount))
 
     became_paid = t.paid and not old_paid
-    was_eligible = bool(old_paid and old_alloc and old_cat)
-    is_eligible = bool(t.paid and t.allocated_payment_id and t.cost_category)
     money_changed = (
         Decimal(str(t.amount or 0)) != Decimal(str(old_amount or 0))
         or Decimal(str(t.budget_amount or 0)) != Decimal(str(old_budget or 0))
@@ -594,10 +589,12 @@ def update_task(
     old_cat_n = (old_cat or "").strip().lower()
     new_cat_n = (t.cost_category or "").strip().lower()
     alloc_changed = (old_alloc != t.allocated_payment_id) or (old_cat_n != new_cat_n)
-    refresh_lock = became_paid or (is_eligible and not was_eligible) or (
-        old_paid and t.paid and is_eligible and (money_changed or alloc_changed)
-    )
+    refresh_lock = became_paid or (t.paid and (money_changed or alloc_changed))
     sync_employee_task_pl_fx_lock(db, t, refresh=refresh_lock)
+
+    if became_paid or (old_paid and not t.paid) or (t.paid and (money_changed or alloc_changed)):
+        owner = db.query(User).filter(User.id == t.user_id).first()
+        sync_employee_task_cash_flow(db, t, owner=owner)
 
     db.commit()
     t = (

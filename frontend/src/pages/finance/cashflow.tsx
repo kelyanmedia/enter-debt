@@ -25,7 +25,16 @@ interface Meta {
   expense_categories: { slug: string; label: string }[]
   income_categories: { slug: string; label: string }[]
   template_groups: { id: string; label: string; description?: string }[]
+  pc_cost_categories?: { slug: string; label: string }[]
 }
+
+const PC_COST_FALLBACK: { slug: string; label: string }[] = [
+  { slug: 'design', label: 'Дизайн' },
+  { slug: 'dev', label: 'Разработка' },
+  { slug: 'other', label: 'Прочее' },
+  { slug: 'seo', label: 'SEO' },
+  { slug: 'contractor', label: 'Подрядчик' },
+]
 
 interface AvailableFundsResponse {
   period_month: string
@@ -53,6 +62,7 @@ interface CFEntry {
   flow_category?: string | null
   recipient?: string | null
   payment_id?: number | null
+  cost_category?: string | null
   notes?: string | null
   created_by_user_id?: number | null
 }
@@ -207,6 +217,22 @@ function parseOptionalPaymentId(s: string): number | null {
   return Math.trunc(n)
 }
 
+function pcCostLabel(meta: Meta | null, slug: string | null | undefined): string {
+  if (!slug) return ''
+  const list = meta?.pc_cost_categories?.length ? meta.pc_cost_categories : PC_COST_FALLBACK
+  return list.find((x) => x.slug === slug)?.label ?? slug
+}
+
+function validatePcAllocation(paymentId: string, costCategory: string): string | null {
+  const pid = parseOptionalPaymentId(paymentId)
+  const cat = costCategory.trim().toLowerCase()
+  if (!pid && !cat) return null
+  if (!pid || !cat) {
+    return 'Укажите проект и статью себестоимости Projects Cost, либо оставьте оба поля пустыми.'
+  }
+  return null
+}
+
 function ymTitle(ym: string) {
   const [y, m] = ym.split('-').map(Number)
   const names = [
@@ -251,6 +277,7 @@ export default function FinanceCashflowPage() {
     flow_category: '',
     recipient: '',
     payment_id: '' as string,
+    cost_category: '',
     notes: '',
   })
   const [expenseCategorySearch, setExpenseCategorySearch] = useState('')
@@ -315,6 +342,11 @@ export default function FinanceCashflowPage() {
   const currentUsdPreviewUzs = useMemo(
     () => effectiveUzsAmount(0, form.amount_usd, currentPlFxRate, true),
     [form.amount_usd, currentPlFxRate],
+  )
+
+  const pcCostOptions = useMemo(
+    () => (meta?.pc_cost_categories?.length ? meta.pc_cost_categories : PC_COST_FALLBACK),
+    [meta?.pc_cost_categories],
   )
 
   const loadMeta = useCallback(() => {
@@ -614,6 +646,7 @@ export default function FinanceCashflowPage() {
       flow_category: dir === 'expense' ? 'other' : '',
       recipient: '',
       payment_id: '',
+      cost_category: '',
       notes: '',
     })
     setExpenseCategorySearch('')
@@ -631,6 +664,11 @@ export default function FinanceCashflowPage() {
     }
     if (addOpen === 'expense' && !form.flow_category) return
     if (addOpen === 'income' && !form.flow_category.trim()) return
+    const allocErr = addOpen === 'expense' ? validatePcAllocation(form.payment_id, form.cost_category) : null
+    if (allocErr) {
+      alert(allocErr)
+      return
+    }
     setBusy(true)
     try {
       await api.post('finance/cash-flow/entries', {
@@ -644,6 +682,7 @@ export default function FinanceCashflowPage() {
         flow_category: form.flow_category.trim().toLowerCase() || null,
         recipient: form.recipient.trim() || null,
         payment_id: parseOptionalPaymentId(form.payment_id),
+        cost_category: form.cost_category.trim().toLowerCase() || null,
         notes: form.notes.trim() || null,
       })
       setAddOpen(null)
@@ -662,6 +701,13 @@ export default function FinanceCashflowPage() {
     const uzs = Number(String(form.amount_uzs).replace(/\s/g, '').replace(',', '.')) || 0
     const usd = Number(String(form.amount_usd).replace(/\s/g, '').replace(',', '.')) || 0
     if (editRow.direction === 'income' && !form.flow_category.trim()) return
+    if (editRow.direction === 'expense') {
+      const allocErr = validatePcAllocation(form.payment_id, form.cost_category)
+      if (allocErr) {
+        alert(allocErr)
+        return
+      }
+    }
     setBusy(true)
     try {
       const payload: Record<string, unknown> = {
@@ -674,6 +720,8 @@ export default function FinanceCashflowPage() {
       }
       if (editRow.direction === 'expense') {
         payload.flow_category = form.flow_category || null
+        payload.payment_id = parseOptionalPaymentId(form.payment_id)
+        payload.cost_category = form.cost_category.trim().toLowerCase() || null
       } else {
         payload.flow_category = form.flow_category.trim().toLowerCase() || null
         payload.recipient = form.recipient.trim() || null
@@ -701,6 +749,7 @@ export default function FinanceCashflowPage() {
       flow_category: r.flow_category || (r.direction === 'expense' ? 'other' : ''),
       recipient: r.recipient || '',
       payment_id: r.payment_id ? String(r.payment_id) : '',
+      cost_category: r.cost_category?.trim() ? r.cost_category.trim().toLowerCase() : '',
       notes: r.notes || '',
     })
     setEditExpenseCategorySearch('')
@@ -788,7 +837,7 @@ export default function FinanceCashflowPage() {
 
           <Card style={{ padding: '16px 18px' }}>
             <div style={{ fontSize: 13, color: '#64748b', marginBottom: 10 }}>
-              Внести новый расход можно в Telegram: <code>/ex сумма комментарий</code>. Бот спросит категорию и предложит привязать проект.
+              Внести новый расход можно в Telegram: <code>/ex сумма комментарий</code>. Бот спросит категорию, проект и статью себестоимости.
             </div>
             <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap' }}>
               <div style={{ padding: '10px 12px', borderRadius: 10, background: '#fff7ed', border: '1px solid #fed7aa' }}>
@@ -822,6 +871,7 @@ export default function FinanceCashflowPage() {
                         {r.entry_date || r.period_month}
                         {r.flow_category ? ` · ${expCatLabel(meta, r.flow_category)}` : ''}
                         {r.payment_id ? ` · проект #${r.payment_id}` : ''}
+                        {r.cost_category ? ` · ${pcCostLabel(meta, r.cost_category)}` : ''}
                       </div>
                       {r.notes ? <div style={{ fontSize: 12, color: '#475569', marginTop: 5 }}>{r.notes}</div> : null}
                     </div>
@@ -891,12 +941,27 @@ export default function FinanceCashflowPage() {
           <Field label="Проект">
             <PaymentOptionCombobox
               value={form.payment_id}
-              onChange={(id) => setForm((f) => ({ ...f, payment_id: id }))}
+              onChange={(id) => setForm((f) => ({ ...f, payment_id: id, cost_category: id ? f.cost_category : '' }))}
               options={payOpts}
               disabled={busy}
               emptyLabel="— без проекта"
             />
           </Field>
+          {form.payment_id.trim() ? (
+            <Field label="Статья себестоимости (Projects Cost) *">
+              <Select
+                value={form.cost_category}
+                onChange={(e) => setForm((f) => ({ ...f, cost_category: e.target.value }))}
+              >
+                <option value="">— выберите статью —</option>
+                {pcCostOptions.map((c) => (
+                  <option key={c.slug} value={c.slug}>
+                    {c.label}
+                  </option>
+                ))}
+              </Select>
+            </Field>
+          ) : null}
           <Field label="Комментарий">
             <Input value={form.notes} onChange={(e) => setForm((f) => ({ ...f, notes: e.target.value }))} />
           </Field>
@@ -1390,7 +1455,14 @@ export default function FinanceCashflowPage() {
             <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
               {expenseRows.length === 0 && <div style={{ color: '#94a3b8', fontSize: 13 }}>Нет строк</div>}
               {expenseRows.map((r) => {
-                const metaLine = `${expCatLabel(meta, r.flow_category)} · ${pmLabel(meta, r.payment_method)}`
+                const metaLine = [
+                  expCatLabel(meta, r.flow_category),
+                  pmLabel(meta, r.payment_method),
+                  r.payment_id ? `проект #${r.payment_id}` : '',
+                  r.cost_category ? pcCostLabel(meta, r.cost_category) : '',
+                ]
+                  .filter(Boolean)
+                  .join(' · ')
                 return (
                   <div
                     key={r.id}
@@ -1623,6 +1695,34 @@ export default function FinanceCashflowPage() {
             </div>
           </Field>
         )}
+        {addOpen === 'expense' && (
+          <>
+            <Field label="Проект (из базы)">
+              <PaymentOptionCombobox
+                value={form.payment_id}
+                onChange={(id) => setForm((f) => ({ ...f, payment_id: id, cost_category: id ? f.cost_category : '' }))}
+                options={payOpts}
+                disabled={busy}
+                emptyLabel="— не привязывать"
+              />
+            </Field>
+            {form.payment_id.trim() ? (
+              <Field label="Статья себестоимости (Projects Cost) *">
+                <Select
+                  value={form.cost_category}
+                  onChange={(e) => setForm((f) => ({ ...f, cost_category: e.target.value }))}
+                >
+                  <option value="">— выберите статью —</option>
+                  {pcCostOptions.map((c) => (
+                    <option key={c.slug} value={c.slug}>
+                      {c.label}
+                    </option>
+                  ))}
+                </Select>
+              </Field>
+            ) : null}
+          </>
+        )}
         {addOpen === 'income' && (
           <>
             <Field label="Категория прихода *">
@@ -1731,6 +1831,34 @@ export default function FinanceCashflowPage() {
                   </Select>
                 </div>
               </Field>
+            )}
+            {editRow.direction === 'expense' && (
+              <>
+                <Field label="Проект">
+                  <PaymentOptionCombobox
+                    value={form.payment_id}
+                    onChange={(id) => setForm((f) => ({ ...f, payment_id: id, cost_category: id ? f.cost_category : '' }))}
+                    options={payOpts}
+                    disabled={busy}
+                    emptyLabel="— не привязывать"
+                  />
+                </Field>
+                {form.payment_id.trim() ? (
+                  <Field label="Статья себестоимости (Projects Cost) *">
+                    <Select
+                      value={form.cost_category}
+                      onChange={(e) => setForm((f) => ({ ...f, cost_category: e.target.value }))}
+                    >
+                      <option value="">— выберите статью —</option>
+                      {pcCostOptions.map((c) => (
+                        <option key={c.slug} value={c.slug}>
+                          {c.label}
+                        </option>
+                      ))}
+                    </Select>
+                  </Field>
+                ) : null}
+              </>
             )}
             {editRow.direction === 'income' && (
               <>

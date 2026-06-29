@@ -8,6 +8,7 @@ import {
   PAYMENT_DETAILS_HOVER_WHY,
   PAYMENT_DETAILS_PLACEHOLDER,
 } from '@/lib/paymentRequisitesCopy'
+import { UserLoginCredentialsPanel, UserLoginCredentialsPopover } from '@/components/UserLoginCredentialsPopover'
 
 interface User {
   id: number; name: string; email: string; role: string
@@ -17,6 +18,9 @@ interface User {
   can_view_accesses?: boolean
   can_enter_cash_flow?: boolean
   can_view_sales?: boolean
+  can_view_crm?: boolean
+  is_sales_rop?: boolean
+  mop_default_commission_percent?: number | null
   can_view_finance_ceo?: boolean
   can_view_finance_pl?: boolean
   can_view_finance_cashflow?: boolean
@@ -35,6 +39,7 @@ interface User {
   team_expense_control_enabled?: boolean
   team_expense_visible_user_ids?: number[]
   last_login_at?: string | null
+  admin_stored_password?: string | null
 }
 interface PartnerRow { id: number; name: string }
 
@@ -51,6 +56,7 @@ interface TelegramJoinRequest {
 const ROLE_SECTIONS: { role: string; title: string }[] = [
   { role: 'admin', title: 'Администраторы' },
   { role: 'manager', title: 'Менеджеры' },
+  { role: 'mop', title: 'МОП — менеджеры по продажам' },
   { role: 'accountant', title: 'Бухгалтерия' },
   { role: 'financier', title: 'Финансисты' },
   { role: 'administration', title: 'Администрация' },
@@ -67,6 +73,9 @@ const EMPTY = {
   can_view_subscriptions: 'false', can_view_accesses: 'false',
   can_enter_cash_flow: 'false',
   can_view_sales: 'false',
+  can_view_crm: 'false',
+  is_sales_rop: 'false',
+  mop_default_commission_percent: '10',
   can_view_finance_ceo: 'false',
   can_view_finance_pl: 'false',
   can_view_finance_cashflow: 'false',
@@ -148,6 +157,9 @@ export default function UsersPage() {
       can_view_accesses: u.can_view_accesses ? 'true' : 'false',
       can_enter_cash_flow: u.can_enter_cash_flow ? 'true' : 'false',
       can_view_sales: u.can_view_sales ? 'true' : 'false',
+      can_view_crm: u.can_view_crm ? 'true' : 'false',
+      is_sales_rop: u.is_sales_rop ? 'true' : 'false',
+      mop_default_commission_percent: u.mop_default_commission_percent != null ? String(u.mop_default_commission_percent) : '10',
       can_view_finance_ceo: u.can_view_finance_ceo ? 'true' : 'false',
       can_view_finance_pl: u.can_view_finance_pl ? 'true' : 'false',
       can_view_finance_cashflow: u.can_view_finance_cashflow ? 'true' : 'false',
@@ -270,6 +282,7 @@ export default function UsersPage() {
       if (editing) {
         const payload: any = {
           name: form.name,
+          email: form.email.trim().toLowerCase(),
           role: form.role,
           is_active: form.is_active === 'true',
           telegram_username: form.telegram_username || null,
@@ -280,6 +293,14 @@ export default function UsersPage() {
         }
         if (form.role === 'manager' || form.role === 'administration') {
           payload.can_view_sales = form.can_view_sales === 'true'
+          payload.can_view_crm = form.can_view_crm === 'true'
+          payload.is_sales_rop = form.is_sales_rop === 'true'
+        }
+        if (form.role === 'mop') {
+          payload.can_view_crm = form.can_view_crm === 'true'
+          payload.is_sales_rop = form.is_sales_rop === 'true'
+          const pct = parseFloat(form.mop_default_commission_percent)
+          payload.mop_default_commission_percent = (!isNaN(pct) && pct >= 1 && pct <= 20) ? pct : 10
         }
         if (form.role === 'administration') payload.visible_manager_ids = visibleManagerIds
         if (form.role === 'administration') {
@@ -328,6 +349,9 @@ export default function UsersPage() {
           telegram_username: form.telegram_username || null,
           see_all_partners: form.role === 'manager' ? form.see_all_partners === 'true' : false,
           can_view_sales: (form.role === 'manager' || form.role === 'administration') ? form.can_view_sales === 'true' : false,
+          can_view_crm: (form.role === 'manager' || form.role === 'administration' || form.role === 'mop') ? form.can_view_crm === 'true' : false,
+          is_sales_rop: (form.role === 'manager' || form.role === 'administration' || form.role === 'mop') ? form.is_sales_rop === 'true' : false,
+          mop_default_commission_percent: form.role === 'mop' ? (parseFloat(form.mop_default_commission_percent) || 10) : undefined,
           visible_manager_ids: form.role === 'administration' ? visibleManagerIds : undefined,
           can_view_subscriptions: form.role === 'administration' ? form.can_view_subscriptions === 'true' : undefined,
           can_view_accesses: form.role === 'administration' ? form.can_view_accesses === 'true' : undefined,
@@ -540,7 +564,7 @@ export default function UsersPage() {
               <option value="employee">Только сотрудники (freelance)</option>
             </Select>
             <span style={{ fontSize: 12, color: '#94a3b8' }}>
-              Секции ниже — по ролям подряд; фильтр сужает таблицу.
+              Секции ниже — по ролям подряд; фильтр сужает таблицу. Наведите на имя — логин и пароль.
             </span>
           </div>
           <div style={{ overflowX: 'auto' }}>
@@ -579,15 +603,28 @@ export default function UsersPage() {
                     {section.items.map((u) => (
                       <tr key={u.id} style={{ borderBottom: '1px solid #e8e9ef' }}>
                         <Td>
-                          <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
-                            <div style={{ width: 32, height: 32, borderRadius: '50%', background: '#e8f5ee', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 12, fontWeight: 700, color: '#1a6b3c' }}>
-                              {u.name.split(' ').map(w => w[0]).join('').slice(0, 2).toUpperCase()}
+                          <UserLoginCredentialsPopover
+                            name={u.name}
+                            email={u.email}
+                            password={u.admin_stored_password}
+                          >
+                            <div
+                              style={{
+                                display: 'flex',
+                                alignItems: 'center',
+                                gap: 10,
+                                cursor: 'help',
+                              }}
+                            >
+                              <div style={{ width: 32, height: 32, borderRadius: '50%', background: '#e8f5ee', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 12, fontWeight: 700, color: '#1a6b3c' }}>
+                                {u.name.split(' ').map(w => w[0]).join('').slice(0, 2).toUpperCase()}
+                              </div>
+                              <div>
+                                <div style={{ fontWeight: 600 }}>{u.name}</div>
+                                <div style={{ fontSize: 11, color: '#8a8fa8' }}>{u.email}</div>
+                              </div>
                             </div>
-                            <div>
-                              <div style={{ fontWeight: 600 }}>{u.name}</div>
-                              <div style={{ fontSize: 11, color: '#8a8fa8' }}>{u.email}</div>
-                            </div>
-                          </div>
+                          </UserLoginCredentialsPopover>
                         </Td>
                         <Td>{statusBadge(u.role)}</Td>
                         <Td>
@@ -656,23 +693,31 @@ export default function UsersPage() {
         <Field label="Имя *">
           <Input value={form.name} onChange={e => setForm(f => ({ ...f, name: e.target.value }))} placeholder="Имя Фамилия" />
         </Field>
+        {editing && (
+          <div style={{ marginBottom: 14 }}>
+            <UserLoginCredentialsPanel
+              compact
+              name={editing.name}
+              email={editing.email}
+              password={editing.admin_stored_password}
+            />
+            <div style={{ fontSize: 11, color: '#8a8fa8', marginTop: 8, lineHeight: 1.45 }}>
+              Ниже можно заменить логин и пароль. Пароль сохраняется для показа в этой карточке.
+            </div>
+          </div>
+        )}
         <Field label="Email (логин для входа) *">
-          <Input type="email" value={form.email} onChange={e => setForm(f => ({ ...f, email: e.target.value }))} placeholder="rustam@company.uz" disabled={!!editing} />
+          <Input type="email" value={form.email} onChange={e => setForm(f => ({ ...f, email: e.target.value }))} placeholder="rustam@company.uz" />
         </Field>
         {!editing && (
           <Field label="Пароль *">
-            <Input type="password" value={form.password} onChange={e => setForm(f => ({ ...f, password: e.target.value }))} placeholder="Минимум 6 символов" />
+            <Input type="text" value={form.password} onChange={e => setForm(f => ({ ...f, password: e.target.value }))} placeholder="Минимум 4 символа" autoComplete="new-password" />
           </Field>
         )}
         {editing && (
-          <>
-            <div style={{ padding: '10px 12px', background: '#f0f4fa', borderRadius: 9, fontSize: 12, color: '#4a5568', marginBottom: 12 }}>
-              Текущий пароль в базе хранится в зашифрованном виде — показать его нельзя. Чтобы сменить доступ, введите <b>новый пароль</b> ниже.
-            </div>
-            <Field label="Новый пароль (оставьте пустым, если не меняете)">
-              <Input type="password" value={form.new_password} onChange={e => setForm(f => ({ ...f, new_password: e.target.value }))} placeholder="••••••••" autoComplete="new-password" />
-            </Field>
-          </>
+          <Field label="Новый пароль (оставьте пустым, если не меняете)">
+            <Input type="text" value={form.new_password} onChange={e => setForm(f => ({ ...f, new_password: e.target.value }))} placeholder="Новый пароль для входа" autoComplete="new-password" />
+          </Field>
         )}
         <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
           <Field label="Роль">
@@ -698,6 +743,7 @@ export default function UsersPage() {
             >
               <option value="admin">Администратор</option>
               <option value="manager">Менеджер</option>
+              <option value="mop">МОП (менеджер по продажам)</option>
               <option value="accountant">Бухгалтерия</option>
               <option value="financier">Финансист</option>
               <option value="administration">Администрация</option>
@@ -1049,12 +1095,49 @@ export default function UsersPage() {
             </div>
           </>
         )}
+        {(form.role === 'manager' || form.role === 'administration' || form.role === 'mop') && (
+          <>
+            <Field label="Доступ к CRM (воронка, сделки, календарь)">
+              <Select value={form.can_view_crm} onChange={e => setForm(f => ({ ...f, can_view_crm: e.target.value }))}>
+                <option value="false">Нет</option>
+                <option value="true">Да — полный доступ к разделу «Продажи»</option>
+              </Select>
+            </Field>
+            <Field label="РОП — руководитель отдела продаж">
+              <Select
+                value={form.is_sales_rop}
+                onChange={e => setForm(f => ({ ...f, is_sales_rop: e.target.value }))}
+                disabled={form.role !== 'mop' && form.can_view_crm !== 'true'}
+              >
+                <option value="false">Нет — только свои сделки</option>
+                <option value="true">Да — видит сделки всех МОПов + свои отдельно</option>
+              </Select>
+            </Field>
+          </>
+        )}
+        {form.role === 'mop' && (
+          <Field label="Дефолтный % комиссии МОП (1–20)">
+            <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+              <Input
+                type="number"
+                min={1}
+                max={20}
+                step={0.5}
+                value={form.mop_default_commission_percent}
+                onChange={e => setForm(f => ({ ...f, mop_default_commission_percent: e.target.value }))}
+                placeholder="10"
+                style={{ width: 90 }}
+              />
+              <span style={{ fontSize: 12, color: '#64748b' }}>% — применяется при закрытии сделки. МОП может изменить при оформлении.</span>
+            </div>
+          </Field>
+        )}
         {(form.role === 'manager' || form.role === 'administration') && (
           <>
-            <Field label="Доступ к Продажам → Компании">
+            <Field label="Доступ к компаниям (база клиентов)">
               <Select value={form.can_view_sales} onChange={e => setForm(f => ({ ...f, can_view_sales: e.target.value }))}>
                 <option value="false">Нет — по умолчанию раздел скрыт</option>
-                <option value="true">Да — видит раздел «Компании» и может добавлять записи</option>
+                <option value="true">Да — видит «Компании» и может добавлять записи</option>
               </Select>
             </Field>
           </>

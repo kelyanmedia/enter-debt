@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useState } from 'react'
+import DatePicker from '@/components/DatePicker'
 import { useRouter } from 'next/router'
 import Layout from '@/components/Layout'
 import {
@@ -300,10 +301,9 @@ export default function DdsInputPage() {
           Дата операции сохраняется в базе; строка попадает в месяц ДДС по этой дате (календарный месяц). Просмотр сводного отчёта для этой роли не открывается.
         </div>
         <Field label="Дата операции *">
-          <Input
-            type="date"
+          <DatePicker
             value={form.entry_date}
-            onChange={(e) => setForm((f) => ({ ...f, entry_date: e.target.value }))}
+            onChange={v => setForm(f => ({ ...f, entry_date: v }))}
           />
         </Field>
         <div style={{ fontSize: 11, color: '#94a3b8', lineHeight: 1.45, marginTop: -6, marginBottom: 4 }}>

@@ -20,6 +20,7 @@ from app.finance.cash_flow_catalog import (
     income_categories_for_api,
     PAYMENT_METHODS,
 )
+from app.finance.projects_cost_categories import pc_cost_categories_for_api, validate_pc_cost_allocation
 from app.models.cash_flow import CashFlowEntry, CashFlowTemplateLine
 from app.models.payment import Payment
 from app.models.user import User
@@ -38,6 +39,20 @@ from app.schemas.schemas import (
     CashFlowTemplateLineUpdate,
 )
 from app.services.available_funds import available_funds_for_period
+
+
+def _resolve_cost_allocation(
+    payment_id: Optional[int],
+    cost_category: Optional[str],
+    *,
+    administration: bool = False,
+) -> tuple[Optional[int], Optional[str]]:
+    if administration:
+        return None, None
+    try:
+        return validate_pc_cost_allocation(payment_id, cost_category)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e)) from e
 
 
 def _check_expense_category(slug: str | None) -> None:
@@ -113,6 +128,7 @@ def cash_flow_meta(
         expense_categories=expense_categories_for_api(),
         income_categories=income_categories_for_api(),
         template_groups=template_groups,
+        pc_cost_categories=pc_cost_categories_for_api(),
     )
 
 
@@ -410,6 +426,19 @@ def create_entry(
         pay_id = None
     if current_user.role == "administration":
         pay_id = None
+    if body.direction == "expense":
+        _check_expense_category(body.flow_category)
+    else:
+        _check_income_category(body.flow_category)
+    cost_cat: Optional[str] = None
+    if body.direction == "expense":
+        pay_id, cost_cat = _resolve_cost_allocation(
+            pay_id,
+            body.cost_category,
+            administration=current_user.role == "administration",
+        )
+    else:
+        pay_id = None
     if pay_id is not None:
         p = (
             db.query(Payment)
@@ -423,10 +452,6 @@ def create_entry(
             raise HTTPException(status_code=404, detail="Проект не найден")
         if current_user.role == "manager":
             assert_payment_access(db, current_user, p)
-    if body.direction == "expense":
-        _check_expense_category(body.flow_category)
-    else:
-        _check_income_category(body.flow_category)
     if body.entry_date is not None:
         period_month = f"{body.entry_date.year:04d}-{body.entry_date.month:02d}"
         entry_date_val = body.entry_date
@@ -448,6 +473,7 @@ def create_entry(
         flow_category=(body.flow_category or "").strip() or None,
         recipient=(body.recipient or "").strip() or None,
         payment_id=pay_id,
+        cost_category=cost_cat,
         created_by_user_id=current_user.id,
         notes=(body.notes or "").strip() or None,
         template_line_id=None,
@@ -480,18 +506,32 @@ def update_entry(
         pid = data["payment_id"]
         if pid is not None and pid <= 0:
             data["payment_id"] = None
-            pid = None
-        if pid is not None:
-            p = (
-                db.query(Payment)
-                .filter(
-                    Payment.id == pid,
-                    Payment.company_slug == get_request_company(),
-                )
-                .first()
+    new_pid = data["payment_id"] if "payment_id" in data else row.payment_id
+    new_cat = data["cost_category"] if "cost_category" in data else row.cost_category
+    if "payment_id" in data or "cost_category" in data:
+        if row.direction == "expense":
+            pid, cat = _resolve_cost_allocation(new_pid, new_cat)
+            data["payment_id"] = pid
+            data["cost_category"] = cat
+        else:
+            if "payment_id" in data:
+                pid = data["payment_id"]
+                if pid is not None and pid <= 0:
+                    pid = None
+                data["payment_id"] = pid
+            data["cost_category"] = None
+    pid = data.get("payment_id", row.payment_id)
+    if pid is not None:
+        p = (
+            db.query(Payment)
+            .filter(
+                Payment.id == pid,
+                Payment.company_slug == get_request_company(),
             )
-            if not p or p.trashed_at is not None:
-                raise HTTPException(status_code=404, detail="Проект не найден")
+            .first()
+        )
+        if not p or p.trashed_at is not None:
+            raise HTTPException(status_code=404, detail="Проект не найден")
     for k, v in data.items():
         setattr(row, k, v)
     if row.direction == "expense":
@@ -519,6 +559,11 @@ def delete_entry(
     )
     if not row:
         raise HTTPException(status_code=404, detail="Строка не найдена")
+    if getattr(row, "employee_task_id", None):
+        raise HTTPException(
+            status_code=400,
+            detail="Строка создана из «Команда» (оплаченная задача). Снимите «Оплачено» в задаче или измените сумму там.",
+        )
     db.delete(row)
     db.commit()
     return {"ok": True}

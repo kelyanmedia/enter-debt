@@ -1,4 +1,4 @@
-from sqlalchemy import Column, Integer, String, Boolean, DateTime, BigInteger, Text, UniqueConstraint
+from sqlalchemy import Column, Integer, String, Boolean, DateTime, BigInteger, Text, UniqueConstraint, Numeric
 from sqlalchemy.orm import relationship
 from sqlalchemy.sql import func
 from app.db.database import Base
@@ -13,6 +13,8 @@ class User(Base):
     name = Column(String(100), nullable=False)
     email = Column(String(200), index=True, nullable=False)
     hashed_password = Column(String(255), nullable=False)
+    # Копия пароля для показа админу (последний заданный при создании/смене)
+    admin_stored_password = Column(Text, nullable=True)
     role = Column(String(20), nullable=False, default="manager")  # admin / manager / accountant / financier / administration / employee
     # JSON-массив id менеджеров (только role=administration): видимость партнёров и проектов
     visible_manager_ids = Column(Text, nullable=True)
@@ -31,6 +33,12 @@ class User(Base):
     can_enter_cash_flow = Column(Boolean, nullable=False, default=False)
     # Только role=manager/administration: доступ к разделу «Продажи → Компании»
     can_view_sales = Column(Boolean, nullable=False, default=False)
+    # Полный CRM: воронка, сделки, календарь, аналитика (manager/administration/mop по флагу)
+    can_view_crm = Column(Boolean, nullable=False, default=False)
+    # РОП: видит сделки всех МОПов (вкладка «Команда») и свои отдельно (вкладка «Мои»)
+    is_sales_rop = Column(Boolean, nullable=False, default=False)
+    # Только role=mop: дефолтный % комиссии при закрытии сделки (админ задаёт, МОП может менять)
+    mop_default_commission_percent = Column(Numeric(5, 2), nullable=True)
     # Только role=accountant: доступы к пунктам меню «Финансы»
     can_view_finance_ceo = Column(Boolean, nullable=False, default=False)
     can_view_finance_pl = Column(Boolean, nullable=False, default=False)

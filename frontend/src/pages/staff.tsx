@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useState, type CSSProperties, type ReactNode } from 'react'
+import DatePicker from '@/components/DatePicker'
 import { useRouter } from 'next/router'
 import { useAuth } from '@/context/AuthContext'
 import Layout from '@/components/Layout'
@@ -109,7 +110,7 @@ function projectsCostAllocationPayload(form: { allocated_payment_id: string; cos
     return {
       ok: false as const,
       message:
-        'Для учёта в Projects Cost выберите проект из «Проекты» и статью (дизайн / разработка / прочее / SEO), либо очистите оба поля.',
+        'Для учёта в Projects Cost выберите проект из «Проекты» и статью (дизайн / разработка / прочее / SEO / подрядчик), либо очистите оба поля.',
     }
   }
   return { ok: true as const, allocated_payment_id: Number(payIdStr), cost_category: cat }
@@ -119,13 +120,13 @@ const STAFF_TASK_HINTS = {
   move:
     'Перенос в следующий месяц: дата задачи сдвигается на следующий календарный месяц, строка пропадает из текущего месяца. Подходит, если работа ещё не закрыта и переносится.',
   paid:
-    'Оплачено: отмечает строку как закрытую по выплате — текст зачёркивается, сумма не входит в итоги «к выплате». Если задача привязана к Projects Cost, сумма попадёт в P&L по месяцу оплаты. Повторный клик снимает отметку.',
+    'Оплачено: отмечает строку как закрытую по выплате — текст зачёркивается, сумма не входит в итоги «к выплате». Сумма всегда попадает в P&L (зарплатный фонд) по месяцу оплаты и дублируется в ДДС для истории. С привязкой к Projects Cost — ещё и в себестоимость проекта. Повторный клик снимает отметку (только админ).',
   duplicate:
     'Дубль: создаётся новая строка в следующем месяце с тем же проектом и суммой; текущая строка не меняется. Удобно для повторяющихся оплат каждый месяц.',
   edit: 'Редактирование: открыть форму и изменить дату, проект, сумму, статус и другие поля.',
   delete: 'Удаление: строка удаляется без восстановления.',
   linkPc:
-    'Проекты (Projects Cost): попап со списком проектов из «Проекты» и поиском по названию, партнёру и id. Выберите проект, статью себестоимости (дизайн / разработка / прочее / SEO) и сохраните — без открытия полной формы задачи.',
+    'Проекты (Projects Cost): попап со списком проектов из «Проекты» и поиском по названию, партнёру и id. Выберите проект и статью себестоимости (дизайн / разработка / прочее / SEO / подрядчик). Без привязки выплата всё равно уйдёт в P&L и в ДДС как общий расход команды.',
 } as const
 
 /** Тултип только при наведении на строку и на конкретную кнопку (состояние staffTipRow / staffTipKey на tr). */
@@ -341,8 +342,8 @@ export default function StaffPage() {
       return
     }
     const cat = allocateCategory.trim().toLowerCase()
-    if (!['design', 'dev', 'other', 'seo'].includes(cat)) {
-      setAllocateError('Статья: дизайн, разработка, прочее или SEO.')
+    if (!['design', 'dev', 'other', 'seo', 'contractor'].includes(cat)) {
+      setAllocateError('Статья: дизайн, разработка, прочее, SEO или подрядчик.')
       return
     }
     setAllocateSaving(true)
@@ -730,20 +731,27 @@ export default function StaffPage() {
         title="Команда"
         subtitle="Задачи и выплаты. Привязка к Projects Cost — в форме задачи или кнопкой 🔗 в строке (поиск по проектам). Поле «бюджет» — проходные средства клиента (укажите ту же долю при записи выплаты в истории)."
       />
-      <div style={{ padding: '22px 24px', overflow: 'auto', flex: 1, display: 'flex', flexDirection: 'column', gap: 0, minHeight: 0 }}>
+      <div
+        style={{
+          padding: '16px 12px 24px 20px',
+          width: '100%',
+          minWidth: 0,
+          boxSizing: 'border-box',
+          display: 'flex',
+          flexDirection: 'column',
+          gap: 0,
+        }}
+      >
         <div
           style={{
             display: 'flex',
             flexDirection: 'row',
-            flexWrap: 'nowrap',
+            flexWrap: 'wrap',
             gap: 10,
-            overflowX: 'auto',
-            overflowY: 'hidden',
             paddingBottom: 16,
             marginBottom: 4,
             borderBottom: '1px solid #e8e9ef',
-            WebkitOverflowScrolling: 'touch',
-            flexShrink: 0,
+            width: '100%',
           }}
         >
           {employees.map(e => {
@@ -754,9 +762,9 @@ export default function StaffPage() {
                 type="button"
                 onClick={() => setSelectedId(e.id)}
                 style={{
-                  flex: '0 0 auto',
-                  minWidth: 200,
-                  maxWidth: 280,
+                  flex: '1 1 180px',
+                  minWidth: 160,
+                  maxWidth: '100%',
                   textAlign: 'left',
                   padding: '12px 14px',
                   borderRadius: 12,
@@ -795,7 +803,7 @@ export default function StaffPage() {
           )}
         </div>
 
-        <div style={{ flex: 1, minWidth: 0, minHeight: 0, paddingTop: 12 }}>
+        <div style={{ flex: 1, minWidth: 0, width: '100%', paddingTop: 12 }}>
           {!selected ? (
             <Card style={{ padding: 40 }}><Empty text={employees.length ? 'Выберите сотрудника выше' : 'Добавьте пользователей с ролью «Сотрудник»'} /></Card>
           ) : (
@@ -809,6 +817,7 @@ export default function StaffPage() {
                   marginBottom: 16,
                   borderBottom: '1px solid #e8e9ef',
                   paddingBottom: 12,
+                  width: '100%',
                 }}
               >
                 <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', alignItems: 'center', flexShrink: 0 }}>
@@ -867,9 +876,9 @@ export default function StaffPage() {
 
                 <div
                   style={{
-                    flex: '1 1 360px',
-                    minWidth: 260,
-                    maxWidth: 560,
+                    flex: '1 1 280px',
+                    minWidth: 0,
+                    maxWidth: '100%',
                     padding: '8px 12px',
                     borderRadius: 10,
                     display: 'flex',
@@ -918,11 +927,10 @@ export default function StaffPage() {
                       margin: 0,
                       fontSize: 12,
                       fontFamily: 'ui-monospace, monospace',
-                      whiteSpace: 'nowrap',
-                      textOverflow: 'ellipsis',
+                      whiteSpace: 'pre-wrap',
+                      wordBreak: 'break-word',
                       color: '#334155',
                       lineHeight: 1.4,
-                      overflow: 'hidden',
                     }}
                   >
                     {selected.payment_details?.trim() || '— не заполнено в карточке пользователя'}
@@ -936,7 +944,8 @@ export default function StaffPage() {
                       flexWrap: 'wrap',
                       gap: 12,
                       alignItems: 'center',
-                      flexShrink: 0,
+                      flex: '0 1 auto',
+                      marginLeft: 'auto',
                     }}
                   >
                     <Select value={String(year)} onChange={e => setYear(Number(e.target.value))} style={{ maxWidth: 100 }}>
@@ -1031,7 +1040,7 @@ export default function StaffPage() {
                 </Card>
               </div>
 
-              <Card style={{ padding: 0, overflow: 'visible' }}>
+              <Card style={{ padding: 0, overflow: 'hidden', width: '100%', minWidth: 0 }}>
                 <div
                   style={{
                     padding: '14px 18px',
@@ -1067,7 +1076,15 @@ export default function StaffPage() {
                     </BtnOutline>
                   </div>
                 </div>
-                <table style={{ width: '100%', borderCollapse: 'collapse' }}>
+                <div
+                  style={{
+                    overflowX: 'auto',
+                    WebkitOverflowScrolling: 'touch',
+                    width: '100%',
+                    maxWidth: '100%',
+                  }}
+                >
+                <table style={{ width: '100%', minWidth: 920, borderCollapse: 'collapse' }}>
                   <thead>
                     <tr style={{ background: '#f8fafc' }}>
                       <Th>Дата</Th>
@@ -1081,7 +1098,7 @@ export default function StaffPage() {
                       >
                         Учёт ПС
                       </Th>
-                      <Th style={{ minWidth: 380 }}>Статус и действия</Th>
+                      <Th style={{ minWidth: 300 }}>Статус и действия</Th>
                     </tr>
                   </thead>
                   <tbody>
@@ -1188,7 +1205,7 @@ export default function StaffPage() {
                                   void patchTaskStatus(t.id, next)
                                 }}
                               />
-                              <div style={{ display: 'flex', gap: 6, flexWrap: 'nowrap', alignItems: 'center' }}>
+                              <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', alignItems: 'center' }}>
                                 <StaffActionWithTip
                                   hint={STAFF_TASK_HINTS.move}
                                   tipKey="move"
@@ -1354,6 +1371,7 @@ export default function StaffPage() {
                     </tfoot>
                   )}
                 </table>
+                </div>
                 {tasks.length === 0 && !loadingData && (
                   <div style={{ padding: 32, textAlign: 'center', color: '#8a8fa8', fontSize: 14 }}>Нет строк за этот месяц</div>
                 )}
@@ -1488,7 +1506,7 @@ export default function StaffPage() {
           </div>
         )}
         <Field label="Дата">
-          <Input type="date" value={form.work_date} onChange={e => setForm(f => ({ ...f, work_date: e.target.value }))} />
+          <DatePicker value={form.work_date} onChange={v => setForm(f => ({ ...f, work_date: v }))} />
         </Field>
         <Field label="Проект">
           <Input value={form.project_name} onChange={e => setForm(f => ({ ...f, project_name: e.target.value }))} />
@@ -1584,6 +1602,7 @@ export default function StaffPage() {
               <option value="dev">Разработка</option>
               <option value="other">Прочее</option>
               <option value="seo">SEO</option>
+              <option value="contractor">Подрядчик</option>
             </Select>
           </Field>
         </div>
@@ -1709,6 +1728,7 @@ export default function StaffPage() {
                 <option value="dev">Разработка</option>
                 <option value="other">Прочее</option>
                 <option value="seo">SEO</option>
+                <option value="contractor">Подрядчик</option>
               </Select>
             </Field>
             <p style={{ fontSize: 11, color: '#64748b', margin: 0, lineHeight: 1.45 }}>

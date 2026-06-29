@@ -25,6 +25,7 @@ from app.models.user import User
 from app.models.pl_manual_line import PlManualLine, PlManualMonthCell
 from app.models.employee_task import EmployeeTask
 from app.finance.cash_flow_catalog import expense_pl_bucket
+from app.finance.projects_cost_categories import pc_cost_column_bucket
 from app.schemas.schemas import (
     PLCellOut,
     PLDataRowOut,
@@ -180,8 +181,25 @@ def _line_amount(pm: PaymentMonth, p: Payment) -> Decimal:
 _TASK_COST_CATS = frozenset({"design", "dev", "other", "seo"})
 
 
+def _cf_entry_cost_uzs(
+    e: CashFlowEntry,
+    rates: Dict[str, Decimal],
+) -> Decimal:
+    uzs = Decimal(str(e.amount_uzs or 0))
+    usd = Decimal(str(e.amount_usd or 0))
+    if usd > 0 and bool(getattr(e, "apply_fx_to_uzs", False)):
+        rfx = rates.get(e.period_month) or Decimal(0)
+        if rfx > 0:
+            uzs += usd * rfx
+    elif usd > 0 and uzs <= 0:
+        rfx = rates.get(e.period_month) or Decimal(0)
+        if rfx > 0:
+            uzs = usd * rfx
+    return uzs.quantize(Decimal("0.01"))
+
+
 def _task_allocated_cost_uzs_by_payment(db: Session) -> Dict[int, Dict[str, Decimal]]:
-    """(amount − budget) в UZS по payment_id и статье; USD по курсу месяца work_date из «Доступные средства»."""
+    """Себестоимость в UZS по payment_id и статье: задачи команды + расходы ДДС с привязкой."""
     rates = {
         r.period_month: Decimal(str(r.usd_to_uzs_rate or 0))
         for r in db.query(AvailableFundsManual)
@@ -196,8 +214,8 @@ def _task_allocated_cost_uzs_by_payment(db: Session) -> Dict[int, Dict[str, Deci
         .filter(EmployeeTask.company_slug == get_request_company())
         .all()
     ):
-        cat = (t.cost_category or "").strip().lower()
-        if cat not in _TASK_COST_CATS:
+        bucket = pc_cost_column_bucket(t.cost_category)
+        if not bucket:
             continue
         amt = Decimal(str(t.amount or 0))
         bud = Decimal(str(t.budget_amount or 0))
@@ -216,7 +234,26 @@ def _task_allocated_cost_uzs_by_payment(db: Session) -> Dict[int, Dict[str, Deci
         pid = int(t.allocated_payment_id)  # type: ignore[arg-type]
         if pid not in out:
             out[pid] = {k: Decimal(0) for k in _TASK_COST_CATS}
-        out[pid][cat] = out[pid][cat] + net_uzs
+        out[pid][bucket] = out[pid][bucket] + net_uzs
+    for e in (
+        db.query(CashFlowEntry)
+        .filter(CashFlowEntry.direction == "expense")
+        .filter(CashFlowEntry.payment_id.isnot(None))
+        .filter(CashFlowEntry.cost_category.isnot(None))
+        .filter(CashFlowEntry.employee_task_id.is_(None))
+        .filter(CashFlowEntry.company_slug == get_request_company())
+        .all()
+    ):
+        bucket = pc_cost_column_bucket(e.cost_category)
+        if not bucket:
+            continue
+        net_uzs = _cf_entry_cost_uzs(e, rates)
+        if net_uzs <= 0:
+            continue
+        pid = int(e.payment_id)  # type: ignore[arg-type]
+        if pid not in out:
+            out[pid] = {k: Decimal(0) for k in _TASK_COST_CATS}
+        out[pid][bucket] = out[pid][bucket] + net_uzs
     return out
 
 
@@ -761,6 +798,8 @@ def pl_report(
             idx = mi - 1
         except (ValueError, AttributeError):
             continue
+        if getattr(e, "employee_task_id", None):
+            continue
         au = Decimal(str(e.amount_uzs or 0))
         ad = Decimal(str(e.amount_usd or 0))
         apply_fx = bool(getattr(e, "apply_fx_to_uzs", False))
@@ -869,15 +908,12 @@ def pl_report(
         else:
             salary_uzs[m_idx - 1] += pl_amt
 
-    # Факт выплат из «Команда»: если задачу привязали к проекту/статье Projects Cost и отметили «оплачено»,
-    # она попадает в P&L по месяцу оплаты. Ручные записи из «История выплат» остаются отдельным способом учёта.
+    # Факт выплат из «Команда»: отмеченные «оплачено» попадают в P&L по месяцу оплаты (с привязкой к Projects Cost или без).
     for t in (
         db.query(EmployeeTask)
         .filter(
             EmployeeTask.company_slug == get_request_company(),
             EmployeeTask.paid == True,
-            EmployeeTask.allocated_payment_id.isnot(None),
-            EmployeeTask.cost_category.isnot(None),
         )
         .all()
     ):

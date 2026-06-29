@@ -63,6 +63,7 @@ class ProfileSelfUpdate(BaseModel):
     email: EmailStr
     new_password: Optional[str] = None
     payment_details: Optional[str] = None  # только role=employee, через exclude_unset в patch
+    mop_default_commission_percent: Optional[Decimal] = None  # только role=mop
 
 
 # ── USERS ─────────────────────────────────────────────────────────────────────
@@ -78,7 +79,10 @@ class UserBase(BaseModel):
     can_view_subscriptions: bool = False
     can_view_accesses: bool = False
     can_enter_cash_flow: bool = False  # только administration: ввод ДДС без отчёта
-    can_view_sales: bool = False  # manager/administration: доступ к CRM/Продажи → Компании
+    can_view_sales: bool = False  # manager/administration: компании (база клиентов)
+    can_view_crm: bool = False  # manager/administration/mop: воронка, сделки, календарь
+    is_sales_rop: bool = False  # РОП: все сделки МОПов + свои отдельно
+    mop_default_commission_percent: Optional[Decimal] = None  # только mop: дефолт % комиссии
     can_view_finance_ceo: bool = False
     can_view_finance_pl: bool = False
     can_view_finance_cashflow: bool = False
@@ -118,6 +122,9 @@ class UserUpdate(BaseModel):
     can_view_accesses: Optional[bool] = None
     can_enter_cash_flow: Optional[bool] = None
     can_view_sales: Optional[bool] = None
+    can_view_crm: Optional[bool] = None
+    is_sales_rop: Optional[bool] = None
+    mop_default_commission_percent: Optional[Decimal] = None
     can_view_finance_ceo: Optional[bool] = None
     can_view_finance_pl: Optional[bool] = None
     can_view_finance_cashflow: Optional[bool] = None
@@ -156,6 +163,15 @@ class UserOut(UserBase):
         Optional[List[str]], BeforeValidator(_coerce_admin_company_slugs_read)
     ] = None
     payment_details_updated_at: Optional[datetime] = None
+
+    class Config:
+        from_attributes = True
+
+
+class UserAdminOut(UserOut):
+    """Карточка пользователя для админа — с сохранённым паролем для показа."""
+
+    admin_stored_password: Optional[str] = None
 
     class Config:
         from_attributes = True
@@ -838,6 +854,7 @@ class CashFlowEntryOut(BaseModel):
     flow_category: Optional[str] = None
     recipient: Optional[str] = None
     payment_id: Optional[int] = None
+    cost_category: Optional[str] = Field(None, max_length=20)
     created_by_user_id: Optional[int] = None
     notes: Optional[str] = None
     template_line_id: Optional[int] = None
@@ -859,6 +876,7 @@ class CashFlowEntryCreate(BaseModel):
     flow_category: Optional[str] = Field(None, max_length=64)
     recipient: Optional[str] = Field(None, max_length=120)
     payment_id: Optional[int] = None
+    cost_category: Optional[str] = Field(None, max_length=20)
     created_by_user_id: Optional[int] = None
     notes: Optional[str] = Field(None, max_length=500)
 
@@ -886,6 +904,7 @@ class CashFlowEntryUpdate(BaseModel):
     flow_category: Optional[str] = Field(None, max_length=64)
     recipient: Optional[str] = Field(None, max_length=120)
     payment_id: Optional[int] = None
+    cost_category: Optional[str] = Field(None, max_length=20)
     notes: Optional[str] = Field(None, max_length=500)
 
     @field_validator("payment_method")
@@ -909,6 +928,7 @@ class CashFlowMetaOut(BaseModel):
     expense_categories: List[Dict[str, str]]
     income_categories: List[Dict[str, str]]
     template_groups: List[Dict[str, str]]
+    pc_cost_categories: List[Dict[str, str]] = []
 
 
 class CashFlowPaymentOptionOut(BaseModel):
@@ -1221,6 +1241,7 @@ class CommissionOut(CommissionBase):
     total_manager_income: Decimal = Decimal(0)
     manager_income_from_actual: Decimal = Decimal(0)
     total_received: Decimal = Decimal(0)
+    pm: Optional["PmCommissionSnippetOut"] = None
 
     class Config:
         from_attributes = True
@@ -1242,6 +1263,98 @@ class CommissionStatsOut(BaseModel):
     total_manager_income: Decimal
     total_received: Decimal
     total_pending: Decimal
+    total_pm_income_plan: Decimal = Decimal(0)
+    total_pm_debt: Decimal = Decimal(0)
+
+
+class PmCommissionSnippetOut(BaseModel):
+    """Краткие данные ПМ для строки комиссии МОП (CEO)."""
+    pm_id: Optional[int] = None
+    pm_name: Optional[str] = None
+    rate_percent: Decimal = Decimal(0)
+    amount: Decimal = Decimal(0)
+    status: str = "forecast"
+    hint_next_rate: Optional[str] = None
+
+
+class PmCommissionMyOut(BaseModel):
+    payment_id: int
+    project_name: str
+    status: str
+    rate_percent: Decimal
+    amount: Decimal
+    paid_uzs: Decimal = Decimal(0)
+    debt_uzs: Decimal = Decimal(0)
+    hint_next_rate: Optional[str] = None
+    planned_deadline: Optional[date] = None
+    actual_close_date: Optional[date] = None
+
+
+class PmCommissionMyStatsOut(BaseModel):
+    locked_total: Decimal
+    forecast_total: Decimal
+    paid_total: Decimal
+    debt_total: Decimal
+
+
+class PmCommissionAdminOut(BaseModel):
+    payment_id: int
+    project_name: str
+    pm_id: Optional[int] = None
+    pm_name: Optional[str] = None
+    planned_deadline: Optional[date] = None
+    effective_planned_deadline: Optional[date] = None
+    actual_close_date: Optional[date] = None
+    quality_ok: bool = True
+    quality_fail_reason: Optional[str] = None
+    nps_score: Optional[int] = None
+    portfolio_case: Optional[bool] = None
+    deadline_shift_reason: Optional[str] = None
+    rate_percent: Decimal
+    amount: Decimal
+    profit: Decimal
+    status: str
+    paid_uzs: Decimal = Decimal(0)
+    debt_uzs: Decimal = Decimal(0)
+    hint_next_rate: Optional[str] = None
+    on_time: bool = False
+    delay_days: int = 0
+    final_payment_collected: bool = False
+    pm_closed_at: Optional[datetime] = None
+
+
+class PmCommissionStatsOut(BaseModel):
+    total_pm_income_plan: Decimal
+    total_pm_paid: Decimal
+    total_pm_debt: Decimal
+
+
+class PmCommissionFieldsPut(BaseModel):
+    planned_deadline: Optional[date] = None
+    effective_planned_deadline: Optional[date] = None
+    actual_close_date: Optional[date] = None
+    quality_ok: Optional[bool] = None
+    quality_fail_reason: Optional[str] = None
+    nps_score: Optional[int] = None
+    portfolio_case: Optional[bool] = None
+    deadline_shift_reason: Optional[str] = None
+
+
+class PmCommissionCloseIn(BaseModel):
+    actual_close_date: date
+    nps_score: int
+    quality_ok: bool = True
+    quality_fail_reason: Optional[str] = None
+    portfolio_case: bool = False
+
+
+class PmCommissionOverrideIn(BaseModel):
+    rate_percent: Decimal
+    reason: str
+
+
+class PmCommissionMarkPaidIn(BaseModel):
+    amount_uzs: Decimal
 
 
 Token.model_rebuild()

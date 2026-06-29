@@ -1,4 +1,5 @@
 import { useEffect, useState, useMemo } from 'react'
+import DatePicker from '@/components/DatePicker'
 import Link from 'next/link'
 import { useRouter } from 'next/router'
 import Layout from '@/components/Layout'
@@ -182,18 +183,18 @@ export default function Dashboard() {
         </div>
         <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
           <span style={{ fontSize: 12, color: '#8a8fa8' }}>Период:</span>
-          <input
-            type="date"
+          <DatePicker
             value={dateFrom}
-            onChange={e => handleDateChange(e.target.value, dateTo)}
-            style={DATE_INPUT_STYLE}
+            onChange={v => handleDateChange(v, dateTo)}
+            allowClear={false}
+            inputStyle={DATE_INPUT_STYLE}
           />
           <span style={{ fontSize: 12, color: '#8a8fa8' }}>—</span>
-          <input
-            type="date"
+          <DatePicker
             value={dateTo}
-            onChange={e => handleDateChange(dateFrom, e.target.value)}
-            style={DATE_INPUT_STYLE}
+            onChange={v => handleDateChange(dateFrom, v)}
+            allowClear={false}
+            inputStyle={DATE_INPUT_STYLE}
           />
           <button
             onClick={() => handleDateChange(firstOfMonth(), today())}

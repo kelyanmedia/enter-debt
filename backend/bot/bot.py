@@ -66,6 +66,7 @@ class DividendFlow(StatesGroup):
 class ExpenseFlow(StatesGroup):
     waiting_category = State()
     waiting_project = State()
+    waiting_cost_category = State()
 
 
 async def _submit_join_request(
@@ -574,6 +575,90 @@ def _expense_project_keyboard(projects: list[dict]) -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(inline_keyboard=buttons)
 
 
+def _expense_cost_category_keyboard(categories: list[dict]) -> InlineKeyboardMarkup:
+    buttons = [
+        [InlineKeyboardButton(text=str(r.get("label") or r.get("slug")), callback_data=f"excost:{r.get('slug')}")]
+        for r in categories[:12]
+    ]
+    buttons.append([InlineKeyboardButton(text="Отмена", callback_data="excost:cancel")])
+    return InlineKeyboardMarkup(inline_keyboard=buttons)
+
+
+async def _submit_team_expense(query: types.CallbackQuery, state: FSMContext, payment_id: int | None, cost_category: str | None):
+    data = await state.get_data()
+    payload = {
+        "chat_id": query.from_user.id,
+        "amount_uzs": str(data.get("ex_amount_uzs") or "0"),
+        "amount_usd": str(data.get("ex_amount_usd") or "0"),
+        "flow_category": str(data.get("ex_flow_category") or "other"),
+        "note": data.get("ex_note") or None,
+        "payment_method": "transfer",
+        "entry_date": datetime.now(TASK_REMINDER_TZ).date().isoformat(),
+        "payment_id": payment_id,
+        "cost_category": cost_category,
+    }
+    company_slug = str(data.get("ex_company_slug") or BOT_COMPANY_SLUG)
+    secret = _internal_secret()
+    try:
+        async with httpx.AsyncClient(timeout=10) as client:
+            r = await client.post(
+                f"{API_URL}/api/users/internal/team-expense",
+                headers=_api_headers({"X-Internal-Secret": secret}, company_slug),
+                json=payload,
+            )
+        if r.status_code >= 400:
+            detail = r.json().get("detail") if r.headers.get("content-type", "").startswith("application/json") else None
+            await query.answer("Ошибка записи", show_alert=True)
+            await query.message.answer(f"⚠️ Не удалось записать расход: {detail or 'ошибка сервера'}")
+            return
+        created = r.json()
+    except Exception:
+        await query.answer("Ошибка связи", show_alert=True)
+        await query.message.answer("⚠️ Не удалось связаться с сервером. Попробуйте позже.")
+        return
+    await state.clear()
+    try:
+        await query.message.edit_reply_markup(reply_markup=None)
+    except Exception:
+        pass
+    await query.answer("Записано.")
+    uzs_text = f"{Decimal(str(payload['amount_uzs'])):,.2f}".replace(",", " ")
+    usd_text = f"{Decimal(str(payload['amount_usd'])):,.2f}".replace(",", " ")
+    cost_line = ""
+    if created.get("cost_category_label"):
+        cost_line = f"Статья себестоимости: <b>{html.escape(created.get('cost_category_label') or '')}</b>\n"
+    await query.message.answer(
+        "✅ Расход записан в ДДС.\n"
+        f"Категория: <b>{html.escape(created.get('flow_category_label') or payload['flow_category'])}</b>\n"
+        f"Проект: <b>{html.escape(created.get('project_label') or 'без проекта')}</b>\n"
+        f"{cost_line}"
+        f"Дата: <code>{html.escape(created.get('entry_date') or '—')}</code>\n"
+        f"Сумма: <code>{uzs_text} UZS</code> / <code>{usd_text} USD</code>",
+        parse_mode="HTML",
+    )
+    notification_chat_ids = created.get("notification_chat_ids") or []
+    if isinstance(notification_chat_ids, list):
+        notify_text = (
+            "🔔 Новый расход команды в ДДС.\n"
+            f"Кто: <b>{html.escape(created.get('author_name') or 'Команда')}</b>\n"
+            f"Категория: <b>{html.escape(created.get('flow_category_label') or payload['flow_category'])}</b>\n"
+            f"Проект: <b>{html.escape(created.get('project_label') or 'без проекта')}</b>\n"
+            + (f"Статья: <b>{html.escape(created.get('cost_category_label') or '')}</b>\n" if created.get("cost_category_label") else "")
+            + f"Сумма: <code>{uzs_text} UZS</code> / <code>{usd_text} USD</code>"
+        )
+        for chat_id in notification_chat_ids:
+            try:
+                cid = int(chat_id)
+            except (TypeError, ValueError):
+                continue
+            if cid == query.from_user.id:
+                continue
+            try:
+                await bot.send_message(cid, notify_text, parse_mode="HTML")
+            except Exception:
+                logging.exception("team expense notification failed")
+
+
 @dp.message(Command("ex"))
 async def cmd_team_expense(message: types.Message, command: CommandObject, state: FSMContext):
     raw = (command.args or "").strip()
@@ -628,6 +713,7 @@ async def cmd_team_expense(message: types.Message, command: CommandObject, state
         ex_amount_usd=str(amount_usd),
         ex_note=note or None,
         ex_projects=meta.get("projects") or [],
+        ex_pc_cost_categories=meta.get("pc_cost_categories") or [],
     )
     await message.answer("Выберите категорию расхода для ДДС:", reply_markup=_expense_category_keyboard(categories))
 
@@ -676,71 +762,51 @@ async def expense_project_callback(query: types.CallbackQuery, state: FSMContext
         return
     data = await state.get_data()
     payment_id = None if raw == "none" else int(raw)
-    payload = {
-        "chat_id": query.from_user.id,
-        "amount_uzs": str(data.get("ex_amount_uzs") or "0"),
-        "amount_usd": str(data.get("ex_amount_usd") or "0"),
-        "flow_category": str(data.get("ex_flow_category") or "other"),
-        "note": data.get("ex_note") or None,
-        "payment_method": "transfer",
-        "entry_date": datetime.now(TASK_REMINDER_TZ).date().isoformat(),
-        "payment_id": payment_id,
-    }
-    company_slug = str(data.get("ex_company_slug") or BOT_COMPANY_SLUG)
-    secret = _internal_secret()
-    try:
-        async with httpx.AsyncClient(timeout=10) as client:
-            r = await client.post(
-                f"{API_URL}/api/users/internal/team-expense",
-                headers=_api_headers({"X-Internal-Secret": secret}, company_slug),
-                json=payload,
-            )
-        if r.status_code >= 400:
-            detail = r.json().get("detail") if r.headers.get("content-type", "").startswith("application/json") else None
-            await query.answer("Ошибка записи", show_alert=True)
-            await query.message.answer(f"⚠️ Не удалось записать расход: {detail or 'ошибка сервера'}")
-            return
-        created = r.json()
-    except Exception:
-        await query.answer("Ошибка связи", show_alert=True)
-        await query.message.answer("⚠️ Не удалось связаться с сервером. Попробуйте позже.")
-        return
-    await state.clear()
     try:
         await query.message.edit_reply_markup(reply_markup=None)
     except Exception:
         pass
-    await query.answer("Записано.")
-    uzs_text = f"{Decimal(str(payload['amount_uzs'])):,.2f}".replace(",", " ")
-    usd_text = f"{Decimal(str(payload['amount_usd'])):,.2f}".replace(",", " ")
+    if payment_id is None:
+        await _submit_team_expense(query, state, None, None)
+        return
+    await state.update_data(ex_payment_id=payment_id)
+    await state.set_state(ExpenseFlow.waiting_cost_category)
+    cats = list(data.get("ex_pc_cost_categories") or [])
+    if not cats:
+        cats = [
+            {"slug": "design", "label": "Дизайн"},
+            {"slug": "dev", "label": "Разработка"},
+            {"slug": "other", "label": "Прочее"},
+            {"slug": "seo", "label": "SEO"},
+            {"slug": "contractor", "label": "Подрядчик"},
+        ]
     await query.message.answer(
-        "✅ Расход записан в ДДС.\n"
-        f"Категория: <b>{html.escape(created.get('flow_category_label') or payload['flow_category'])}</b>\n"
-        f"Проект: <b>{html.escape(created.get('project_label') or 'без проекта')}</b>\n"
-        f"Дата: <code>{html.escape(created.get('entry_date') or '—')}</code>\n"
-        f"Сумма: <code>{uzs_text} UZS</code> / <code>{usd_text} USD</code>",
-        parse_mode="HTML",
+        "Выберите статью себестоимости Projects Cost:",
+        reply_markup=_expense_cost_category_keyboard(cats),
     )
-    notification_chat_ids = created.get("notification_chat_ids") or []
-    if isinstance(notification_chat_ids, list):
-        notify_text = (
-            "🔔 Новый расход команды в ДДС.\n"
-            f"Кто: <b>{html.escape(created.get('author_name') or 'Команда')}</b>\n"
-            f"Категория: <b>{html.escape(created.get('flow_category_label') or payload['flow_category'])}</b>\n"
-            f"Проект: <b>{html.escape(created.get('project_label') or 'без проекта')}</b>\n"
-            f"Сумма: <code>{uzs_text} UZS</code> / <code>{usd_text} USD</code>"
-        )
-        for chat_id in notification_chat_ids:
-            try:
-                cid = int(chat_id)
-            except (TypeError, ValueError):
-                continue
-            if cid == query.from_user.id:
-                continue
-            try:
-                await bot.send_message(cid, notify_text, parse_mode="HTML")
-            except Exception:
-                logging.exception("team expense notification failed")
+    await query.answer()
+
+
+@dp.callback_query(F.data.startswith("excost:"))
+async def expense_cost_category_callback(query: types.CallbackQuery, state: FSMContext):
+    if await state.get_state() != ExpenseFlow.waiting_cost_category.state:
+        await query.answer("Уже неактуально.", show_alert=True)
+        return
+    slug = (query.data or "").split(":", 1)[1]
+    if slug == "cancel":
+        await state.clear()
+        await query.answer("Отменено.")
+        try:
+            await query.message.edit_reply_markup(reply_markup=None)
+        except Exception:
+            pass
+        return
+    data = await state.get_data()
+    payment_id = data.get("ex_payment_id")
+    if payment_id is None:
+        await query.answer("Проект не выбран.", show_alert=True)
+        return
+    await _submit_team_expense(query, state, int(payment_id), slug)
 
 
 @dp.callback_query(F.data.startswith("edtk:"))
@@ -835,6 +901,7 @@ async def bridge_text_manager_accountant(message: types.Message, state: FSMConte
         DividendFlow.waiting_category.state,
         ExpenseFlow.waiting_category.state,
         ExpenseFlow.waiting_project.state,
+        ExpenseFlow.waiting_cost_category.state,
     ):
         return
 

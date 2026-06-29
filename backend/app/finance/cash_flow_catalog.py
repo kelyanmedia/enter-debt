@@ -29,6 +29,7 @@ EXPENSE_CATEGORY_LABELS: Dict[str, str] = {
     "publics": "Паблики",
     "it_project": "IT проект",
     "services": "Оказание услуг",
+    "contractor": "Подрядчик",
 }
 
 

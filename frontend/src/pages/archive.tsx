@@ -1,4 +1,5 @@
 import { useEffect, useState, type ReactNode } from 'react'
+import DatePicker from '@/components/DatePicker'
 import { useRouter } from 'next/router'
 import Layout from '@/components/Layout'
 import {
@@ -209,20 +210,20 @@ export default function ArchivePage() {
         <div style={{ display: 'flex', gap: 12, alignItems: 'center', marginBottom: 20, flexWrap: 'wrap' }}>
           <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
             <label style={{ fontSize: 12, fontWeight: 600, color: '#8a8fa8', textTransform: 'uppercase', letterSpacing: '.05em' }}>С</label>
-            <input
-              type="date"
+            <DatePicker
               value={dateFrom}
-              onChange={e => setDateFrom(e.target.value)}
-              style={{ border: '1px solid #e8e9ef', borderRadius: 8, padding: '8px 12px', fontSize: 13, outline: 'none', color: '#1a1d23', fontFamily: 'inherit', background: '#fff' }}
+              onChange={v => setDateFrom(v)}
+              allowClear={false}
+              inputStyle={{ border: '1px solid #e8e9ef', borderRadius: 8, padding: '8px 12px', fontSize: 13 }}
             />
           </div>
           <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
             <label style={{ fontSize: 12, fontWeight: 600, color: '#8a8fa8', textTransform: 'uppercase', letterSpacing: '.05em' }}>По</label>
-            <input
-              type="date"
+            <DatePicker
               value={dateTo}
-              onChange={e => setDateTo(e.target.value)}
-              style={{ border: '1px solid #e8e9ef', borderRadius: 8, padding: '8px 12px', fontSize: 13, outline: 'none', color: '#1a1d23', fontFamily: 'inherit', background: '#fff' }}
+              onChange={v => setDateTo(v)}
+              allowClear={false}
+              inputStyle={{ border: '1px solid #e8e9ef', borderRadius: 8, padding: '8px 12px', fontSize: 13 }}
             />
           </div>
           {(dateFrom || dateTo) && (

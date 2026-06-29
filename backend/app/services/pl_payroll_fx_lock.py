@@ -64,10 +64,6 @@ def sync_employee_task_pl_fx_lock(db: Session, t, *, refresh: bool = True) -> No
         t.pl_salary_uzs_locked = None
         t.pl_usd_to_uzs_rate_applied = None
         return
-    if not (getattr(t, "allocated_payment_id", None) and getattr(t, "cost_category", None)):
-        t.pl_salary_uzs_locked = None
-        t.pl_usd_to_uzs_rate_applied = None
-        return
     if (
         not refresh
         and getattr(t, "pl_salary_uzs_locked", None) is not None

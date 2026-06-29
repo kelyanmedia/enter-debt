@@ -1,4 +1,5 @@
 import { useEffect, useState, useCallback, useMemo, useRef, type CSSProperties } from 'react'
+import DatePicker from '@/components/DatePicker'
 import Link from 'next/link'
 import { useRouter } from 'next/router'
 import { useAuth } from '@/context/AuthContext'
@@ -1542,8 +1543,8 @@ export default function PaymentsPage() {
                       </div>
                     </Field>
                     <Field label="Срок оплаты (день)">
-                      <Input type="date" value={addMonthForm.due_date}
-                        onChange={e => setAddMonthForm(f => ({ ...f, due_date: e.target.value }))} />
+                      <DatePicker value={addMonthForm.due_date}
+                        onChange={v => setAddMonthForm(f => ({ ...f, due_date: v }))} />
                       <div style={{ fontSize: 10, color: '#8a8fa8', marginTop: 4 }}>
                         По этой дате строка попадёт в дебиторку (просрочка / ожидание).
                         {drawer.day_of_month ? ` По умолчанию — ${drawer.day_of_month}-е число месяца услуги.` : ' По умолчанию — последний день месяца.'}
@@ -1733,10 +1734,9 @@ export default function PaymentsPage() {
                             />
                           </Field>
                           <Field label="Срок оплаты">
-                            <Input
-                              type="date"
+                            <DatePicker
                               value={editMonthForm.due_date}
-                              onChange={(e) => setEditMonthForm((f) => ({ ...f, due_date: e.target.value }))}
+                              onChange={v => setEditMonthForm(f => ({ ...f, due_date: v }))}
                             />
                           </Field>
                           <Field
@@ -1961,7 +1961,7 @@ export default function PaymentsPage() {
                   />
                 </Field>
                 <Field label="Дата окончания договора">
-                  <Input type="date" value={form.deadline_date} onChange={e => setForm(f => ({ ...f, deadline_date: e.target.value }))} />
+                  <DatePicker value={form.deadline_date} onChange={v => setForm(f => ({ ...f, deadline_date: v }))} />
                 </Field>
                 <Field label="Напомнить за (дней)">
                   <Select value={form.remind_days_before} onChange={e => setForm(f => ({ ...f, remind_days_before: e.target.value }))}>
@@ -2044,10 +2044,9 @@ export default function PaymentsPage() {
               />
             </Field>
             <Field label="Следующее ежегодное продление *">
-              <Input
-                type="date"
+              <DatePicker
                 value={form.hosting_renewal_anchor}
-                onChange={e => setForm(f => ({ ...f, hosting_renewal_anchor: e.target.value }))}
+                onChange={v => setForm(f => ({ ...f, hosting_renewal_anchor: v }))}
               />
               <div style={{ fontSize: 11, color: '#8a8fa8', marginTop: 6, lineHeight: 1.4 }}>
                 Ежегодная оплата: это дата очередного продления, не «окончание договора». В списке проектов показывается ближайший срок с учётом предоплаты (см. ниже).
@@ -2143,7 +2142,7 @@ export default function PaymentsPage() {
               </Field>
             ) : (
               <Field label="Дата окончания договора">
-                <Input type="date" value={form.deadline_date} onChange={e => setForm(f => ({ ...f, deadline_date: e.target.value }))} />
+                <DatePicker value={form.deadline_date} onChange={v => setForm(f => ({ ...f, deadline_date: v }))} />
               </Field>
             )}
             <Field label="Напомнить за (дней)">
@@ -2242,10 +2241,9 @@ export default function PaymentsPage() {
               Оставьте дату пустой и нажмите <b>Подтвердить оплату</b> внизу — зачисление зафиксируется на текущий момент.
             </div>
             <Field label="Дата фактического зачисления (необязательно)">
-              <Input
-                type="date"
+              <DatePicker
                 value={payConfirmBackdateYmd}
-                onChange={(e) => setPayConfirmBackdateYmd(e.target.value)}
+                onChange={v => setPayConfirmBackdateYmd(v)}
                 disabled={confirmingMonth === payConfirmModalMonthId}
               />
             </Field>

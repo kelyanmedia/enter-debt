@@ -148,17 +148,11 @@ class SalesWishlistOut(BaseModel):
     created_at: Optional[str] = None
 
 
+from app.services.sales_access import has_sales_companies_access, require_sales_companies
+
+
 def _require_sales_access(user: User) -> None:
-    if user.role == "admin":
-        return
-    if user.role == "manager" and bool(getattr(user, "can_view_sales", False)):
-        return
-    if user.role == "administration" and bool(getattr(user, "can_view_sales", False)):
-        return
-    if user.role in ("manager", "administration"):
-        raise HTTPException(status_code=403, detail="Нет доступа к разделу «Продажи». Попросите администратора выдать доступ.")
-    if user.role not in ("admin", "manager", "administration"):
-        raise HTTPException(status_code=403, detail="Нет доступа")
+    require_sales_companies(user)
 
 
 def _validate_manager(db: Session, manager_id: Optional[int]) -> Optional[int]:

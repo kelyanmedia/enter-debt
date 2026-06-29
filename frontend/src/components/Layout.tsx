@@ -7,6 +7,7 @@ import { NotificationBell } from '@/components/NotificationDrawer'
 import { EmployeeQaDrawer } from '@/components/EmployeeSidebarGuide'
 import { companyDisplayName, getCompanySlug, getTokenForSlug } from '@/lib/company'
 import { canAccessFinanceSection, canAccessPersonalCashFlow } from '@/lib/roles'
+import { hasCrmPipelineAccess, hasSalesCompaniesAccess } from '@/lib/salesAccess'
 
 type NavItem = {
   href: string
@@ -18,6 +19,8 @@ type NavItem = {
   /** Пункт «Ввод ДДС» для роли Администрация (упрощённый ввод без полного раздела Финансы) */
   administrationDdsInput?: boolean
   managerHidden?: boolean
+  /** Только для роли «Менеджер» (ПМ) — экран «Моя комиссия» */
+  managerOnly?: boolean
   administrationHidden?: boolean
   accountantHidden?: boolean
   badge?: string
@@ -27,6 +30,12 @@ type NavItem = {
   salesClientBase?: boolean
   /** Раздел «Продажи» — список компаний менеджера (и админ) */
   salesCompanies?: boolean
+  /** Раздел «Продажи» — воронки/kanban: admin + mop */
+  salesPipeline?: boolean
+  /** Раздел «Продажи» — аналитика */
+  salesAnalytics?: boolean
+  /** Раздел «Продажи» — календарь встреч */
+  salesCalendar?: boolean
   financeSectionKey?: 'ceo' | 'pl' | 'cashflow' | 'projects_cost' | 'received_payments' | 'expenses' | 'lending'
 }
 
@@ -51,7 +60,8 @@ const NAV_SECTIONS: NavSection[] = [
         icon: '📝',
         accountantHidden: true,
       },
-      { href: '/commissions', label: 'Комиссия', icon: '💰', administrationHidden: true },
+      { href: '/commissions', label: 'Комиссия', icon: '💰', administrationHidden: true, managerHidden: true },
+      { href: '/pm-commission', label: 'Моя комиссия', icon: '🎯', administrationHidden: true, adminOnly: false, managerOnly: true },
       {
         href: '/finance/dds-input',
         label: 'Ввод ДДС',
@@ -95,11 +105,32 @@ const NAV_SECTIONS: NavSection[] = [
     hideForFinancier: true,
     items: [
       {
+        href: '/sales/pipeline',
+        label: 'Воронки',
+        icon: '📊',
+        salesPipeline: true,
+        activePathPrefix: '/sales/pipeline',
+      },
+      {
         href: '/sales/client-base',
         label: 'Клиентская база',
         icon: '🗂️',
         salesClientBase: true,
         activePathPrefix: '/sales/client-base',
+      },
+      {
+        href: '/sales/analytics',
+        label: 'Аналитика',
+        icon: '📈',
+        salesAnalytics: true,
+        activePathPrefix: '/sales/analytics',
+      },
+      {
+        href: '/sales/calendar',
+        label: 'Календарь',
+        icon: '📅',
+        salesCalendar: true,
+        activePathPrefix: '/sales/calendar',
       },
       {
         href: '/sales/companies',
@@ -193,11 +224,104 @@ function CompanyWorkspaceSelect({ readOnly }: { readOnly?: boolean }) {
   )
 }
 
+function filterVisibleNavItems(section: NavSection, user: { role: string; can_view_sales?: boolean; can_view_crm?: boolean; can_view_subscriptions?: boolean; can_view_accesses?: boolean }) {
+  return section.items.filter(n => {
+    if (n.administrationDdsInput) return user.role === 'administration'
+    if (n.adminOnly && user.role !== 'admin') return false
+    if (
+      n.financeTeam &&
+      user.role !== 'admin' &&
+      user.role !== 'financier' &&
+      user.role !== 'accountant' &&
+      !(n.financeSectionKey === 'cashflow' && canAccessPersonalCashFlow(user))
+    ) return false
+    if (
+      n.financeSectionKey &&
+      !canAccessFinanceSection(user, n.financeSectionKey) &&
+      !(n.financeSectionKey === 'cashflow' && canAccessPersonalCashFlow(user))
+    ) return false
+    if (n.accountantHidden && user.role === 'accountant') return false
+    if (n.administrationHidden && user.role === 'administration') return false
+    if (n.managerHidden && (user.role === 'manager' || user.role === 'administration')) return false
+    if (n.managerOnly && user.role !== 'manager') return false
+    if (n.salesClientBase && user.role !== 'admin') return false
+    if (n.salesPipeline) return hasCrmPipelineAccess(user)
+    if (n.salesAnalytics) return hasCrmPipelineAccess(user)
+    if (n.salesCalendar) return hasCrmPipelineAccess(user)
+    if (n.salesCompanies) return hasSalesCompaniesAccess(user)
+    if (user.role === 'administration') {
+      if (n.href.startsWith('/subscriptions/accesses')) {
+        if (!user.can_view_accesses) return false
+      } else if (n.href.startsWith('/subscriptions')) {
+        if (!user.can_view_subscriptions) return false
+      }
+    }
+    return true
+  })
+}
+
+function NavLinkItem({
+  n,
+  active,
+  narrow,
+}: {
+  n: NavItem
+  active: boolean
+  narrow: boolean
+}) {
+  return (
+    <Link key={n.href} href={n.href} style={{ textDecoration: 'none' }} title={narrow ? n.label : undefined}>
+      <div
+        style={{
+          display: 'flex',
+          alignItems: 'center',
+          justifyContent: narrow ? 'center' : 'flex-start',
+          gap: narrow ? 0 : 10,
+          padding: narrow ? '10px 0' : '9px 12px',
+          borderRadius: 9,
+          marginBottom: 2,
+          cursor: 'pointer',
+          fontSize: 13.5,
+          fontWeight: 500,
+          background: active ? '#e8f5ee' : 'transparent',
+          color: active ? '#1a6b3c' : '#8a8fa8',
+          borderLeft: narrow ? 'none' : active ? '2px solid #1a6b3c' : '2px solid transparent',
+          transition: 'all .15s',
+        }}
+      >
+        <span style={{ fontSize: narrow ? 18 : 15, lineHeight: 1 }}>{n.icon}</span>
+        {!narrow && n.label}
+      </div>
+    </Link>
+  )
+}
+
 export default function Layout({ children }: { children: ReactNode }) {
   const { user, loading, logout, authBootstrapFailed, retryAuthBootstrap } = useAuth()
   const router = useRouter()
   const [employeeQaOpen, setEmployeeQaOpen] = useState(false)
-  const [salesFocusMode, setSalesFocusMode] = useState(false)
+  const [sidebarCollapsed, setSidebarCollapsed] = useState(false)
+  const [sidebarManualExpand, setSidebarManualExpand] = useState(false)
+
+  const isSalesRoute =
+    router.pathname.startsWith('/sales/client-base') ||
+    router.pathname.startsWith('/sales/companies') ||
+    router.pathname.startsWith('/sales/pipeline') ||
+    router.pathname.startsWith('/sales/analytics') ||
+    router.pathname.startsWith('/sales/calendar')
+
+  // В разделе «Продажи» — сворачиваем в иконки; при уходе — разворачиваем обратно
+  useEffect(() => {
+    if (isSalesRoute) {
+      setSidebarCollapsed(true)
+      setSidebarManualExpand(false)
+    } else {
+      setSidebarCollapsed(false)
+      setSidebarManualExpand(false)
+    }
+  }, [isSalesRoute])
+
+  const sidebarNarrow = isSalesRoute && sidebarCollapsed && !sidebarManualExpand
 
   useEffect(() => {
     if (loading || user) return
@@ -215,6 +339,32 @@ export default function Layout({ children }: { children: ReactNode }) {
       router.pathname !== '/profile'
     ) {
       router.replace('/my-work')
+    }
+  }, [loading, user, router.pathname, router])
+
+  useEffect(() => {
+    const mopAllowed = ['/sales/pipeline', '/sales/companies', '/sales/analytics', '/sales/calendar', '/commissions', '/profile']
+    if (
+      !loading &&
+      user?.role === 'mop' &&
+      !mopAllowed.some(p => router.pathname.startsWith(p))
+    ) {
+      router.replace('/sales/pipeline')
+    }
+  }, [loading, user, router.pathname, router])
+
+  useEffect(() => {
+    const salesPaths = ['/sales/pipeline', '/sales/analytics', '/sales/calendar', '/sales/companies', '/sales/client-base']
+    const onSales = salesPaths.some(p => router.pathname.startsWith(p))
+    if (!loading && user && onSales && user.role !== 'admin' && user.role !== 'mop') {
+      const pipelinePages = ['/sales/pipeline', '/sales/analytics', '/sales/calendar', '/sales/client-base']
+      if (pipelinePages.some(p => router.pathname.startsWith(p)) && !hasCrmPipelineAccess(user)) {
+        router.replace(hasSalesCompaniesAccess(user) ? '/sales/companies' : '/')
+        return
+      }
+      if (router.pathname.startsWith('/sales/companies') && !hasSalesCompaniesAccess(user)) {
+        router.replace(hasCrmPipelineAccess(user) ? '/sales/pipeline' : '/')
+      }
     }
   }, [loading, user, router.pathname, router])
 
@@ -282,6 +432,7 @@ export default function Layout({ children }: { children: ReactNode }) {
     financier: 'Финансист',
     administration: 'Администрация',
     employee: 'Сотрудник',
+    mop: 'МОП',
   }[user.role]
 
   if (user.role === 'employee') {
@@ -398,7 +549,7 @@ export default function Layout({ children }: { children: ReactNode }) {
               flex: 1,
               minHeight: 0,
               overflowY: 'auto',
-              overflowX: 'hidden',
+              overflowX: 'auto',
               WebkitOverflowScrolling: 'touch',
             }}
           >
@@ -410,119 +561,246 @@ export default function Layout({ children }: { children: ReactNode }) {
     )
   }
 
-  const canUseSalesFocusMode =
-    router.pathname.startsWith('/sales/client-base') ||
-    router.pathname.startsWith('/sales/companies')
-  const isSidebarHidden = canUseSalesFocusMode && salesFocusMode
+  if (user.role === 'mop') {
+    const mopNav = [
+      { href: '/sales/pipeline', label: 'Воронки', icon: '📊' },
+      { href: '/sales/analytics', label: 'Аналитика', icon: '📈' },
+      { href: '/sales/calendar', label: 'Календарь', icon: '📅' },
+      { href: '/sales/companies', label: 'Мои компании', icon: '🏢' },
+      { href: '/commissions', label: 'Комиссия', icon: '💰' },
+      { href: '/profile', label: 'Профиль', icon: '👤' },
+    ]
+    const mopNarrow = sidebarCollapsed && !sidebarManualExpand
+    const toggleMopSidebar = () => {
+      if (sidebarManualExpand) {
+        setSidebarManualExpand(false)
+        setSidebarCollapsed(true)
+      } else {
+        setSidebarManualExpand(true)
+        setSidebarCollapsed(false)
+      }
+    }
+    return (
+      <div style={{ display: 'flex', height: '100vh', overflow: 'hidden', background: '#f5f6fa' }}>
+        <aside style={{
+          width: mopNarrow ? 58 : 240,
+          background: '#fff',
+          borderRight: '1px solid #e8e9ef',
+          display: 'flex',
+          flexDirection: 'column',
+          flexShrink: 0,
+          transition: 'width .2s ease',
+          overflow: 'hidden',
+          position: 'relative',
+        }}>
+          <div style={{
+            padding: mopNarrow ? '16px 0 12px' : '20px 16px 16px',
+            borderBottom: '1px solid #e8e9ef',
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: mopNarrow ? 'center' : 'flex-start',
+            gap: 8,
+          }}>
+            <img src="/kelyanmedia-logo.png" alt="" style={{ height: 28, width: 'auto', maxWidth: mopNarrow ? 36 : 56, objectFit: 'contain' }} />
+            {!mopNarrow && (
+              <div>
+                <div style={{ fontSize: 12, fontWeight: 700, color: '#1a1d23' }}>Продажи</div>
+                <div style={{ fontSize: 10, color: '#8a8fa8' }}>МОП-кабинет</div>
+              </div>
+            )}
+          </div>
+          {!mopNarrow && (
+            <div style={{ padding: '0 16px 12px' }}>
+              <CompanyWorkspaceSelect readOnly />
+            </div>
+          )}
+          <div style={{ padding: mopNarrow ? '4px 6px 8px' : '0 10px 8px', borderBottom: '1px solid #e8e9ef', flexShrink: 0 }}>
+            <button
+              type="button"
+              onClick={toggleMopSidebar}
+              title={mopNarrow ? 'Развернуть меню' : 'Свернуть в иконки'}
+              style={{
+                width: '100%',
+                height: 30,
+                borderRadius: 8,
+                border: '1px solid #e8e9ef',
+                background: '#f8fafc',
+                color: '#5c6378',
+                fontSize: 12,
+                fontWeight: 700,
+                cursor: 'pointer',
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'center',
+                gap: 6,
+                fontFamily: 'inherit',
+              }}
+            >
+              {mopNarrow ? '→' : '←'}
+              {!mopNarrow && <span style={{ fontSize: 11, fontWeight: 600 }}>Свернуть</span>}
+            </button>
+          </div>
+          <nav style={{ padding: mopNarrow ? '8px 6px' : 14, flex: 1, minHeight: 0, overflowY: 'auto' }}>
+            {!mopNarrow && (
+              <div style={{ fontSize: 10, fontWeight: 600, color: '#8a8fa8', letterSpacing: '.07em', textTransform: 'uppercase', padding: '0 4px 8px' }}>Продажи</div>
+            )}
+            {mopNav.map(n => {
+              const active = router.pathname.startsWith(n.href)
+              return (
+                <Link key={n.href} href={n.href} style={{ textDecoration: 'none' }} title={mopNarrow ? n.label : undefined}>
+                  <div style={{
+                    display: 'flex',
+                    alignItems: 'center',
+                    justifyContent: mopNarrow ? 'center' : 'flex-start',
+                    gap: mopNarrow ? 0 : 10,
+                    padding: mopNarrow ? '10px 0' : '10px 12px',
+                    borderRadius: 9,
+                    marginBottom: 2,
+                    cursor: 'pointer',
+                    fontSize: 13.5,
+                    fontWeight: 500,
+                    background: active ? '#e8f5ee' : 'transparent',
+                    color: active ? '#1a6b3c' : '#8a8fa8',
+                    borderLeft: mopNarrow ? 'none' : active ? '2px solid #1a6b3c' : '2px solid transparent',
+                  }}>
+                    <span style={{ fontSize: mopNarrow ? 18 : 15 }}>{n.icon}</span>
+                    {!mopNarrow && n.label}
+                  </div>
+                </Link>
+              )
+            })}
+          </nav>
+          <div style={{ padding: mopNarrow ? '10px 6px' : '14px 10px', borderTop: '1px solid #e8e9ef' }}>
+            {mopNarrow ? (
+              <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 8 }}>
+                <div title={user.name} style={{ width: 36, height: 36, borderRadius: '50%', background: '#1a6b3c', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 12, fontWeight: 700, color: '#fff' }}>{initials}</div>
+                <button type="button" onClick={logout} title="Выйти" style={{ background: 'none', border: 'none', cursor: 'pointer', color: '#8a8fa8', fontSize: 16, padding: 2 }}>↩</button>
+              </div>
+            ) : (
+              <div style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '10px 12px', background: '#f5f6fa', borderRadius: 9 }}>
+                <div style={{ width: 32, height: 32, borderRadius: '50%', background: '#1a6b3c', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 12, fontWeight: 700, color: '#fff' }}>{initials}</div>
+                <div style={{ flex: 1, minWidth: 0 }}>
+                  <div style={{ fontSize: 13, fontWeight: 600, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{user.name}</div>
+                  <div style={{ fontSize: 11, color: '#8a8fa8' }}>МОП</div>
+                </div>
+                <button type="button" onClick={logout} title="Выйти" style={{ background: 'none', border: 'none', cursor: 'pointer', color: '#8a8fa8', fontSize: 16, padding: 2 }}>↩</button>
+              </div>
+            )}
+          </div>
+        </aside>
+        <div style={{ flex: 1, minHeight: 0, minWidth: 0, display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
+          <div style={{ flex: 1, minHeight: 0, overflowY: 'auto', overflowX: 'auto', WebkitOverflowScrolling: 'touch' }}>
+            {children}
+          </div>
+        </div>
+      </div>
+    )
+  }
+
+  const canUseSalesFocusMode = isSalesRoute
+  const toggleSidebar = () => {
+    if (sidebarManualExpand) {
+      setSidebarManualExpand(false)
+      setSidebarCollapsed(true)
+    } else {
+      setSidebarManualExpand(true)
+      setSidebarCollapsed(false)
+    }
+  }
 
   return (
     <div style={{ display: 'flex', height: '100vh', overflow: 'hidden', background: '#f5f6fa' }}>
       {/* Sidebar */}
       <aside
         style={{
-          width: 260,
+          width: sidebarNarrow ? 58 : 260,
           background: '#fff',
           borderRight: '1px solid #e8e9ef',
-          display: isSidebarHidden ? 'none' : 'flex',
+          display: 'flex',
           flexDirection: 'column',
           flexShrink: 0,
+          transition: 'width .2s ease',
+          overflow: 'hidden',
+          position: 'relative',
         }}
       >
         {/* Logo */}
-        <div style={{ padding: '20px 16px 16px', borderBottom: '1px solid #e8e9ef', display: 'flex', alignItems: 'center', gap: 8 }}>
+        <div style={{
+          padding: sidebarNarrow ? '16px 0 12px' : '20px 16px 16px',
+          borderBottom: '1px solid #e8e9ef',
+          display: 'flex',
+          alignItems: 'center',
+          justifyContent: sidebarNarrow ? 'center' : 'flex-start',
+          gap: 8,
+          flexDirection: sidebarNarrow ? 'column' : 'row',
+        }}>
           <img
             src="/kelyanmedia-logo.png"
             alt="KelyanMedia"
-            style={{ height: 32, width: 'auto', maxWidth: 64, objectFit: 'contain', flexShrink: 0, display: 'block' }}
+            style={{ height: sidebarNarrow ? 28 : 32, width: 'auto', maxWidth: sidebarNarrow ? 36 : 64, objectFit: 'contain', flexShrink: 0, display: 'block' }}
           />
-          <div style={{ minWidth: 0, flex: 1 }}>
-            <div
-              style={{
-                fontSize: 12.5,
-                fontWeight: 700,
-                lineHeight: 1.2,
-                color: '#1a1d23',
-                whiteSpace: 'nowrap',
-              }}
-            >
-              Финансовый модуль
+          {!sidebarNarrow && (
+            <div style={{ minWidth: 0, flex: 1 }}>
+              <div style={{ fontSize: 12.5, fontWeight: 700, lineHeight: 1.2, color: '#1a1d23', whiteSpace: 'nowrap' }}>
+                Финансовый модуль
+              </div>
+              <CompanyWorkspaceSelect />
             </div>
-            <CompanyWorkspaceSelect />
-          </div>
+          )}
         </div>
 
+        {/* Toggle — только в разделе Продажи */}
+        {canUseSalesFocusMode && (
+          <div style={{
+            padding: sidebarNarrow ? '4px 6px 8px' : '0 10px 8px',
+            borderBottom: sidebarNarrow ? '1px solid #e8e9ef' : 'none',
+            flexShrink: 0,
+          }}>
+            <button
+              type="button"
+              onClick={toggleSidebar}
+              title={sidebarNarrow ? 'Развернуть меню' : 'Свернуть в иконки'}
+              style={{
+                width: '100%',
+                height: 30,
+                borderRadius: 8,
+                border: '1px solid #e8e9ef',
+                background: '#f8fafc',
+                color: '#5c6378',
+                fontSize: 12,
+                fontWeight: 700,
+                cursor: 'pointer',
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'center',
+                gap: 6,
+                fontFamily: 'inherit',
+              }}
+              aria-label={sidebarNarrow ? 'Развернуть меню' : 'Свернуть меню'}
+            >
+              {sidebarNarrow ? '→' : '←'}
+              {!sidebarNarrow && <span style={{ fontSize: 11, fontWeight: 600 }}>Свернуть</span>}
+            </button>
+          </div>
+        )}
+
         {/* Nav */}
-        <nav style={{ padding: '14px 10px', flex: 1, overflowY: 'auto' }}>
+        <nav style={{ padding: sidebarNarrow ? '8px 6px' : '14px 10px', flex: 1, overflowY: 'auto', overflowX: 'hidden' }}>
           {NAV_SECTIONS.map((section, si) => {
             if (section.hideForFinancier && user.role === 'financier') return null
-            const visible = section.items.filter(n => {
-              if (n.administrationDdsInput) {
-                return user.role === 'administration'
-              }
-              if (n.adminOnly && user.role !== 'admin') return false
-              if (
-                n.financeTeam &&
-                user.role !== 'admin' &&
-                user.role !== 'financier' &&
-                user.role !== 'accountant' &&
-                !(n.financeSectionKey === 'cashflow' && canAccessPersonalCashFlow(user))
-              ) {
-                return false
-              }
-              if (
-                n.financeSectionKey &&
-                !canAccessFinanceSection(user, n.financeSectionKey) &&
-                !(n.financeSectionKey === 'cashflow' && canAccessPersonalCashFlow(user))
-              ) return false
-              if (n.accountantHidden && user.role === 'accountant') return false
-              if (n.administrationHidden && user.role === 'administration') return false
-              if (n.managerHidden && (user.role === 'manager' || user.role === 'administration')) return false
-              if (n.salesClientBase && user.role !== 'admin') return false
-              if (n.salesCompanies) {
-                if (user.role === 'admin') return true
-                if (!['manager', 'administration'].includes(user.role) || user.can_view_sales !== true) return false
-              }
-              if (user.role === 'administration') {
-                if (n.href.startsWith('/subscriptions/accesses')) {
-                  if (!user.can_view_accesses) return false
-                } else if (n.href.startsWith('/subscriptions')) {
-                  if (!user.can_view_subscriptions) return false
-                }
-              }
-              return true
-            })
+            const visible = filterVisibleNavItems(section, user)
             if (visible.length === 0) return null
             return (
-              <div key={section.title} style={{ marginTop: si > 0 ? 12 : 0 }}>
-                <div style={sectionHeadingStyle}>{section.title}</div>
+              <div key={section.title} style={{ marginTop: si > 0 ? (sidebarNarrow ? 8 : 12) : 0 }}>
+                {!sidebarNarrow && <div style={sectionHeadingStyle}>{section.title}</div>}
+                {sidebarNarrow && si > 0 && (
+                  <div style={{ height: 1, background: '#e8e9ef', margin: '6px 4px 8px' }} />
+                )}
                 {visible.map(n => {
                   const active = n.activePathPrefix
                     ? router.pathname.startsWith(n.activePathPrefix)
                     : router.pathname === n.href
-                  return (
-                    <Link key={n.href} href={n.href} style={{ textDecoration: 'none' }}>
-                      <div
-                        style={{
-                          display: 'flex',
-                          alignItems: 'center',
-                          gap: 10,
-                          padding: '9px 12px',
-                          borderRadius: 9,
-                          marginBottom: 2,
-                          cursor: 'pointer',
-                          fontSize: 13.5,
-                          fontWeight: 500,
-                          background: active ? '#e8f5ee' : 'transparent',
-                          color: active ? '#1a6b3c' : '#8a8fa8',
-                          borderLeft: active ? '2px solid #1a6b3c' : '2px solid transparent',
-                          transition: 'all .15s',
-                        }}
-                      >
-                        <span style={{ fontSize: 15 }}>{n.icon}</span>
-                        {n.label}
-                      </div>
-                    </Link>
-                  )
+                  return <NavLinkItem key={n.href} n={n} active={active} narrow={sidebarNarrow} />
                 })}
               </div>
             )
@@ -530,46 +808,72 @@ export default function Layout({ children }: { children: ReactNode }) {
         </nav>
 
         {user.role === 'admin' && (
-          <div style={{ padding: '10px 10px 12px', borderTop: '1px solid #e8e9ef', flexShrink: 0 }}>
-            <Link href="/trash" style={{ textDecoration: 'none' }}>
+          <div style={{ padding: sidebarNarrow ? '8px 6px' : '10px 10px 12px', borderTop: '1px solid #e8e9ef', flexShrink: 0 }}>
+            <Link href="/trash" style={{ textDecoration: 'none' }} title={sidebarNarrow ? 'Корзина' : undefined}>
               <div
                 style={{
                   display: 'flex',
                   alignItems: 'center',
-                  gap: 10,
-                  padding: '9px 12px',
+                  justifyContent: sidebarNarrow ? 'center' : 'flex-start',
+                  gap: sidebarNarrow ? 0 : 10,
+                  padding: sidebarNarrow ? '10px 0' : '9px 12px',
                   borderRadius: 9,
                   fontSize: 13.5,
                   fontWeight: 500,
                   background: router.pathname === '/trash' ? '#f1f5f9' : 'transparent',
                   color: router.pathname === '/trash' ? '#475569' : '#94a3b8',
-                  borderLeft: router.pathname === '/trash' ? '2px solid #64748b' : '2px solid transparent',
+                  borderLeft: sidebarNarrow ? 'none' : router.pathname === '/trash' ? '2px solid #64748b' : '2px solid transparent',
                 }}
               >
-                <span style={{ fontSize: 15 }}>🗑️</span>
-                Корзина
+                <span style={{ fontSize: sidebarNarrow ? 18 : 15 }}>🗑️</span>
+                {!sidebarNarrow && 'Корзина'}
               </div>
             </Link>
-            <div style={{ fontSize: 10, color: '#94a3b8', lineHeight: 1.35, padding: '4px 12px 0' }}>
-              Удалённые проекты и компании до 30 дней; архив — в разделе «Архив».
-            </div>
+            {!sidebarNarrow && (
+              <div style={{ fontSize: 10, color: '#94a3b8', lineHeight: 1.35, padding: '4px 12px 0' }}>
+                Удалённые проекты и компании до 30 дней; архив — в разделе «Архив».
+              </div>
+            )}
           </div>
         )}
 
         {/* User */}
-        <div style={{ padding: '14px 10px', borderTop: '1px solid #e8e9ef' }}>
-          <div style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '10px 12px', background: '#f5f6fa', borderRadius: 9 }}>
-            <div style={{ width: 32, height: 32, borderRadius: '50%', background: '#1a6b3c', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 12, fontWeight: 700, color: '#fff', flexShrink: 0 }}>{initials}</div>
-            <div style={{ flex: 1, minWidth: 0 }}>
-              <div style={{ fontSize: 13, fontWeight: 600, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{user.name}</div>
-              <div style={{ fontSize: 11, color: '#8a8fa8' }}>{roleLabel}</div>
+        <div style={{ padding: sidebarNarrow ? '10px 6px' : '14px 10px', borderTop: '1px solid #e8e9ef' }}>
+          {sidebarNarrow ? (
+            <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 8 }}>
+              <div
+                title={`${user.name} — ${roleLabel}`}
+                style={{
+                  width: 36, height: 36, borderRadius: '50%', background: '#1a6b3c',
+                  display: 'flex', alignItems: 'center', justifyContent: 'center',
+                  fontSize: 12, fontWeight: 700, color: '#fff', cursor: 'default',
+                }}
+              >
+                {initials}
+              </div>
+              <button
+                type="button"
+                onClick={logout}
+                title="Выйти"
+                style={{ background: 'none', border: 'none', cursor: 'pointer', color: '#8a8fa8', fontSize: 16, padding: 2 }}
+              >
+                ↩
+              </button>
             </div>
-            <button onClick={logout} title="Выйти" style={{ background: 'none', border: 'none', cursor: 'pointer', color: '#8a8fa8', fontSize: 16, padding: 2 }}>↩</button>
-          </div>
+          ) : (
+            <div style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '10px 12px', background: '#f5f6fa', borderRadius: 9 }}>
+              <div style={{ width: 32, height: 32, borderRadius: '50%', background: '#1a6b3c', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 12, fontWeight: 700, color: '#fff', flexShrink: 0 }}>{initials}</div>
+              <div style={{ flex: 1, minWidth: 0 }}>
+                <div style={{ fontSize: 13, fontWeight: 600, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{user.name}</div>
+                <div style={{ fontSize: 11, color: '#8a8fa8' }}>{roleLabel}</div>
+              </div>
+              <button onClick={logout} title="Выйти" style={{ background: 'none', border: 'none', cursor: 'pointer', color: '#8a8fa8', fontSize: 16, padding: 2 }}>↩</button>
+            </div>
+          )}
         </div>
       </aside>
 
-      {/* Main — отступ справа под фиксированный колокольчик (40px + бейдж), чтобы шапки и фильтры не перекрывались */}
+      {/* Main — без правого отступа: контент на всю ширину, колокол поверх (fixed) */}
       <div
         style={{
           flex: 1,
@@ -577,66 +881,15 @@ export default function Layout({ children }: { children: ReactNode }) {
           flexDirection: 'column',
           overflow: 'hidden',
           position: 'relative',
-          paddingRight: 72,
           minWidth: 0,
           width: '100%',
         }}
       >
-        {canUseSalesFocusMode ? (
-          <button
-            type="button"
-            onClick={() => setSalesFocusMode((v) => !v)}
-            title={
-              salesFocusMode
-                ? 'Вернуть левое меню и обычный режим'
-                : 'Скрыть левое меню и развернуть рабочую область'
-            }
-            style={{
-              position: 'fixed',
-              top: 12,
-              right: 74,
-              zIndex: 60,
-              width: 34,
-              height: 34,
-              borderRadius: 9,
-              border: '1px solid #d7dde8',
-              background: '#fff',
-              color: '#334155',
-              fontSize: 16,
-              fontWeight: 700,
-              cursor: 'pointer',
-              boxShadow: '0 2px 10px rgba(15,23,42,.08)',
-              display: 'flex',
-              alignItems: 'center',
-              justifyContent: 'center',
-              fontFamily: 'inherit',
-            }}
-            aria-label={salesFocusMode ? 'Вернуть левое меню' : 'Скрыть левое меню'}
-          >
-            {salesFocusMode ? '←' : '⤢'}
-          </button>
-        ) : null}
-        <div style={{ position: 'fixed', top: 12, right: 20, zIndex: 50 }}>
+        <div style={{ position: 'fixed', top: 12, right: 16, zIndex: 120 }}>
           <NotificationBell />
         </div>
-        <div
-          style={{
-            flex: 1,
-            minHeight: 0,
-            display: 'flex',
-            flexDirection: 'column',
-            overflow: 'hidden',
-          }}
-        >
-          <div
-            style={{
-              flex: 1,
-              minHeight: 0,
-              overflowY: 'auto',
-              overflowX: 'hidden',
-              WebkitOverflowScrolling: 'touch',
-            }}
-          >
+        <div style={{ flex: 1, minHeight: 0, display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
+          <div style={{ flex: 1, minHeight: 0, overflowY: 'auto', overflowX: 'auto', WebkitOverflowScrolling: 'touch' }}>
             {children}
           </div>
         </div>

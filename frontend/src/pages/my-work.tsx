@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties } from 'react'
+import DatePicker from '@/components/DatePicker'
 import { useRouter } from 'next/router'
 import { useAuth } from '@/context/AuthContext'
 import Layout from '@/components/Layout'
@@ -790,7 +791,7 @@ export default function MyWorkPage() {
           </div>
         )}
         <Field label="Дата *">
-          <Input type="date" value={form.work_date} onChange={e => setForm(f => ({ ...f, work_date: e.target.value }))} />
+          <DatePicker value={form.work_date} onChange={v => setForm(f => ({ ...f, work_date: v }))} />
         </Field>
         <Field label="Проект *">
           <Input value={form.project_name} onChange={e => setForm(f => ({ ...f, project_name: e.target.value }))} placeholder="Клиент / название" />

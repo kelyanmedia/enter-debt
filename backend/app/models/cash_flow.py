@@ -40,6 +40,11 @@ class CashFlowEntry(Base):
     flow_category = Column(String(64), nullable=True)
     recipient = Column(String(120), nullable=True)
     payment_id = Column(Integer, ForeignKey("payments.id", ondelete="SET NULL"), nullable=True)
+    # Статья себестоимости Projects Cost при привязке к проекту (design|dev|other|seo|contractor)
+    cost_category = Column(String(20), nullable=True)
+    employee_task_id = Column(
+        Integer, ForeignKey("employee_tasks.id", ondelete="CASCADE"), nullable=True, index=True
+    )
     created_by_user_id = Column(Integer, ForeignKey("users.id", ondelete="SET NULL"), nullable=True, index=True)
     notes = Column(String(500), nullable=True)
     template_line_id = Column(Integer, ForeignKey("cash_flow_template_lines.id", ondelete="SET NULL"), nullable=True)

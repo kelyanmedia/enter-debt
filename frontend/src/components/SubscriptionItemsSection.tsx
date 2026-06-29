@@ -1,5 +1,6 @@
 import type { CSSProperties, ReactNode } from 'react'
 import { useCallback, useEffect, useState } from 'react'
+import DateTimePicker from '@/components/DateTimePicker'
 import api from '@/lib/api'
 import {
   Card,
@@ -630,10 +631,10 @@ export function SubscriptionItemsSection({
           </Select>
         </Field>
         <Field label="Срок оплаты (дата и время)">
-          <Input
-            type="datetime-local"
+          <DateTimePicker
             value={form.next_deadline_local}
-            onChange={(e) => setForm((f) => ({ ...f, next_deadline_local: e.target.value }))}
+            onChange={v => setForm(f => ({ ...f, next_deadline_local: v }))}
+            style={{ width: '100%' }}
           />
           <div style={{ fontSize: 12, color: '#64748b', marginTop: 6 }}>
             Напоминания в Telegram (за 1–2 дня) считаются по календарным дням до этой даты (Asia/Tashkent).

@@ -1,4 +1,5 @@
 import { useEffect, useState, useCallback, useMemo } from 'react'
+import DatePicker from '@/components/DatePicker'
 import { useRouter } from 'next/router'
 import { useAuth } from '@/context/AuthContext'
 import Layout from '@/components/Layout'
@@ -38,6 +39,7 @@ interface Commission {
   linked_payment_description?: string | null
   linked_partner_name?: string | null
   manager?: Manager
+  pm?: PmSnippet | null
   // computed
   profit: number
   total_manager_income: number
@@ -52,6 +54,17 @@ interface Stats {
   total_manager_income: number
   total_received: number
   total_pending: number
+  total_pm_income_plan?: number
+  total_pm_debt?: number
+}
+
+interface PmSnippet {
+  pm_id?: number | null
+  pm_name?: string | null
+  rate_percent: number
+  amount: number
+  status: string
+  hint_next_rate?: string | null
 }
 
 const PROJECT_TYPES = [
@@ -102,6 +115,23 @@ function typeBadge(t: string) {
   )
 }
 
+function pmStatusBadge(status: string) {
+  const map: Record<string, { label: string; color: string; bg: string }> = {
+    forecast: { label: 'прогноз', color: '#b45309', bg: '#fef3c7' },
+    locked: { label: 'locked', color: '#2563eb', bg: '#dbeafe' },
+    paid: { label: 'выплачено', color: '#059669', bg: '#d1fae5' },
+  }
+  const s = map[status] || { label: status, color: '#64748b', bg: '#f1f5f9' }
+  return (
+    <span style={{
+      display: 'inline-block', padding: '1px 6px', borderRadius: 99,
+      fontSize: 10, fontWeight: 700, color: s.color, background: s.bg, marginLeft: 4,
+    }}>
+      {s.label}
+    </span>
+  )
+}
+
 function pctBadge(paid: boolean) {
   return (
     <span style={{
@@ -133,6 +163,9 @@ const COM_COL = {
   num: 124,
   numMd: 118,
   pct: 92,
+  pm: 120,
+  pmRate: 100,
+  pmAmt: 124,
   status: 120,
   actions: 252,
 } as const
@@ -191,8 +224,8 @@ export default function CommissionsPage() {
   const router = useRouter()
   const { user } = useAuth()
   const isAdmin = user?.role === 'admin' || user?.role === 'accountant'
-  /** Колонка «Менеджер», фильтр и выбор в форме — для админа и бухгалтерии. */
-  const showManagerScope = isAdmin
+  /** Колонки ПМ, фильтр менеджера — admin / accountant / financier (CEO-вид). */
+  const showManagerScope = isAdmin || user?.role === 'financier'
 
   const curYear  = new Date().getFullYear()
   const curMonth = new Date().getMonth() + 1
@@ -215,6 +248,20 @@ export default function CommissionsPage() {
   const [deleteId, setDeleteId] = useState<number | null>(null)
   const [linkablePayments, setLinkablePayments] = useState<LinkablePayment[]>([])
   const [paymentLinkSearch, setPaymentLinkSearch] = useState('')
+
+  const [pmModalPaymentId, setPmModalPaymentId] = useState<number | null>(null)
+  const [pmForm, setPmForm] = useState({
+    planned_deadline: '',
+    effective_planned_deadline: '',
+    actual_close_date: '',
+    nps_score: '',
+    quality_ok: true,
+    quality_fail_reason: '',
+    portfolio_case: false,
+    deadline_shift_reason: '',
+  })
+  const [pmSaving, setPmSaving] = useState(false)
+  const [pmError, setPmError] = useState('')
 
   const filteredLinkablePayments = useMemo(() => {
     const q = paymentLinkSearch.trim().toLowerCase()
@@ -249,7 +296,7 @@ export default function CommissionsPage() {
 
   useEffect(() => {
     if (!user) return
-    if (user.role === 'administration') {
+    if (user.role === 'administration' || user.role === 'employee') {
       void router.replace('/')
       return
     }
@@ -257,12 +304,12 @@ export default function CommissionsPage() {
   }, [load, user, router])
 
   useEffect(() => {
-    if (!user || user.role === 'administration') return
+    if (!user || user.role === 'administration' || user.role === 'employee') return
     if (user.role === 'admin' || user.role === 'accountant') {
       api
         .get('users')
         .then((r) =>
-          setManagers(r.data.filter((u: Manager & { role: string }) => u.role === 'manager')),
+          setManagers(r.data.filter((u: Manager & { role: string }) => u.role === 'manager' || u.role === 'mop')),
         )
         .catch(() => setManagers([]))
     } else {
@@ -283,8 +330,11 @@ export default function CommissionsPage() {
   // ── Modal helpers ──────────────────────────────────────────────────────────
   function openAdd() {
     setEditItem(null)
-    const defaultMgr = user?.role === 'manager' ? String(user.id) : ''
-    setForm({ ...EMPTY_FORM, manager_id: defaultMgr })
+    const defaultMgr = (user?.role === 'manager' || user?.role === 'mop') ? String(user.id) : ''
+    const defaultPct = user?.role === 'mop' && (user as any)?.mop_default_commission_percent
+      ? String((user as any).mop_default_commission_percent)
+      : EMPTY_FORM.manager_percent
+    setForm({ ...EMPTY_FORM, manager_id: defaultMgr, manager_percent: defaultPct })
     setFormError('')
     setPaymentLinkSearch('')
     setModalOpen(true)
@@ -319,6 +369,81 @@ export default function CommissionsPage() {
   function closeModal() {
     setModalOpen(false)
     setPaymentLinkSearch('')
+  }
+
+  async function openPmModal(paymentId: number) {
+    setPmError('')
+    setPmModalPaymentId(paymentId)
+    try {
+      const r = await api.get(`pm-commissions/admin`)
+      const row = (r.data as Array<Record<string, unknown>>).find((x) => x.payment_id === paymentId)
+      if (row) {
+        setPmForm({
+          planned_deadline: row.planned_deadline ? String(row.planned_deadline).slice(0, 10) : '',
+          effective_planned_deadline: row.effective_planned_deadline ? String(row.effective_planned_deadline).slice(0, 10) : '',
+          actual_close_date: row.actual_close_date ? String(row.actual_close_date).slice(0, 10) : '',
+          nps_score: row.nps_score != null ? String(row.nps_score) : '',
+          quality_ok: row.quality_ok !== false,
+          quality_fail_reason: String(row.quality_fail_reason || ''),
+          portfolio_case: Boolean(row.portfolio_case),
+          deadline_shift_reason: String(row.deadline_shift_reason || ''),
+        })
+      }
+    } catch {
+      setPmForm({
+        planned_deadline: '', effective_planned_deadline: '', actual_close_date: '',
+        nps_score: '', quality_ok: true, quality_fail_reason: '', portfolio_case: false, deadline_shift_reason: '',
+      })
+    }
+  }
+
+  async function savePmFields() {
+    if (!pmModalPaymentId) return
+    setPmSaving(true)
+    setPmError('')
+    try {
+      await api.put(`pm-commissions/${pmModalPaymentId}/fields`, {
+        planned_deadline: pmForm.planned_deadline || null,
+        effective_planned_deadline: pmForm.effective_planned_deadline || null,
+        actual_close_date: pmForm.actual_close_date || null,
+        nps_score: pmForm.nps_score !== '' ? Number(pmForm.nps_score) : null,
+        quality_ok: pmForm.quality_ok,
+        quality_fail_reason: pmForm.quality_ok ? null : pmForm.quality_fail_reason || null,
+        portfolio_case: pmForm.portfolio_case,
+        deadline_shift_reason: pmForm.deadline_shift_reason || null,
+      })
+      await load()
+    } catch (e) {
+      setPmError(formatApiError(e))
+    } finally {
+      setPmSaving(false)
+    }
+  }
+
+  async function closePmProject() {
+    if (!pmModalPaymentId) return
+    if (!pmForm.actual_close_date) { setPmError('Укажите дату закрытия'); return }
+    if (pmForm.nps_score === '') { setPmError('Укажите NPS (0–10)'); return }
+    if (!pmForm.quality_ok && !pmForm.quality_fail_reason.trim()) {
+      setPmError('Укажите причину, если качество не принято'); return
+    }
+    setPmSaving(true)
+    setPmError('')
+    try {
+      await api.post(`pm-commissions/${pmModalPaymentId}/close`, {
+        actual_close_date: pmForm.actual_close_date,
+        nps_score: Number(pmForm.nps_score),
+        quality_ok: pmForm.quality_ok,
+        quality_fail_reason: pmForm.quality_ok ? null : pmForm.quality_fail_reason,
+        portfolio_case: pmForm.portfolio_case,
+      })
+      setPmModalPaymentId(null)
+      await load()
+    } catch (e) {
+      setPmError(formatApiError(e))
+    } finally {
+      setPmSaving(false)
+    }
   }
 
   function f(k: keyof typeof EMPTY_FORM, v: string | boolean) {
@@ -381,7 +506,7 @@ export default function CommissionsPage() {
   // ── Year options ───────────────────────────────────────────────────────────
   const years = Array.from({ length: 4 }, (_, i) => curYear - 1 + i)
 
-  if (user?.role === 'administration') {
+  if (user?.role === 'administration' || user?.role === 'employee') {
     return (
       <Layout>
         <div style={{ padding: 48, textAlign: 'center', color: '#64748b' }}>
@@ -390,6 +515,8 @@ export default function CommissionsPage() {
       </Layout>
     )
   }
+
+  const isMop = user?.role === 'mop'
 
   // ── Render ─────────────────────────────────────────────────────────────────
   return (
@@ -454,7 +581,7 @@ export default function CommissionsPage() {
             style={{
               width: '100%',
               borderCollapse: 'collapse',
-              minWidth: showManagerScope ? 1540 : 1400,
+              minWidth: showManagerScope ? 1820 : 1400,
               tableLayout: 'fixed',
             }}
           >
@@ -477,17 +604,24 @@ export default function CommissionsPage() {
                 <Th style={{ textAlign: 'right', width: COM_COL.numMd, minWidth: COM_COL.numMd }}>Доход (факт)</Th>
                 <Th style={{ textAlign: 'right', width: COM_COL.numMd, minWidth: COM_COL.numMd }}>Получено</Th>
                 <Th style={{ textAlign: 'right', width: COM_COL.numMd, minWidth: COM_COL.numMd }}>Долг</Th>
+                {showManagerScope && (
+                  <>
+                    <Th style={{ width: COM_COL.pm, minWidth: COM_COL.pm }}>ПМ</Th>
+                    <Th style={{ textAlign: 'center', width: COM_COL.pmRate, minWidth: COM_COL.pmRate }}>Ставка ПМ</Th>
+                    <Th style={{ textAlign: 'right', width: COM_COL.pmAmt, minWidth: COM_COL.pmAmt }}>Комиссия ПМ</Th>
+                  </>
+                )}
                 <Th style={{ textAlign: 'center', width: COM_COL.status, minWidth: COM_COL.status }}>Статус</Th>
                 <Th style={{ width: COM_COL.actions, minWidth: COM_COL.actions, textAlign: 'right' }}>Действия</Th>
               </tr>
             </thead>
             <tbody>
               {loading && (
-                <tr><td colSpan={showManagerScope ? 12 : 11}
+                <tr><td colSpan={showManagerScope ? 15 : 11}
                   style={{ textAlign: 'center', padding: 40, color: '#94a3b8' }}>Загрузка…</td></tr>
               )}
               {!loading && commissions.length === 0 && (
-                <tr><td colSpan={showManagerScope ? 12 : 11} style={{ padding: 0 }}>
+                <tr><td colSpan={showManagerScope ? 15 : 11} style={{ padding: 0 }}>
                   <Empty text="Проектов нет. Добавьте первый проект." />
                 </td></tr>
               )}
@@ -552,6 +686,39 @@ export default function CommissionsPage() {
                       : <span style={{ color: '#059669' }}>—</span>
                     }
                   </Td>
+                  {showManagerScope && (
+                    <>
+                      <Td style={{ verticalAlign: 'top', fontSize: 13 }}>
+                        <div>{c.pm?.pm_name || '—'}</div>
+                        {showManagerScope && c.payment_id && (
+                          <button
+                            type="button"
+                            onClick={() => openPmModal(c.payment_id!)}
+                            style={{
+                              marginTop: 4, fontSize: 11, padding: '2px 8px', borderRadius: 6,
+                              border: '1px solid #99f6e4', background: '#f0fdfa', color: '#0d9488',
+                              cursor: 'pointer', fontWeight: 600,
+                            }}
+                          >
+                            ПМ ⚙
+                          </button>
+                        )}
+                      </Td>
+                      <Td style={{ textAlign: 'center', verticalAlign: 'top', whiteSpace: 'nowrap' }}>
+                        {c.pm ? (
+                          <>
+                            <span style={{ fontWeight: 700, color: '#0d9488' }}>{c.pm.rate_percent}%</span>
+                            {pmStatusBadge(c.pm.status)}
+                          </>
+                        ) : '—'}
+                      </Td>
+                      <Td style={{ textAlign: 'right', verticalAlign: 'top', whiteSpace: 'nowrap' }}>
+                        {c.pm ? (
+                          <span style={{ fontWeight: 600, color: '#0d9488' }}>{formatMoneyNumber(c.pm.amount)}</span>
+                        ) : '—'}
+                      </Td>
+                    </>
+                  )}
                   <Td style={{ textAlign: 'center', verticalAlign: 'top' }}>{pctBadge(c.commission_paid_full)}</Td>
                   <Td style={{ verticalAlign: 'top' }}>
                     <div
@@ -640,9 +807,9 @@ export default function CommissionsPage() {
           <div
             style={{
               display: 'grid',
-              gridTemplateColumns: 'repeat(6, minmax(160px, 1fr))',
+              gridTemplateColumns: 'repeat(8, minmax(160px, 1fr))',
               gap: 12,
-              minWidth: 1020,
+              minWidth: 1360,
             }}
           >
             {([
@@ -652,6 +819,10 @@ export default function CommissionsPage() {
               { label: 'Доход менеджеров (план)', val: formatMoneyNumber(stats.total_manager_income),  unit: ' сум', color: '#fff',     bg: '#1a6b3c',  featured: true  },
               { label: 'Выплачено',               val: formatMoneyNumber(stats.total_received),        unit: ' сум', color: '#059669',  bg: '#fff',     featured: false },
               { label: 'Долг менеджерам',         val: formatMoneyNumber(stats.total_pending),         unit: ' сум', color: stats.total_pending > 0 ? '#ef4444' : '#059669', bg: '#fff', featured: false },
+              ...(showManagerScope ? [
+                { label: 'Доход ПМ (план)', val: formatMoneyNumber(stats.total_pm_income_plan || 0), unit: ' сум', color: '#fff', bg: '#0d9488', featured: true },
+                { label: 'Долг перед ПМ', val: formatMoneyNumber(stats.total_pm_debt || 0), unit: ' сум', color: (stats.total_pm_debt || 0) > 0 ? '#ef4444' : '#059669', bg: '#fff', featured: false },
+              ] : []),
             ] as const).map(({ label, val, unit, color, bg, featured }) => (
               <div key={label} style={{
                 background: bg, border: `1px solid ${featured ? 'transparent' : '#e2e8f0'}`,
@@ -906,11 +1077,9 @@ export default function CommissionsPage() {
               />
             </Field>
             <Field label="Дата в P&L для (1)">
-              <Input
-                type="date"
-                title="В какой месяц P&L попадает сумма; пусто — месяц «Дата проекта»"
+              <DatePicker
                 value={form.received_amount_1_on}
-                onChange={e => f('received_amount_1_on', e.target.value)}
+                onChange={v => f('received_amount_1_on', v)}
               />
             </Field>
           </div>
@@ -923,19 +1092,17 @@ export default function CommissionsPage() {
               />
             </Field>
             <Field label="Дата в P&L для (2)">
-              <Input
-                type="date"
+              <DatePicker
                 value={form.received_amount_2_on}
-                onChange={e => f('received_amount_2_on', e.target.value)}
+                onChange={v => f('received_amount_2_on', v)}
               />
             </Field>
           </div>
 
           <Field label="Дата проекта">
-            <Input
-              type="date"
+            <DatePicker
               value={form.project_date}
-              onChange={e => f('project_date', e.target.value)}
+              onChange={v => f('project_date', v)}
             />
           </Field>
 
@@ -965,6 +1132,68 @@ export default function CommissionsPage() {
 
           {/* Live calc preview */}
           <CalcPreview form={form} />
+        </div>
+      </Modal>
+
+      <Modal
+        open={pmModalPaymentId !== null}
+        onClose={() => setPmModalPaymentId(null)}
+        title="Комиссия ПМ — управление проектом"
+        width={560}
+      >
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
+          {pmError && (
+            <div style={{ padding: '10px 14px', background: '#fef2f2', color: '#b91c1c', borderRadius: 8, fontSize: 13 }}>
+              {pmError}
+            </div>
+          )}
+          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
+            <Field label="Плановый дедлайн">
+              <DatePicker value={pmForm.planned_deadline}
+                onChange={v => setPmForm(p => ({ ...p, planned_deadline: v }))} />
+            </Field>
+            <Field label="Перенесённый дедлайн (вина клиента)">
+              <DatePicker value={pmForm.effective_planned_deadline}
+                onChange={v => setPmForm(p => ({ ...p, effective_planned_deadline: v }))} />
+            </Field>
+          </div>
+          <Field label="Причина переноса (вина клиента)">
+            <Input value={pmForm.deadline_shift_reason}
+              onChange={e => setPmForm(p => ({ ...p, deadline_shift_reason: e.target.value }))} />
+          </Field>
+          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
+            <Field label="Факт. дата закрытия">
+              <DatePicker value={pmForm.actual_close_date}
+                onChange={v => setPmForm(p => ({ ...p, actual_close_date: v }))} />
+            </Field>
+            <Field label="NPS клиента (0–10)">
+              <Input type="number" min={0} max={10} value={pmForm.nps_score}
+                onChange={e => setPmForm(p => ({ ...p, nps_score: e.target.value }))} />
+            </Field>
+          </div>
+          <label style={{ display: 'flex', alignItems: 'center', gap: 8, cursor: 'pointer' }}>
+            <input type="checkbox" checked={pmForm.quality_ok}
+              onChange={e => setPmForm(p => ({ ...p, quality_ok: e.target.checked }))} />
+            <span>Сдан без серьёзных нареканий</span>
+          </label>
+          {!pmForm.quality_ok && (
+            <Field label="Причина (обязательно)">
+              <Input value={pmForm.quality_fail_reason}
+                onChange={e => setPmForm(p => ({ ...p, quality_fail_reason: e.target.value }))} />
+            </Field>
+          )}
+          <label style={{ display: 'flex', alignItems: 'center', gap: 8, cursor: 'pointer' }}>
+            <input type="checkbox" checked={pmForm.portfolio_case}
+              onChange={e => setPmForm(p => ({ ...p, portfolio_case: e.target.checked }))} />
+            <span>Кейс в портфолио (только CEO)</span>
+          </label>
+          <div style={{ display: 'flex', gap: 10, justifyContent: 'flex-end', marginTop: 8 }}>
+            <BtnOutline type="button" disabled={pmSaving} onClick={() => setPmModalPaymentId(null)}>Отмена</BtnOutline>
+            <BtnOutline type="button" disabled={pmSaving} onClick={savePmFields}>Сохранить поля</BtnOutline>
+            <BtnPrimary type="button" disabled={pmSaving} onClick={closePmProject}>
+              {pmSaving ? '…' : 'Закрыть проект'}
+            </BtnPrimary>
+          </div>
         </div>
       </Modal>
 

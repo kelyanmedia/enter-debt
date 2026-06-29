@@ -23,7 +23,7 @@ interface User {
   id: number
   name: string
   email: string
-  role: 'admin' | 'manager' | 'accountant' | 'financier' | 'administration' | 'employee'
+  role: 'admin' | 'manager' | 'accountant' | 'financier' | 'administration' | 'employee' | 'mop'
   telegram_username?: string
   telegram_chat_id?: number | null
   is_active: boolean
@@ -33,6 +33,9 @@ interface User {
   can_enter_cash_flow?: boolean
   /** Менеджер/администрация: доступ к CRM/Продажи → Компании. По умолчанию закрыто. */
   can_view_sales?: boolean
+  can_view_crm?: boolean
+  is_sales_rop?: boolean
+  mop_default_commission_percent?: number | null
   /** Только бухгалтерия: доступы к пунктам раздела «Финансы». */
   can_view_finance_ceo?: boolean
   can_view_finance_pl?: boolean
