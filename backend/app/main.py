@@ -49,6 +49,7 @@ import app.models.available_funds_manual  # noqa: F401
 import app.models.lending_record  # noqa: F401 — кредитование
 import app.models.sales_company  # noqa: F401 — продажи / CRM-lite
 import app.models.sale_deal_task  # noqa: F401 — задачи по сделкам
+import app.models.sale_meeting  # noqa: F401 — календарь встреч
 from app.core.config import settings
 from app.core.security import get_current_user, get_password_hash, normalize_email
 from app.models.user import User

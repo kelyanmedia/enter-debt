@@ -11,6 +11,7 @@ ARG BACKEND_URL=http://127.0.0.1:8000
 ENV BACKEND_URL=${BACKEND_URL}
 
 COPY package.json package-lock.json ./
+COPY scripts ./scripts
 RUN npm ci
 
 COPY . .

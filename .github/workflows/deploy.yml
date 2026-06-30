@@ -65,16 +65,16 @@ jobs:
             echo "--- Docker containers before ---"
             $COMPOSE ps 2>/dev/null || docker ps 2>/dev/null || echo "no docker"
 
-            # Stop and remove containers first (avoids KeyError: ContainerConfig bug in docker-compose v1)
-            $COMPOSE stop 2>/dev/null || true
-            $COMPOSE rm -f 2>/dev/null || true
-
-            # Build images (GIT_COMMIT сбрасывает кэш слоя npm run build у frontend)
+            # Build images first — keep old containers running if build fails (avoids 502)
             if ! $COMPOSE build --pull; then
-              echo "ERROR: docker compose build failed — оставляем старые контейнеры, деплой прерван."
+              echo "ERROR: docker compose build failed — старые контейнеры не трогали, деплой прерван."
               exit 1
             fi
             echo "Build succeeded"
+
+            # Swap containers only after a successful build
+            $COMPOSE stop 2>/dev/null || true
+            $COMPOSE rm -f 2>/dev/null || true
 
             # Новые контейнеры из свежих образов (иначе иногда остаётся старый UI)
             $COMPOSE up -d --force-recreate --remove-orphans
