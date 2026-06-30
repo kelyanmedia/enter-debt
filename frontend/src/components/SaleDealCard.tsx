@@ -70,20 +70,19 @@ function budgetToInput(v: number | null | undefined): string {
 }
 
 const BACKDROP_VISIBLE = '8%'
-const LEFT_COL_FLEX = '0 0 58%'
-const LEFT_COL_MIN = 640
-const LEFT_COL_MAX = 920
+const LEFT_COL_FLEX = '0 0 52%'
+const LEFT_COL_MIN = 380
+const LEFT_COL_MAX = 560
 
-/** Крупная типографика карточки (≈×2 от базового UI) */
 const FS = {
-  label: 22,
-  section: 22,
-  input: 27,
-  body: 28,
-  meta: 24,
-  hint: 22,
-  title: 44,
-  icon: 36,
+  label: 11,
+  section: 11,
+  input: 13,
+  body: 13,
+  meta: 12,
+  hint: 11,
+  title: 18,
+  icon: 16,
 }
 
 function fmtDateTime(iso: string) {
@@ -119,24 +118,24 @@ const selectChevronStyle = (chevron: string): React.CSSProperties => ({
   MozAppearance: 'none',
   backgroundImage: chevron,
   backgroundRepeat: 'no-repeat',
-  backgroundPosition: 'right 14px center',
-  backgroundSize: '12px 12px',
-  paddingRight: 40,
+  backgroundPosition: 'right 10px center',
+  backgroundSize: '10px 10px',
+  paddingRight: 28,
 })
 
 const fieldLabel: React.CSSProperties = {
   fontSize: FS.label,
-  fontWeight: 700,
+  fontWeight: 600,
   color: '#64748b',
-  marginBottom: 8,
+  marginBottom: 4,
 }
 
 const fieldInput: React.CSSProperties = {
   width: '100%',
   boxSizing: 'border-box',
-  border: '1px solid #b8c4d4',
-  borderRadius: 12,
-  padding: '14px 16px',
+  border: '1px solid #d1d9e6',
+  borderRadius: 8,
+  padding: '7px 10px',
   fontSize: FS.input,
   outline: 'none',
   fontFamily: 'inherit',
@@ -145,20 +144,20 @@ const fieldInput: React.CSSProperties = {
 }
 
 const sectionBox: React.CSSProperties = {
-  border: '1px solid #c5ced9',
-  borderRadius: 14,
-  padding: 18,
+  border: '1px solid #d8dee9',
+  borderRadius: 10,
+  padding: 12,
   background: '#fff',
-  boxShadow: '0 1px 2px rgba(15,23,42,.04)',
+  boxShadow: '0 1px 2px rgba(15,23,42,.03)',
 }
 
 const sectionTitle: React.CSSProperties = {
   fontSize: FS.section,
-  fontWeight: 800,
-  color: '#475569',
+  fontWeight: 700,
+  color: '#64748b',
   textTransform: 'uppercase',
-  letterSpacing: '.06em',
-  marginBottom: 14,
+  letterSpacing: '.05em',
+  marginBottom: 10,
 }
 
 const inlineFieldInput: React.CSSProperties = {
@@ -188,12 +187,12 @@ function DealSection({ title, children, muted }: { title: string; children: Reac
 function DealFieldBox({ label, children }: { label: string; children: React.ReactNode }) {
   return (
     <div style={{
-      border: '1px solid #b8c4d4',
-      borderRadius: 12,
-      padding: '12px 14px',
+      border: '1px solid #d1d9e6',
+      borderRadius: 8,
+      padding: '8px 10px',
       background: '#fff',
     }}>
-      <div style={{ fontSize: FS.label, color: '#64748b', marginBottom: 6, fontWeight: 700 }}>{label}</div>
+      <div style={{ fontSize: FS.label, color: '#64748b', marginBottom: 4, fontWeight: 600 }}>{label}</div>
       {children}
     </div>
   )
@@ -250,8 +249,8 @@ function ChatFeedLine({ comment }: { comment: DealComment }) {
   }
 
   return (
-    <div style={{ padding: '9px 0', borderBottom: '1px solid #eef1f5' }}>
-      <div style={{ fontSize: FS.meta, color: '#475569', lineHeight: 1.55 }}>
+    <div style={{ padding: '6px 0', borderBottom: '1px solid #eef1f5' }}>
+      <div style={{ fontSize: FS.meta, color: '#475569', lineHeight: 1.45 }}>
         <span style={{ color: '#94a3b8' }}>{time}</span>
         <span style={{ margin: '0 8px', color: '#cbd5e1' }}>{date}</span>
         <span style={{ fontWeight: 700, color: '#1e293b' }}>{author}</span>
@@ -284,9 +283,9 @@ function ContactMessengerButton({
       aria-label={label}
       onClick={e => { if (disabled) e.preventDefault() }}
       style={{
-        width: 56,
-        height: 56,
-        borderRadius: 12,
+        width: 34,
+        height: 34,
+        borderRadius: 8,
         display: 'inline-flex',
         alignItems: 'center',
         justifyContent: 'center',
@@ -539,7 +538,7 @@ export function SaleDealCard({
           borderRight: '1px solid #c5ced9',
         }}>
           {/* Шапка */}
-          <div style={{ padding: '16px 18px 14px', borderBottom: '1px solid #c5ced9', flexShrink: 0, background: '#fff' }}>
+          <div style={{ padding: '12px 14px 10px', borderBottom: '1px solid #d8dee9', flexShrink: 0, background: '#fff' }}>
             <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', gap: 10 }}>
               <div style={{ minWidth: 0, flex: 1 }}>
                 <input
@@ -552,14 +551,14 @@ export function SaleDealCard({
                     outline: 'none',
                     background: 'transparent',
                     fontSize: FS.title,
-                    fontWeight: 800,
+                    fontWeight: 700,
                     color: '#1a1d23',
                     fontFamily: 'inherit',
                     lineHeight: 1.15,
                     padding: 0,
                   }}
                 />
-                <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginTop: 8, flexWrap: 'wrap' }}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginTop: 4, flexWrap: 'wrap' }}>
                   <span style={{ fontSize: FS.meta, fontWeight: 800, color: '#1e3a5f' }}>
                     Услуга: {serviceMeta?.label || '—'}
                   </span>
@@ -579,10 +578,10 @@ export function SaleDealCard({
                 type="button"
                 onClick={onClose}
                 style={{
-                  width: 44,
-                  height: 44,
+                  width: 32,
+                  height: 32,
                   border: '1px solid #e8e9ef',
-                  borderRadius: 12,
+                  borderRadius: 8,
                   background: '#fff',
                   color: '#94a3b8',
                   cursor: 'pointer',
@@ -595,16 +594,17 @@ export function SaleDealCard({
               </button>
             </div>
 
-            <div style={{ marginTop: 10, display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
+            <div style={{ marginTop: 8, display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap' }}>
               <select
                 value={stageId}
                 onChange={e => setStageId(Number(e.target.value))}
                 aria-label="Этап сделки"
                 style={{
-                  minWidth: 220,
-                  border: '1px solid #b8c4d4',
-                  borderRadius: 12,
-                  padding: '10px 14px',
+                  minWidth: 160,
+                  maxWidth: '100%',
+                  border: '1px solid #d1d9e6',
+                  borderRadius: 8,
+                  padding: '6px 10px',
                   fontSize: FS.input,
                   color: '#0f172a',
                   background: '#fff',
@@ -631,7 +631,7 @@ export function SaleDealCard({
           </div>
 
           {/* Контент */}
-          <div style={{ flex: 1, overflowY: 'auto', padding: '14px 18px 20px', display: 'flex', flexDirection: 'column', gap: 12 }}>
+          <div style={{ flex: 1, overflowY: 'auto', padding: '10px 14px 14px', display: 'flex', flexDirection: 'column', gap: 10 }}>
             <DealSection title="Контакты">
               <div style={{ display: 'grid', gridTemplateColumns: '1fr', gap: 6 }}>
                 <DealFieldBox label="Компания">
@@ -679,7 +679,7 @@ export function SaleDealCard({
             </DealSection>
 
             <DealSection title="Параметры сделки">
-              <div style={{ display: 'grid', gap: 10 }}>
+              <div style={{ display: 'grid', gap: 8 }}>
                 <div>
                   <div style={fieldLabel}>Услуга *</div>
                   <select
@@ -754,8 +754,8 @@ export function SaleDealCard({
                     style={{
                       ...fieldInput,
                       resize: 'vertical',
-                      lineHeight: 1.55,
-                      minHeight: 72,
+                      lineHeight: 1.45,
+                      minHeight: 56,
                     }}
                   />
                 </div>
@@ -765,7 +765,7 @@ export function SaleDealCard({
 
           {/* Футер */}
           <div style={{
-            padding: '10px 18px', borderTop: '1px solid #c5ced9', display: 'flex', alignItems: 'center', gap: 8,
+            padding: '8px 14px', borderTop: '1px solid #d8dee9', display: 'flex', alignItems: 'center', gap: 6,
             flexShrink: 0, background: '#fff',
           }}>
             {!isNew && onDelete && (
@@ -842,7 +842,7 @@ export function SaleDealCard({
               flex: 1,
               minHeight: 0,
               overflowY: 'auto',
-              padding: '12px 16px 8px',
+              padding: '10px 14px 6px',
             }}
           >
             {loadingDetail ? (
@@ -908,10 +908,10 @@ export function SaleDealCard({
 }
 
 const iconBtn: React.CSSProperties = {
-  width: 52,
-  height: 52,
+  width: 36,
+  height: 36,
   padding: 0,
-  borderRadius: 12,
+  borderRadius: 8,
   display: 'inline-flex',
   alignItems: 'center',
   justifyContent: 'center',
@@ -941,8 +941,8 @@ const iconBtnSuccess: React.CSSProperties = {
   background: '#15803d',
   color: '#fff',
   border: 'none',
-  fontSize: 32,
-  fontWeight: 800,
+  fontSize: 18,
+  fontWeight: 700,
 }
 
 const iconBtnGhost: React.CSSProperties = {
@@ -957,7 +957,7 @@ const iconBtnGhostDanger: React.CSSProperties = {
   background: '#fff',
   color: '#94a3b8',
   border: '1px solid #e2e8f0',
-  fontSize: 28,
+  fontSize: 16,
 }
 
 const iconBtnDanger: React.CSSProperties = {
