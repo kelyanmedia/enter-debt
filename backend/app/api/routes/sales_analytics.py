@@ -110,6 +110,15 @@ def _day_label_ru(d: date) -> str:
     return f"{d.day} {names[d.month - 1]}"
 
 
+def _naive_dt(dt: Optional[datetime]) -> Optional[datetime]:
+    """Привести datetime к naive UTC для сравнений (SQLite/Postgres)."""
+    if dt is None:
+        return None
+    if dt.tzinfo is not None:
+        return dt.astimezone(timezone.utc).replace(tzinfo=None)
+    return dt
+
+
 def _build_revenue_performance(
     deals_list: List[SaleDeal],
     anchor: datetime,
@@ -122,7 +131,11 @@ def _build_revenue_performance(
     profit_pts: List[float] = []
 
     def add_bucket(label: str, start: datetime, end: datetime) -> None:
-        bucket_deals = [d for d in deals_list if d.created_at and start <= d.created_at <= end]
+        bucket_deals = []
+        for d in deals_list:
+            created = _naive_dt(d.created_at)
+            if created is not None and start <= created <= end:
+                bucket_deals.append(d)
         rev = sum(money_fn(d) for d in bucket_deals)
         exp = rev * 0.35
         labels.append(label)
@@ -259,9 +272,10 @@ def sales_analytics(
 
     if date_from or date_to:
         def _in_range(dt: Optional[datetime]) -> bool:
-            if not dt:
+            created = _naive_dt(dt)
+            if not created:
                 return False
-            d = dt.date()
+            d = created.date()
             if date_from and d < date_from:
                 return False
             if date_to and d > date_to:
@@ -271,15 +285,21 @@ def sales_analytics(
         deals = [d for d in deals if _in_range(d.created_at)]
         companies = [c for c in companies if _in_range(c.created_at)]
 
+    def _deal_created(d: SaleDeal) -> Optional[datetime]:
+        return _naive_dt(d.created_at)
+
+    def _company_created(c: SalesCompany) -> Optional[datetime]:
+        return _naive_dt(c.created_at)
+
     # ── KPIs ──────────────────────────────────────────────────────────────
     total_revenue = sum(_deal_money(d) for d in deals)
-    deals_this = [d for d in deals if d.created_at and d.created_at >= this_month]
-    deals_prev = [d for d in deals if d.created_at and prev_month <= d.created_at < this_month]
+    deals_this = [d for d in deals if (c := _deal_created(d)) and c >= this_month]
+    deals_prev = [d for d in deals if (c := _deal_created(d)) and prev_month <= c < this_month]
     rev_this = sum(_deal_money(d) for d in deals_this)
     rev_prev = sum(_deal_money(d) for d in deals_prev)
 
-    companies_this = [c for c in companies if c.created_at and c.created_at >= this_month]
-    companies_prev = [c for c in companies if c.created_at and prev_month <= c.created_at < this_month]
+    companies_this = [c for c in companies if (cr := _company_created(c)) and cr >= this_month]
+    companies_prev = [c for c in companies if (cr := _company_created(c)) and prev_month <= cr < this_month]
 
     won = [d for d in deals if d.stage and d.stage.is_closed_won]
     lost = [d for d in deals if d.stage and d.stage.is_closed_lost]
@@ -402,14 +422,19 @@ def sales_analytics(
         {"name": "Ожидание", "pct": max(0, 100 - round(len(won) / total_d * 100) - round(len(lost) / total_d * 100) - round(len(active) / total_d * 100)), "color": "#93c5fd"},
     ]
 
-    # ── Client GEO (from deals) ───────────────────────────────────────────
+    # ── Client GEO (только страны из сделок, без демо-заглушек) ─────────────
     geo_counts: Dict[str, int] = defaultdict(int)
     for d in deals:
-        code = normalize_client_geo(getattr(d, "client_geo", None))
+        raw = getattr(d, "client_geo", None)
+        if not raw or not str(raw).strip():
+            continue
+        code = normalize_client_geo(raw)
         geo_counts[code] += 1
     total_geo = sum(geo_counts.values()) or 1
     locations = []
-    for code, cnt in sorted(geo_counts.items(), key=lambda x: -x[1])[:8]:
+    for code, cnt in sorted(geo_counts.items(), key=lambda x: -x[1]):
+        if cnt <= 0:
+            continue
         name, lat, lng = geo_meta(code)
         locations.append({
             "code": code,

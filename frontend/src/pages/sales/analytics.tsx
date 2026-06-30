@@ -63,6 +63,49 @@ type AnalyticsData = {
   recent_activities: { title: string; ago: string; icon: string }[]
 }
 
+const EMPTY_ANALYTICS: AnalyticsData = {
+  currency: {
+    display_currency: 'UZS',
+    default_currency: 'UZS',
+    rate_source: 'ДДС',
+    usd_to_uzs_rate: 0,
+    rate_period_month: '',
+  },
+  kpis: {
+    total_revenue: 0,
+    total_revenue_change_pct: 0,
+    total_leads: 0,
+    total_leads_change_pct: 0,
+    new_customers: 0,
+    new_customers_change_pct: 0,
+    conversion_rate: 0,
+    conversion_rate_change_pct: 0,
+    active_deals: 0,
+    active_deals_change_pct: 0,
+    total_deals: 0,
+    customer_retention: 0,
+    customer_retention_count: 0,
+  },
+  revenue_performance: { labels: [], revenue: [], expenses: [], profit: [] },
+  funnel: [],
+  lead_sources: [],
+  team_activities: [],
+  deal_status: [],
+  locations: [],
+  retention_monthly: [],
+  top_sales_reps: [],
+  upcoming_tasks: [],
+  recent_activities: [],
+}
+
+function useClientReady() {
+  const [ready, setReady] = useState(false)
+  useEffect(() => {
+    setReady(true)
+  }, [])
+  return ready
+}
+
 const CARD: React.CSSProperties = {
   background: '#fff',
   borderRadius: 22,
@@ -576,6 +619,8 @@ export default function SalesAnalyticsPage() {
   const router = useRouter()
   const [data, setData] = useState<AnalyticsData | null>(null)
   const [fetching, setFetching] = useState(true)
+  const [fetchError, setFetchError] = useState('')
+  const chartsReady = useClientReady()
   const [search, setSearch] = useState('')
   const [dateFrom, setDateFrom] = useState(() => {
     const d = new Date()
@@ -603,6 +648,7 @@ export default function SalesAnalyticsPage() {
 
   const load = useCallback(async () => {
     setFetching(true)
+    setFetchError('')
     try {
       const res = await api.get<AnalyticsData>('sales/analytics', {
         params: {
@@ -614,8 +660,12 @@ export default function SalesAnalyticsPage() {
         },
       })
       setData(res.data)
-    } catch {
-      setData(null)
+    } catch (e: unknown) {
+      const msg =
+        (e as { response?: { data?: { detail?: string } } })?.response?.data?.detail
+        || 'Не удалось загрузить аналитику'
+      setFetchError(typeof msg === 'string' ? msg : 'Не удалось загрузить аналитику')
+      setData((prev) => prev ?? EMPTY_ANALYTICS)
     } finally {
       setFetching(false)
     }
@@ -626,23 +676,24 @@ export default function SalesAnalyticsPage() {
   }, [loading, user, canAccess, router])
 
   useEffect(() => {
-    if (canAccess) void load()
-  }, [canAccess, load])
+    if (loading || !user || !canAccess) return
+    void load()
+  }, [loading, user, canAccess, load])
+
+  const viewData = data ?? EMPTY_ANALYTICS
 
   const revenueChart = useMemo(() => {
-    if (!data) return []
-    const { labels, revenue, expenses, profit } = data.revenue_performance
+    const { labels, revenue, expenses, profit } = viewData.revenue_performance
     return labels.map((label, i) => ({
       label,
       revenue: revenue[i] ?? 0,
       expenses: expenses[i] ?? 0,
       profit: profit[i] ?? 0,
     }))
-  }, [data])
+  }, [viewData])
 
   const kpiCards = useMemo(() => {
-    if (!data) return []
-    const k = data.kpis
+    const k = viewData.kpis
     return [
       { title: 'Выручка', value: fmtMoneyCompact(k.total_revenue, displayCurrency), change: k.total_revenue_change_pct, suffix: 'к прошлому месяцу' },
       { title: 'Всего лидов', value: fmtNum(k.total_leads), change: k.total_leads_change_pct, suffix: '' },
@@ -651,16 +702,24 @@ export default function SalesAnalyticsPage() {
       { title: 'Активные сделки', value: fmtNum(k.active_deals), change: k.active_deals_change_pct, suffix: '' },
       { title: 'Удержание', value: `${k.customer_retention}%`, change: 0, suffix: fmtNum(k.customer_retention_count) },
     ]
-  }, [data, displayCurrency])
+  }, [viewData, displayCurrency])
 
   const funnelStages = useMemo(() => {
-    const rows = data?.funnel.length ? data.funnel : [{ name: 'Нет данных', count: 0, color: '#e2e8f0' }]
+    const rows = viewData.funnel.length ? viewData.funnel : [{ name: 'Нет данных', count: 0, color: '#e2e8f0' }]
     return rows.slice(0, 5)
-  }, [data])
+  }, [viewData])
 
   const revenueTickInterval = revenuePeriod === '30d' ? 4 : revenuePeriod === '3m' ? 1 : 0
 
-  if (loading || !user || !canAccess) return null
+  if (loading) {
+    return (
+      <Layout>
+        <div style={{ padding: 48, textAlign: 'center', color: '#94a3b8' }}>Загрузка…</div>
+      </Layout>
+    )
+  }
+
+  if (!user || !canAccess) return null
 
   return (
     <Layout>
@@ -739,9 +798,9 @@ export default function SalesAnalyticsPage() {
                 </button>
               ))}
             </div>
-            {data?.currency?.usd_to_uzs_rate ? (
+            {viewData.currency?.usd_to_uzs_rate ? (
               <div style={{ fontSize: 12, color: '#64748b', fontWeight: 800, whiteSpace: 'nowrap' }}>
-                Курс ДДС: {Math.round(data.currency.usd_to_uzs_rate).toLocaleString('ru-RU').replace(/\u00a0/g, ' ')}
+                Курс ДДС: {Math.round(viewData.currency.usd_to_uzs_rate).toLocaleString('ru-RU').replace(/\u00a0/g, ' ')}
               </div>
             ) : null}
             <button type="button" onClick={() => window.print()} style={{
@@ -756,11 +815,25 @@ export default function SalesAnalyticsPage() {
         </div>
 
         <div style={{ padding: '34px 40px 56px', display: 'flex', flexDirection: 'column', gap: 26 }}>
+          {fetchError && (
+            <div style={{
+              padding: '12px 16px',
+              borderRadius: 12,
+              background: '#fef2f2',
+              border: '1px solid #fecaca',
+              color: '#b91c1c',
+              fontSize: 14,
+              fontWeight: 600,
+            }}>
+              {fetchError}
+            </div>
+          )}
+
           {fetching && !data && (
             <div style={{ padding: 40, textAlign: 'center', color: '#94a3b8' }}>Загрузка аналитики…</div>
           )}
 
-          {data && (
+          {(data || !fetching) && (
             <>
               {/* KPI row */}
               <div style={{
@@ -844,7 +917,12 @@ export default function SalesAnalyticsPage() {
                       </span>
                     ))}
                   </div>
-                  <div style={{ height: 390 }}>
+                  <div style={{ height: 390, position: 'relative' }}>
+                    {!chartsReady ? (
+                      <div style={{ height: '100%', display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#94a3b8' }}>
+                        Подготовка графика…
+                      </div>
+                    ) : (
                     <ResponsiveContainer width="100%" height="100%">
                       <AreaChart data={revenueChart} margin={{ top: 16, right: 16, left: 4, bottom: 8 }}>
                         <defs>
@@ -880,6 +958,16 @@ export default function SalesAnalyticsPage() {
                         <Area type="monotone" dataKey="profit" stroke="#3b82f6" fill="url(#profG)" strokeWidth={3} />
                       </AreaChart>
                     </ResponsiveContainer>
+                    )}
+                    {fetching && data && (
+                      <div style={{
+                        position: 'absolute', inset: 0, background: 'rgba(255,255,255,.55)',
+                        display: 'flex', alignItems: 'center', justifyContent: 'center',
+                        fontSize: 13, color: '#64748b', fontWeight: 600,
+                      }}>
+                        Обновление…
+                      </div>
+                    )}
                   </div>
                 </div>
 
@@ -901,21 +989,21 @@ export default function SalesAnalyticsPage() {
                 <div style={{ ...CARD, padding: 32, minHeight: 410 }}>
                   <div style={{ fontSize: 20, fontWeight: 900, color: '#111827', marginBottom: 20 }}>Источники лидов</div>
                   <DonutChart
-                    total={data.kpis.total_leads}
+                    total={viewData.kpis.total_leads}
                     label="Всего лидов"
-                    slices={data.lead_sources.length ? data.lead_sources : [{ name: 'Нет данных', pct: 100, color: '#e2e8f0' }]}
+                    slices={viewData.lead_sources.length ? viewData.lead_sources : [{ name: 'Нет данных', pct: 100, color: '#e2e8f0' }]}
                   />
                 </div>
                 <div style={{ ...CARD, padding: 32, minHeight: 410 }}>
                   <div style={{ fontSize: 20, fontWeight: 900, color: '#111827', marginBottom: 20 }}>Активность команды</div>
-                  <TeamActivitiesChart data={data.team_activities} />
+                  <TeamActivitiesChart data={viewData.team_activities.length ? viewData.team_activities : [{ name: '—', count: 0, color: '#e2e8f0' }]} />
                 </div>
                 <div style={{ ...CARD, padding: 32, minHeight: 410 }}>
                   <div style={{ fontSize: 20, fontWeight: 900, color: '#111827', marginBottom: 20 }}>Статусы сделок</div>
                   <DonutChart
-                    total={data.kpis.total_deals}
+                    total={viewData.kpis.total_deals}
                     label="Всего сделок"
-                    slices={data.deal_status}
+                    slices={viewData.deal_status}
                   />
                 </div>
               </div>
@@ -924,7 +1012,7 @@ export default function SalesAnalyticsPage() {
               <div style={{ display: 'grid', gridTemplateColumns: '1.25fr 1fr', gap: 26 }}>
                 <div style={{ ...CARD, padding: 28 }}>
                   <div style={{ fontSize: 20, fontWeight: 900, color: '#111827', marginBottom: 22 }}>GEO клиентов</div>
-                  <ClientsGeoMap locations={data.locations} />
+                  <ClientsGeoMap locations={viewData.locations} />
                 </div>
                 <div style={{ ...CARD, padding: 28 }}>
                   <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 18 }}>
@@ -945,7 +1033,7 @@ export default function SalesAnalyticsPage() {
                   </div>
                   <div style={{ height: 310 }}>
                     <ResponsiveContainer width="100%" height="100%">
-                      <AreaChart data={data.retention_monthly} margin={{ top: 10, right: 10, left: -4, bottom: 0 }}>
+                      <AreaChart data={viewData.retention_monthly} margin={{ top: 10, right: 10, left: -4, bottom: 0 }}>
                         <defs>
                           <linearGradient id="retG" x1="0" y1="0" x2="0" y2="1">
                             <stop offset="0%" stopColor="#3b82f6" stopOpacity={0.35} />
@@ -1003,7 +1091,7 @@ export default function SalesAnalyticsPage() {
                     <span style={{ textAlign: 'center' }}>Сделки</span>
                     <span style={{ textAlign: 'right' }}>Выручка</span>
                   </div>
-                  {(data.top_sales_reps.length ? data.top_sales_reps : [{ name: '—', deals_closed: 0, revenue: 0 }]).map((r) => (
+                  {(viewData.top_sales_reps.length ? viewData.top_sales_reps : [{ name: '—', deals_closed: 0, revenue: 0 }]).map((r) => (
                     <div key={r.name} style={{
                       display: 'grid', gridTemplateColumns: '1.2fr 1fr 1fr', gap: 8,
                       padding: '17px 18px', borderBottom: '1px solid #edf0f5', fontSize: 15,
@@ -1021,7 +1109,7 @@ export default function SalesAnalyticsPage() {
                     <div style={{ fontSize: 20, fontWeight: 900, color: '#111827' }}>Ближайшие задачи</div>
                     <span style={{ fontSize: 14, color: '#94a3b8', cursor: 'pointer', fontWeight: 800 }}>Все →</span>
                   </div>
-                  {(data.upcoming_tasks.length ? data.upcoming_tasks : [{ title: 'Нет задач', subtitle: '', time: '', icon: 'doc' }]).map((t, i) => (
+                  {(viewData.upcoming_tasks.length ? viewData.upcoming_tasks : [{ title: 'Нет задач', subtitle: '', time: '', icon: 'doc' }]).map((t, i) => (
                     <div key={i} style={{
                       display: 'flex', alignItems: 'center', gap: 14, padding: '15px 0',
                       borderBottom: i < 2 ? '1px solid #edf0f5' : 'none',
@@ -1051,7 +1139,7 @@ export default function SalesAnalyticsPage() {
                     <div style={{ fontSize: 20, fontWeight: 900, color: '#111827' }}>Недавняя активность</div>
                     <span style={{ fontSize: 14, color: '#94a3b8', cursor: 'pointer', fontWeight: 800 }}>Все →</span>
                   </div>
-                  {(data.recent_activities.length ? data.recent_activities.slice(0, 3) : [{ title: 'Нет активности', ago: '', icon: 'note' }]).map((a, i) => (
+                  {(viewData.recent_activities.length ? viewData.recent_activities.slice(0, 3) : [{ title: 'Нет активности', ago: '', icon: 'note' }]).map((a, i) => (
                     <div key={i} style={{
                       display: 'flex', alignItems: 'flex-start', gap: 14, padding: '15px 0',
                       borderBottom: i < 2 ? '1px solid #edf0f5' : 'none',
