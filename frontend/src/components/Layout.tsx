@@ -60,8 +60,7 @@ const NAV_SECTIONS: NavSection[] = [
         icon: '📝',
         accountantHidden: true,
       },
-      { href: '/commissions', label: 'Комиссия', icon: '💰', administrationHidden: true, managerHidden: true },
-      { href: '/pm-commission', label: 'Моя комиссия', icon: '🎯', administrationHidden: true, adminOnly: false, managerOnly: true },
+      { href: '/commissions', label: 'Комиссия', icon: '💰', administrationHidden: true },
       {
         href: '/finance/dds-input',
         label: 'Ввод ДДС',

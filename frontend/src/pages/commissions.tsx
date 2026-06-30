@@ -3,6 +3,8 @@ import DatePicker from '@/components/DatePicker'
 import { useRouter } from 'next/router'
 import { useAuth } from '@/context/AuthContext'
 import Layout from '@/components/Layout'
+import CommissionScopeToggle, { type CommissionArea } from '@/components/CommissionScopeToggle'
+import PmCommissionPanel from '@/components/PmCommissionPanel'
 import {
   PageHeader, Card, Th, Td, BtnPrimary, BtnOutline, BtnIconEdit, Modal,
   ConfirmModal, Field, Input, Select, Empty, formatMoneyNumber, MoneyInput,
@@ -224,8 +226,17 @@ export default function CommissionsPage() {
   const router = useRouter()
   const { user } = useAuth()
   const isAdmin = user?.role === 'admin' || user?.role === 'accountant'
-  /** Колонки ПМ, фильтр менеджера — admin / accountant / financier (CEO-вид). */
-  const showManagerScope = isAdmin || user?.role === 'financier'
+  /** Фильтр и колонка «Менеджер» — admin / accountant / financier. */
+  const showManagerFilter = isAdmin || user?.role === 'financier'
+  /** Колонки ПМ и итоги ПМ — CEO-вид и свои строки у МОП/менеджера. */
+  const showPmColumns =
+    showManagerFilter || user?.role === 'mop' || user?.role === 'manager'
+  const tableColSpan = 11 + (showManagerFilter ? 1 : 0) + (showPmColumns ? 3 : 0)
+  const tableMinWidth =
+    showPmColumns && showManagerFilter ? 1820 : showPmColumns ? 1688 : 1400
+  const canToggleScope =
+    user?.role === 'mop' || user?.role === 'manager' || user?.role === 'admin'
+  const [area, setArea] = useState<CommissionArea>('mop')
 
   const curYear  = new Date().getFullYear()
   const curMonth = new Date().getMonth() + 1
@@ -300,8 +311,23 @@ export default function CommissionsPage() {
       void router.replace('/')
       return
     }
+    const q = router.query.area
+    if (q === 'pm' || q === 'mop') setArea(q)
+    else setArea('mop')
+  }, [user, router])
+
+  useEffect(() => {
+    if (!user) return
+    if (user.role === 'administration' || user.role === 'employee') return
+    if (area !== 'mop') return
     load()
-  }, [load, user, router])
+  }, [load, user, area])
+
+  function setCommissionArea(next: CommissionArea) {
+    setArea(next)
+    const query = { ...router.query, area: next }
+    void router.replace({ pathname: '/commissions', query }, undefined, { shallow: true })
+  }
 
   useEffect(() => {
     if (!user || user.role === 'administration' || user.role === 'employee') return
@@ -477,7 +503,7 @@ export default function CommissionsPage() {
         project_date: form.project_date,
         note: form.note || null,
       }
-      if (showManagerScope && form.manager_id) body.manager_id = parseInt(form.manager_id, 10)
+      if (showManagerFilter && form.manager_id) body.manager_id = parseInt(form.manager_id, 10)
       body.payment_id = form.payment_id ? parseInt(form.payment_id, 10) : null
 
       if (editItem) {
@@ -516,16 +542,31 @@ export default function CommissionsPage() {
     )
   }
 
-  const isMop = user?.role === 'mop'
-
   // ── Render ─────────────────────────────────────────────────────────────────
+  const isPmArea = area === 'pm'
+
   return (
     <Layout>
+      {canToggleScope && (
+        <div style={{ marginBottom: 20 }}>
+          <CommissionScopeToggle value={area} onChange={setCommissionArea} />
+        </div>
+      )}
+
       <PageHeader
-        title="Комиссия"
-        subtitle="Учёт комиссий: привязка к любому проекту из «Проекты» (включая проекты с другим ПМ). В P&L строка «Процент менеджера» заполняется суммами «Получено» в месяц даты получения (или даты проекта, если дату не указали). В Projects Cost из маржи вычитается резерв под %. Рекуррент: «Дублей на месяцы вперёд» при создании или кнопки «+1 мес» у строки."
-        action={<BtnPrimary onClick={openAdd}>+ Добавить проект</BtnPrimary>}
+        title={isPmArea ? 'Моя комиссия' : 'Комиссия'}
+        subtitle={
+          isPmArea
+            ? 'Только ваши проекты и сумма к выплате. Прибыль и чужие комиссии здесь не показываются.'
+            : 'Учёт комиссий: привязка к любому проекту из «Проекты» (включая проекты с другим ПМ). В P&L строка «Процент менеджера» заполняется суммами «Получено» в месяц даты получения (или даты проекта, если дату не указали). В Projects Cost из маржи вычитается резерв под %. Рекуррент: «Дублей на месяцы вперёд» при создании или кнопки «+1 мес» у строки.'
+        }
+        action={!isPmArea ? <BtnPrimary onClick={openAdd}>+ Добавить проект</BtnPrimary> : undefined}
       />
+
+      {isPmArea ? (
+        <PmCommissionPanel />
+      ) : (
+      <>
 
       {/* Filters */}
       <div style={{ display: 'flex', gap: 12, flexWrap: 'wrap', marginBottom: 20 }}>
@@ -550,7 +591,7 @@ export default function CommissionsPage() {
           ))}
         </select>
 
-        {showManagerScope && managers.length > 0 && (
+        {showManagerFilter && managers.length > 0 && (
           <select
             value={filterMgr}
             onChange={e => setFilterMgr(Number(e.target.value))}
@@ -581,7 +622,7 @@ export default function CommissionsPage() {
             style={{
               width: '100%',
               borderCollapse: 'collapse',
-              minWidth: showManagerScope ? 1820 : 1400,
+              minWidth: tableMinWidth,
               tableLayout: 'fixed',
             }}
           >
@@ -589,7 +630,7 @@ export default function CommissionsPage() {
               <tr style={{ borderBottom: '2px solid #f1f5f9' }}>
                 <Th style={{ width: COM_COL.project, minWidth: COM_COL.project }}>Проект (комиссия)</Th>
                 <Th style={{ width: COM_COL.linkPay, minWidth: COM_COL.linkPay }}>Проект «Проекты»</Th>
-                {showManagerScope && (
+                {showManagerFilter && (
                   <Th style={{ width: COM_COL.manager, minWidth: COM_COL.manager }}>Менеджер</Th>
                 )}
                 <Th style={{ textAlign: 'right', width: COM_COL.num, minWidth: COM_COL.num }}>Стоимость</Th>
@@ -604,7 +645,7 @@ export default function CommissionsPage() {
                 <Th style={{ textAlign: 'right', width: COM_COL.numMd, minWidth: COM_COL.numMd }}>Доход (факт)</Th>
                 <Th style={{ textAlign: 'right', width: COM_COL.numMd, minWidth: COM_COL.numMd }}>Получено</Th>
                 <Th style={{ textAlign: 'right', width: COM_COL.numMd, minWidth: COM_COL.numMd }}>Долг</Th>
-                {showManagerScope && (
+                {showPmColumns && (
                   <>
                     <Th style={{ width: COM_COL.pm, minWidth: COM_COL.pm }}>ПМ</Th>
                     <Th style={{ textAlign: 'center', width: COM_COL.pmRate, minWidth: COM_COL.pmRate }}>Ставка ПМ</Th>
@@ -617,11 +658,11 @@ export default function CommissionsPage() {
             </thead>
             <tbody>
               {loading && (
-                <tr><td colSpan={showManagerScope ? 15 : 11}
+                <tr><td colSpan={tableColSpan}
                   style={{ textAlign: 'center', padding: 40, color: '#94a3b8' }}>Загрузка…</td></tr>
               )}
               {!loading && commissions.length === 0 && (
-                <tr><td colSpan={showManagerScope ? 15 : 11} style={{ padding: 0 }}>
+                <tr><td colSpan={tableColSpan} style={{ padding: 0 }}>
                   <Empty text="Проектов нет. Добавьте первый проект." />
                 </td></tr>
               )}
@@ -655,7 +696,7 @@ export default function CommissionsPage() {
                       <span style={{ color: '#cbd5e1' }}>—</span>
                     )}
                   </Td>
-                  {showManagerScope && (
+                  {showManagerFilter && (
                     <Td style={{ verticalAlign: 'top' }}>
                       <span style={{ fontSize: 13, lineHeight: 1.35 }}>{c.manager?.name || '—'}</span>
                     </Td>
@@ -686,11 +727,11 @@ export default function CommissionsPage() {
                       : <span style={{ color: '#059669' }}>—</span>
                     }
                   </Td>
-                  {showManagerScope && (
+                  {showPmColumns && (
                     <>
                       <Td style={{ verticalAlign: 'top', fontSize: 13 }}>
                         <div>{c.pm?.pm_name || '—'}</div>
-                        {showManagerScope && c.payment_id && (
+                        {showManagerFilter && c.payment_id && (
                           <button
                             type="button"
                             onClick={() => openPmModal(c.payment_id!)}
@@ -819,7 +860,7 @@ export default function CommissionsPage() {
               { label: 'Доход менеджеров (план)', val: formatMoneyNumber(stats.total_manager_income),  unit: ' сум', color: '#fff',     bg: '#1a6b3c',  featured: true  },
               { label: 'Выплачено',               val: formatMoneyNumber(stats.total_received),        unit: ' сум', color: '#059669',  bg: '#fff',     featured: false },
               { label: 'Долг менеджерам',         val: formatMoneyNumber(stats.total_pending),         unit: ' сум', color: stats.total_pending > 0 ? '#ef4444' : '#059669', bg: '#fff', featured: false },
-              ...(showManagerScope ? [
+              ...(showPmColumns ? [
                 { label: 'Доход ПМ (план)', val: formatMoneyNumber(stats.total_pm_income_plan || 0), unit: ' сум', color: '#fff', bg: '#0d9488', featured: true },
                 { label: 'Долг перед ПМ', val: formatMoneyNumber(stats.total_pm_debt || 0), unit: ' сум', color: (stats.total_pm_debt || 0) > 0 ? '#ef4444' : '#059669', bg: '#fff', featured: false },
               ] : []),
@@ -866,7 +907,7 @@ export default function CommissionsPage() {
           )}
 
           {/* Админ / бухгалтерия / администрация: выбор менеджера */}
-          {showManagerScope && (
+          {showManagerFilter && (
             <Field label="Менеджер">
               <Select value={form.manager_id} onChange={e => f('manager_id', e.target.value)}>
                 <option value="">— не выбран —</option>
@@ -1207,6 +1248,8 @@ export default function CommissionsPage() {
         onConfirm={doDelete}
         onClose={() => setDeleteId(null)}
       />
+      </>
+      )}
     </Layout>
   )
 }

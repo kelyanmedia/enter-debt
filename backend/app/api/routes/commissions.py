@@ -146,7 +146,7 @@ def linkable_payments(
     ),
 ):
     """Активные проекты «Проекты» для привязки. Для раздела «Комиссия» передавайте for_commission=true."""
-    if current_user.role in ("administration", "employee", "mop"):
+    if current_user.role in ("administration", "employee"):
         raise HTTPException(status_code=403, detail="Нет доступа")
 
     q = (

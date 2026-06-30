@@ -75,6 +75,8 @@ def _pm_payments_query(db: Session, current_user: User):
     )
     if current_user.role == "manager":
         q = q.filter(Partner.manager_id == current_user.id)
+    elif current_user.role == "mop":
+        q = q.filter(Partner.manager_id == current_user.id)
     return q
 
 
@@ -84,7 +86,7 @@ def list_my_pm_commissions(
     current_user: User = Depends(get_current_user),
 ):
     """Урезанная проекция для ПМ — только свои проекты, без прибыли."""
-    if current_user.role not in ("manager", "admin"):
+    if current_user.role not in ("manager", "mop", "admin"):
         raise HTTPException(status_code=403, detail="Раздел «Моя комиссия» доступен проектным менеджерам.")
     rows = (
         _pm_payments_query(db, current_user)
@@ -100,7 +102,7 @@ def my_pm_commission_stats(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
-    if current_user.role not in ("manager", "admin"):
+    if current_user.role not in ("manager", "mop", "admin"):
         raise HTTPException(status_code=403, detail="Раздел «Моя комиссия» доступен проектным менеджерам.")
     rows = _pm_payments_query(db, current_user).all()
     locked_total = forecast_total = paid_total = debt_total = Decimal(0)
