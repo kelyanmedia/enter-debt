@@ -71,11 +71,10 @@ def _pm_payments_query(db: Session, current_user: User):
             Payment.is_archived == False,
             Payment.trashed_at.is_(None),
             Partner.trashed_at.is_(None),
+            Payment.pm_commission_enabled == True,
         )
     )
-    if current_user.role == "manager":
-        q = q.filter(Partner.manager_id == current_user.id)
-    elif current_user.role == "mop":
+    if current_user.role in ("manager", "mop", "admin"):
         q = q.filter(Partner.manager_id == current_user.id)
     return q
 
@@ -147,6 +146,7 @@ def list_admin_pm_commissions(
             Payment.trashed_at.is_(None),
             Partner.trashed_at.is_(None),
             Partner.manager_id.isnot(None),
+            Payment.pm_commission_enabled == True,
         )
     )
     if pm_id:
@@ -171,6 +171,7 @@ def pm_commission_stats(
             Payment.is_archived == False,
             Payment.trashed_at.is_(None),
             Partner.manager_id.isnot(None),
+            Payment.pm_commission_enabled == True,
         )
     )
     if pm_id:

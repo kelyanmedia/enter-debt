@@ -228,15 +228,14 @@ export default function CommissionsPage() {
   const isAdmin = user?.role === 'admin' || user?.role === 'accountant'
   /** Фильтр и колонка «Менеджер» — admin / accountant / financier. */
   const showManagerFilter = isAdmin || user?.role === 'financier'
-  /** Колонки ПМ и итоги ПМ — CEO-вид и свои строки у МОП/менеджера. */
-  const showPmColumns =
-    showManagerFilter || user?.role === 'mop' || user?.role === 'manager'
+  /** Колонки ПМ и итоги ПМ — только CEO-вид (админ / бухгалтерия / финансист). */
+  const showPmColumns = showManagerFilter
   const tableColSpan = 11 + (showManagerFilter ? 1 : 0) + (showPmColumns ? 3 : 0)
   const tableMinWidth =
     showPmColumns && showManagerFilter ? 1820 : showPmColumns ? 1688 : 1400
   const canToggleScope =
     user?.role === 'mop' || user?.role === 'manager' || user?.role === 'admin'
-  const [area, setArea] = useState<CommissionArea>('mop')
+  const [area, setArea] = useState<CommissionArea>('manager')
 
   const curYear  = new Date().getFullYear()
   const curMonth = new Date().getMonth() + 1
@@ -312,14 +311,14 @@ export default function CommissionsPage() {
       return
     }
     const q = router.query.area
-    if (q === 'pm' || q === 'mop') setArea(q)
-    else setArea('mop')
+    if (q === 'pm') setArea('pm')
+    else setArea('manager')
   }, [user, router])
 
   useEffect(() => {
     if (!user) return
     if (user.role === 'administration' || user.role === 'employee') return
-    if (area !== 'mop') return
+    if (area !== 'manager') return
     load()
   }, [load, user, area])
 
@@ -328,6 +327,8 @@ export default function CommissionsPage() {
     const query = { ...router.query, area: next }
     void router.replace({ pathname: '/commissions', query }, undefined, { shallow: true })
   }
+
+  const pagePad = { padding: '0 24px 28px', paddingRight: 56, maxWidth: '100%', minWidth: 0, boxSizing: 'border-box' as const }
 
   useEffect(() => {
     if (!user || user.role === 'administration' || user.role === 'employee') return
@@ -547,22 +548,32 @@ export default function CommissionsPage() {
 
   return (
     <Layout>
-      {canToggleScope && (
-        <div style={{ marginBottom: 20 }}>
-          <CommissionScopeToggle value={area} onChange={setCommissionArea} />
-        </div>
-      )}
+      <div style={{ width: '100%', minWidth: 0, boxSizing: 'border-box' }}>
+        {canToggleScope && (
+          <div
+            style={{
+              ...pagePad,
+              paddingTop: 16,
+              paddingBottom: 12,
+              background: '#fff',
+              borderBottom: '1px solid #e8e9ef',
+            }}
+          >
+            <CommissionScopeToggle value={area} onChange={setCommissionArea} />
+          </div>
+        )}
 
       <PageHeader
-        title={isPmArea ? 'Моя комиссия' : 'Комиссия'}
+        title={isPmArea ? 'Комиссия ПМ' : 'Комиссия менеджера'}
         subtitle={
           isPmArea
-            ? 'Только ваши проекты и сумма к выплате. Прибыль и чужие комиссии здесь не показываются.'
-            : 'Учёт комиссий: привязка к любому проекту из «Проекты» (включая проекты с другим ПМ). В P&L строка «Процент менеджера» заполняется суммами «Получено» в месяц даты получения (или даты проекта, если дату не указали). В Projects Cost из маржи вычитается резерв под %. Рекуррент: «Дублей на месяцы вперёд» при создании или кнопки «+1 мес» у строки.'
+            ? 'Проекты из раздела «Проекты», где вы назначены ПМ и включена галочка «ПМ получает комиссию». Прибыль и чужие комиссии здесь не показываются.'
+            : 'Ручной учёт комиссии менеджера по проектам. В P&L строка «Процент менеджера» заполняется суммами «Получено» в месяц даты получения (или даты проекта). Рекуррент: «Дублей на месяцы вперёд» при создании или кнопки «+1 мес» у строки.'
         }
         action={!isPmArea ? <BtnPrimary onClick={openAdd}>+ Добавить проект</BtnPrimary> : undefined}
       />
 
+      <div style={pagePad}>
       {isPmArea ? (
         <PmCommissionPanel />
       ) : (
@@ -1250,6 +1261,8 @@ export default function CommissionsPage() {
       />
       </>
       )}
+      </div>
+      </div>
     </Layout>
   )
 }

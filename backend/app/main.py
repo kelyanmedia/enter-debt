@@ -741,6 +741,7 @@ def _migrate():
         "ALTER TABLE payments ADD COLUMN IF NOT EXISTS pm_commission_amount NUMERIC(15,2)",
         "ALTER TABLE payments ADD COLUMN IF NOT EXISTS pm_commission_status VARCHAR(20) NOT NULL DEFAULT 'forecast'",
         "ALTER TABLE payments ADD COLUMN IF NOT EXISTS pm_commission_paid_uzs NUMERIC(15,2) NOT NULL DEFAULT 0",
+        "ALTER TABLE payments ADD COLUMN IF NOT EXISTS pm_commission_enabled BOOLEAN NOT NULL DEFAULT FALSE",
         "ALTER TABLE payments ADD COLUMN IF NOT EXISTS pm_closed_at TIMESTAMP WITH TIME ZONE",
         "ALTER TABLE users ADD COLUMN IF NOT EXISTS admin_stored_password TEXT",
         """CREATE TABLE IF NOT EXISTS pm_commission_logs (
@@ -1062,6 +1063,7 @@ def _migrate():
             ("pm_commission_amount", "ALTER TABLE payments ADD COLUMN pm_commission_amount NUMERIC(15,2)"),
             ("pm_commission_status", "ALTER TABLE payments ADD COLUMN pm_commission_status VARCHAR(20) NOT NULL DEFAULT 'forecast'"),
             ("pm_commission_paid_uzs", "ALTER TABLE payments ADD COLUMN pm_commission_paid_uzs NUMERIC(15,2) NOT NULL DEFAULT 0"),
+            ("pm_commission_enabled", "ALTER TABLE payments ADD COLUMN pm_commission_enabled BOOLEAN NOT NULL DEFAULT FALSE"),
             ("pm_closed_at", "ALTER TABLE payments ADD COLUMN pm_closed_at TIMESTAMP"),
         ],
     }

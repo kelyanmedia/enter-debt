@@ -1,12 +1,12 @@
 import { useEffect } from 'react'
 import { useRouter } from 'next/router'
 
-/** Старый URL — перенаправление на единый раздел с переключателем МОП/ПМ. */
+/** Старый URL — единый раздел комиссий, по умолчанию «Комиссия менеджера». */
 export default function PmCommissionRedirect() {
   const router = useRouter()
 
   useEffect(() => {
-    void router.replace('/commissions?area=pm')
+    void router.replace('/commissions')
   }, [router])
 
   return null

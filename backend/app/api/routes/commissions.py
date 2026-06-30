@@ -90,7 +90,7 @@ def _enrich(c: Commission, db: Optional[Session] = None) -> CommissionOut:
     if pay is not None:
         out.linked_payment_description = (pay.description or "").strip() or None
         out.linked_partner_name = (pay.partner.name if pay.partner else None) or None
-        if db is not None and pay.partner:
+        if db is not None and pay.partner and bool(getattr(pay, "pm_commission_enabled", False)):
             pm_state = build_pm_commission_state(pay)
             out.pm = PmCommissionSnippetOut(
                 pm_id=pm_state.get("pm_id"),
@@ -204,7 +204,7 @@ def get_stats(
         total_mgr += profit * pct / 100
         total_recv += Decimal(str(c.received_amount_1 or 0)) + Decimal(str(c.received_amount_2 or 0))
         pay = getattr(c, "payment", None)
-        if pay is not None and pay.id not in payment_ids:
+        if pay is not None and pay.id not in payment_ids and bool(getattr(pay, "pm_commission_enabled", False)):
             payment_ids.add(pay.id)
             pm_st = build_pm_commission_state(pay)
             total_pm_plan += Decimal(str(pm_st["amount"]))

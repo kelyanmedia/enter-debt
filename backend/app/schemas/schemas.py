@@ -621,6 +621,7 @@ class PaymentUpdate(BaseModel):
     hosting_payment_kind: Optional[str] = None
     hosting_renewal_anchor: Optional[date] = None
     hosting_prepaid_years: Optional[int] = None
+    pm_commission_enabled: Optional[bool] = None
 
 
 class PaymentConfirm(BaseModel):
@@ -663,6 +664,7 @@ class PaymentOut(PaymentBase):
     # Ближайший неоплаченный месяц графика (для списка проектов и напоминаний)
     next_payment_due_date: Optional[date] = None
     next_payment_month: Optional[str] = None
+    pm_commission_enabled: bool = False
 
     class Config:
         from_attributes = True

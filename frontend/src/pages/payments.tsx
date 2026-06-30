@@ -44,6 +44,7 @@ interface Payment {
   days_until_due?: number | null
   partner: { id: number; name: string; manager?: { id: number; name: string } }
   months?: PaymentMonth[]
+  pm_commission_enabled?: boolean
 }
 
 /** Для списка: дедлайн по графику или по договору (редактирование всегда по deadline_date из API). */
@@ -117,6 +118,7 @@ const EMPTY_FORM = {
   hosting_payment_kind: '',
   hosting_renewal_anchor: '',
   hosting_prepaid_years: '0',
+  pm_commission_enabled: false,
 }
 
 const textareaStyle: CSSProperties = {
@@ -470,6 +472,7 @@ export default function PaymentsPage() {
       hosting_payment_kind: p.hosting_payment_kind || '',
       hosting_renewal_anchor: (p.hosting_renewal_anchor || p.deadline_date || '') as string,
       hosting_prepaid_years: String(Math.min(3, Math.max(0, Number(p.hosting_prepaid_years ?? 0)))),
+      pm_commission_enabled: Boolean(p.pm_commission_enabled),
     })
     setEditingId(p.id)
     setError('')
@@ -571,6 +574,7 @@ export default function PaymentsPage() {
         hosting_prepaid_years: isHosting
           ? Math.min(3, Math.max(0, Number(form.hosting_prepaid_years) || 0))
           : 0,
+        pm_commission_enabled: form.pm_commission_enabled,
       }
       if (editingId) {
         await api.put(`payments/${editingId}`, payload)
@@ -2188,6 +2192,38 @@ export default function PaymentsPage() {
             }} />
           </div>
         </div>
+
+        {['admin', 'accountant', 'financier', 'manager'].includes(user?.role || '') && (
+          <div
+            onClick={() => setForm((f) => ({ ...f, pm_commission_enabled: !f.pm_commission_enabled }))}
+            style={{
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'space-between',
+              gap: 12,
+              padding: '12px 14px',
+              background: form.pm_commission_enabled ? '#ecfdf5' : '#f8fafc',
+              borderRadius: 10,
+              cursor: 'pointer',
+              marginTop: 8,
+              border: `1px solid ${form.pm_commission_enabled ? '#6ee7b7' : '#e2e8f0'}`,
+            }}
+          >
+            <div style={{ minWidth: 0 }}>
+              <div style={{ fontWeight: 600, fontSize: 13, color: '#1e293b' }}>ПМ получает комиссию</div>
+              <div style={{ fontSize: 12, color: '#64748b', marginTop: 2, lineHeight: 1.4 }}>
+                Проект появится в «Комиссия» → «Комиссия ПМ» у ПМ, назначенного у партнёра
+              </div>
+            </div>
+            <input
+              type="checkbox"
+              checked={form.pm_commission_enabled}
+              onChange={(e) => setForm((f) => ({ ...f, pm_commission_enabled: e.target.checked }))}
+              onClick={(e) => e.stopPropagation()}
+              style={{ width: 18, height: 18, flexShrink: 0, cursor: 'pointer' }}
+            />
+          </div>
+        )}
       </Modal>
 
       <Modal

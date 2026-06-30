@@ -81,17 +81,35 @@ export default function PmCommissionPanel() {
 
       {!loading && rows.length === 0 && (
         <Card>
-          <Empty text="Пока нет проектов, где вы назначены проектным менеджером." />
+          <Empty text="Нет проектов с комиссией ПМ. В разделе «Проекты» откройте проект и включите галочку «ПМ получает комиссию» (вы должны быть назначены ПМ у партнёра)." />
         </Card>
       )}
 
       {!loading && rows.length > 0 && (
-        <div style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 14, width: '100%', minWidth: 0 }}>
           {rows.map((r) => (
-            <Card key={r.payment_id}>
-              <div style={{ display: 'flex', justifyContent: 'space-between', gap: 16, flexWrap: 'wrap' }}>
-                <div style={{ flex: 1, minWidth: 200 }}>
-                  <div style={{ fontWeight: 700, fontSize: 16, marginBottom: 8 }}>{r.project_name}</div>
+            <Card key={r.payment_id} style={{ overflow: 'hidden' }}>
+              <div
+                style={{
+                  display: 'grid',
+                  gridTemplateColumns: 'minmax(0, 1fr) auto',
+                  gap: 16,
+                  alignItems: 'start',
+                  width: '100%',
+                  minWidth: 0,
+                }}
+              >
+                <div style={{ minWidth: 0, overflow: 'hidden' }}>
+                  <div
+                    style={{
+                      fontWeight: 700,
+                      fontSize: 16,
+                      marginBottom: 8,
+                      wordBreak: 'break-word',
+                    }}
+                  >
+                    {r.project_name}
+                  </div>
                   <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap', marginBottom: 8 }}>
                     {statusBadge(r.status)}
                     <span style={{ fontSize: 13, color: '#64748b' }}>
@@ -112,17 +130,41 @@ export default function PmCommissionPanel() {
                         fontSize: 13,
                         color: '#166534',
                         border: '1px solid #bbf7d0',
+                        wordBreak: 'break-word',
                       }}
                     >
                       До следующей ставки: {r.hint_next_rate}
                     </div>
                   )}
                 </div>
-                <div style={{ textAlign: 'right', minWidth: 140 }}>
-                  <div style={{ fontSize: 11, color: '#94a3b8', marginBottom: 4, textTransform: 'uppercase' }}>
+                <div
+                  style={{
+                    textAlign: 'right',
+                    minWidth: 0,
+                    maxWidth: '42%',
+                    flexShrink: 0,
+                  }}
+                >
+                  <div
+                    style={{
+                      fontSize: 11,
+                      color: '#94a3b8',
+                      marginBottom: 4,
+                      textTransform: 'uppercase',
+                    }}
+                  >
                     К выплате
                   </div>
-                  <div style={{ fontSize: 26, fontWeight: 800, color: '#059669', letterSpacing: '-0.02em' }}>
+                  <div
+                    style={{
+                      fontSize: 'clamp(18px, 4.5vw, 26px)',
+                      fontWeight: 800,
+                      color: '#059669',
+                      letterSpacing: '-0.02em',
+                      lineHeight: 1.15,
+                      wordBreak: 'break-word',
+                    }}
+                  >
                     {formatMoneyNumber(r.amount)}
                   </div>
                   {r.status === 'paid' && r.paid_uzs > 0 && (

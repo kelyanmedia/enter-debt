@@ -58,6 +58,7 @@ class Payment(Base):
     pm_commission_amount = Column(Numeric(15, 2), nullable=True)
     pm_commission_status = Column(String(20), nullable=False, default="forecast")
     pm_commission_paid_uzs = Column(Numeric(15, 2), nullable=False, default=0)
+    pm_commission_enabled = Column(Boolean, nullable=False, default=False)
     pm_closed_at = Column(DateTime(timezone=True), nullable=True)
     created_at = Column(DateTime(timezone=True), server_default=func.now())
     updated_at = Column(DateTime(timezone=True), onupdate=func.now())
