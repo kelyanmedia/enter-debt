@@ -163,6 +163,8 @@ export default function FinanceLendingPage() {
   const [saving, setSaving] = useState(false)
   const [search, setSearch] = useState('')
   const [categoryFilter, setCategoryFilter] = useState<'all' | LendingCategory>('all')
+  const [archiveView, setArchiveView] = useState(false)
+  const [archiveCount, setArchiveCount] = useState(0)
   const [modalOpen, setModalOpen] = useState(false)
   const [editingId, setEditingId] = useState<number | null>(null)
   const [form, setForm] = useState<LendingFormState>(() => emptyForm())
@@ -178,14 +180,26 @@ export default function FinanceLendingPage() {
     if (!user || !canAccessFinanceSection(user, 'lending')) return
     setFetching(true)
     try {
-      const r = await api.get<LendingRecord[]>('finance/lending')
-      setRows(r.data || [])
+      const endpoint = archiveView ? 'finance/lending?archived=1' : 'finance/lending'
+      const r = await api.get<LendingRecord[]>(endpoint)
+      const data = r.data || []
+      setRows(data)
+      if (archiveView) {
+        setArchiveCount(data.length)
+      } else {
+        try {
+          const ar = await api.get<LendingRecord[]>('finance/lending?archived=1')
+          setArchiveCount((ar.data || []).length)
+        } catch {
+          setArchiveCount(0)
+        }
+      }
     } catch {
       setRows([])
     } finally {
       setFetching(false)
     }
-  }, [user])
+  }, [user, archiveView])
 
   useEffect(() => {
     void load()
@@ -246,7 +260,7 @@ export default function FinanceLendingPage() {
     let externalIncome = 0
     let internalFrozen = 0
     for (const r of filteredRows) {
-      if (r.closed_at) continue
+      if (!archiveView && r.closed_at) continue
       const p = Number(r.principal_uzs) || 0
       const rep = Number(r.total_repayment_uzs) || 0
       principal += p
@@ -258,7 +272,7 @@ export default function FinanceLendingPage() {
       }
     }
     return { principal, repayment, externalIncome, internalFrozen }
-  }, [filteredRows])
+  }, [filteredRows, archiveView])
 
   const openCreate = (presetCategory?: LendingCategory) => {
     setEditingId(null)
@@ -375,69 +389,138 @@ export default function FinanceLendingPage() {
   return (
     <Layout>
       <PageHeader
-        title="Кредитование"
-        subtitle="Учёт денег, которые компания выдаёт проектам или другим компаниям. К возврату считается автоматически: процент за месяц начисляется по дате выдачи (25 апр. → 25 мая = 1 месяц, 26 мая = уже 2). Если дедлайна нет, запись бессрочная и расчёт идёт на сегодня."
+        title={archiveView ? 'Кредитование · Архив' : 'Кредитование'}
+        subtitle={
+          archiveView
+            ? 'История закрытого кредитования (внутреннее и внешнее). Записи попадают сюда автоматически при оплате клиента по проекту или при ручном закрытии.'
+            : 'Учёт денег, которые компания выдаёт проектам или другим компаниям. К возврату считается автоматически: процент за месяц начисляется по дате выдачи (25 апр. → 25 мая = 1 месяц, 26 мая = уже 2). Если дедлайна нет, запись бессрочная и расчёт идёт на сегодня.'
+        }
       />
       <div style={{ padding: '22px 24px', display: 'flex', flexDirection: 'column', gap: 14, minHeight: 0 }}>
         <div style={{ display: 'flex', flexWrap: 'wrap', alignItems: 'center', gap: 10 }}>
-          <BtnPrimary type="button" onClick={() => openCreate()}>
-            Добавить запись
-          </BtnPrimary>
-          <BtnOutline type="button" onClick={() => void load()} disabled={fetching} style={{ fontSize: 12, padding: '6px 12px' }}>
-            {fetching ? 'Загрузка…' : 'Обновить'}
-          </BtnOutline>
-          <span style={{ width: 1, height: 22, background: '#e2e8f0', margin: '0 2px' }} aria-hidden />
-          {(['external', 'internal'] as const).map((cat) => {
-            const active = categoryFilter === cat
-            const label = cat === 'external' ? 'Внешнее' : 'Внутреннее'
-            const count = cat === 'external' ? categoryCounts.external : categoryCounts.internal
-            return (
-              <BtnOutline
-                key={cat}
-                type="button"
-                onClick={() => setCategoryFilter((prev) => (prev === cat ? 'all' : cat))}
-                title={
-                  cat === 'external'
-                    ? 'Кредит со стороны (с % или без). Повторный клик — показать все.'
-                    : 'Свои деньги на проект, без %. Повторный клик — показать все.'
-                }
-                style={{
-                  fontSize: 12,
-                  padding: '6px 12px',
-                  ...(active
-                    ? {
-                        background: cat === 'internal' ? '#0ea5e9' : '#ea580c',
-                        color: '#fff',
-                        borderColor: cat === 'internal' ? '#0284c7' : '#c2410c',
-                        fontWeight: 700,
-                      }
-                    : {}),
-                }}
-              >
-                {label}
-                <span style={{ marginLeft: 6, opacity: active ? 0.9 : 0.65, fontWeight: 600 }}>({count})</span>
+          {!archiveView ? (
+            <>
+              <BtnPrimary type="button" onClick={() => openCreate()}>
+                Добавить запись
+              </BtnPrimary>
+              <BtnOutline type="button" onClick={() => void load()} disabled={fetching} style={{ fontSize: 12, padding: '6px 12px' }}>
+                {fetching ? 'Загрузка…' : 'Обновить'}
               </BtnOutline>
-            )
-          })}
-          {categoryFilter !== 'all' ? (
-            <button
-              type="button"
-              onClick={() => setCategoryFilter('all')}
-              style={{
-                fontSize: 12,
-                fontWeight: 600,
-                color: '#64748b',
-                background: 'transparent',
-                border: 'none',
-                cursor: 'pointer',
-                fontFamily: 'inherit',
-                textDecoration: 'underline',
-                textUnderlineOffset: 3,
-              }}
-            >
-              Все записи
-            </button>
-          ) : null}
+              <span style={{ width: 1, height: 22, background: '#e2e8f0', margin: '0 2px' }} aria-hidden />
+              {(['external', 'internal'] as const).map((cat) => {
+                const active = categoryFilter === cat
+                const label = cat === 'external' ? 'Внешнее' : 'Внутреннее'
+                const count = cat === 'external' ? categoryCounts.external : categoryCounts.internal
+                return (
+                  <BtnOutline
+                    key={cat}
+                    type="button"
+                    onClick={() => setCategoryFilter((prev) => (prev === cat ? 'all' : cat))}
+                    title={
+                      cat === 'external'
+                        ? 'Кредит со стороны (с % или без). Повторный клик — показать все.'
+                        : 'Свои деньги на проект, без %. Повторный клик — показать все.'
+                    }
+                    style={{
+                      fontSize: 12,
+                      padding: '6px 12px',
+                      ...(active
+                        ? {
+                            background: cat === 'internal' ? '#0ea5e9' : '#ea580c',
+                            color: '#fff',
+                            borderColor: cat === 'internal' ? '#0284c7' : '#c2410c',
+                            fontWeight: 700,
+                          }
+                        : {}),
+                    }}
+                  >
+                    {label}
+                    <span style={{ marginLeft: 6, opacity: active ? 0.9 : 0.65, fontWeight: 600 }}>({count})</span>
+                  </BtnOutline>
+                )
+              })}
+              {categoryFilter !== 'all' ? (
+                <button
+                  type="button"
+                  onClick={() => setCategoryFilter('all')}
+                  style={{
+                    fontSize: 12,
+                    fontWeight: 600,
+                    color: '#64748b',
+                    background: 'transparent',
+                    border: 'none',
+                    cursor: 'pointer',
+                    fontFamily: 'inherit',
+                    textDecoration: 'underline',
+                    textUnderlineOffset: 3,
+                  }}
+                >
+                  Все записи
+                </button>
+              ) : null}
+            </>
+          ) : (
+            <>
+              <BtnOutline
+                type="button"
+                onClick={() => {
+                  setArchiveView(false)
+                  setCategoryFilter('all')
+                }}
+                style={{ fontSize: 12, padding: '6px 12px', fontWeight: 600 }}
+              >
+                ← К активным
+              </BtnOutline>
+              <span style={{ width: 1, height: 22, background: '#e2e8f0', margin: '0 2px' }} aria-hidden />
+              {(['external', 'internal'] as const).map((cat) => {
+                const active = categoryFilter === cat
+                const label = cat === 'external' ? 'Внешнее' : 'Внутреннее'
+                const count = cat === 'external' ? categoryCounts.external : categoryCounts.internal
+                return (
+                  <BtnOutline
+                    key={cat}
+                    type="button"
+                    onClick={() => setCategoryFilter((prev) => (prev === cat ? 'all' : cat))}
+                    style={{
+                      fontSize: 12,
+                      padding: '6px 12px',
+                      ...(active
+                        ? {
+                            background: cat === 'internal' ? '#0ea5e9' : '#ea580c',
+                            color: '#fff',
+                            borderColor: cat === 'internal' ? '#0284c7' : '#c2410c',
+                            fontWeight: 700,
+                          }
+                        : {}),
+                    }}
+                  >
+                    {label}
+                    <span style={{ marginLeft: 6, opacity: active ? 0.9 : 0.65, fontWeight: 600 }}>({count})</span>
+                  </BtnOutline>
+                )
+              })}
+            </>
+          )}
+          <div style={{ marginLeft: 'auto', display: 'flex', gap: 8 }}>
+            {archiveView ? (
+              <BtnOutline type="button" onClick={() => void load()} disabled={fetching} style={{ fontSize: 12, padding: '6px 12px' }}>
+                {fetching ? 'Загрузка…' : 'Обновить'}
+              </BtnOutline>
+            ) : (
+              <BtnOutline
+                type="button"
+                onClick={() => {
+                  setArchiveView(true)
+                  setCategoryFilter('all')
+                  setSearch('')
+                }}
+                style={{ fontSize: 12, padding: '6px 12px', fontWeight: 600 }}
+                title="История закрытого кредитования"
+              >
+                Архив{archiveCount > 0 ? ` (${archiveCount})` : ''}
+              </BtnOutline>
+            )}
+          </div>
         </div>
 
         <div
@@ -484,7 +567,7 @@ export default function FinanceLendingPage() {
         <Card style={{ padding: 0, overflow: 'hidden', display: 'flex', flexDirection: 'column', minHeight: 0 }}>
           <div
             role="region"
-            aria-label="Таблица кредитования"
+            aria-label={archiveView ? 'Архив кредитования' : 'Таблица кредитования'}
             tabIndex={0}
             style={{
               maxHeight: 'min(72vh, calc(100vh - 200px))',
@@ -494,13 +577,14 @@ export default function FinanceLendingPage() {
               outline: 'none',
             }}
           >
-            <table style={{ width: '100%', borderCollapse: 'collapse', minWidth: 1180 }}>
+            <table style={{ width: '100%', borderCollapse: 'collapse', minWidth: archiveView ? 1240 : 1180 }}>
               <thead style={{ position: 'sticky', top: 0, zIndex: 3, boxShadow: '0 1px 0 #e2e8f0' }}>
                 <tr style={{ background: '#f8fafc' }}>
                   <Th style={{ width: 42 }}>№</Th>
                   <Th>Проект / компания</Th>
                   <Th>Тип</Th>
                   <Th>Выдано</Th>
+                  {archiveView ? <Th>Закрыто</Th> : null}
                   <Th>Сумма кредита</Th>
                   <Th>% в месяц</Th>
                   <Th>К возврату</Th>
@@ -508,27 +592,31 @@ export default function FinanceLendingPage() {
                   <Th>Дедлайн</Th>
                   <Th>Период / условия</Th>
                   <Th>Комментарий</Th>
-                  <Th style={{ width: 130 }}>Действия</Th>
+                  <Th style={{ width: archiveView ? 90 : 130 }}>Действия</Th>
                 </tr>
               </thead>
               <tbody>
                 {filteredRows.length === 0 && !fetching ? (
                   <tr>
-                    <Td colSpan={12} style={{ padding: 0, border: 'none' }}>
-                      <Empty text="Пока нет записей кредитования. Нажмите «Добавить запись», чтобы зафиксировать проект или компанию, сумму, процент и дату выдачи." />
+                    <Td colSpan={archiveView ? 13 : 12} style={{ padding: 0, border: 'none' }}>
+                      <Empty
+                        text={
+                          archiveView
+                            ? 'В архиве пока нет закрытых записей. Когда клиент оплатит проект, активное кредитование автоматически перенесётся сюда.'
+                            : 'Пока нет активных записей кредитования. Нажмите «Добавить запись», чтобы зафиксировать проект или компанию, сумму, процент и дату выдачи.'
+                        }
+                      />
                     </Td>
                   </tr>
                 ) : (
                   filteredRows.map((r, idx) => {
                     const isInternal = r.lending_category === 'internal'
-                    const isClosed = Boolean(r.closed_at)
                     return (
                       <tr
                         key={r.id}
                         style={{
                           borderBottom: '1px solid #eef2f7',
-                          background: isClosed ? '#f1f5f9' : isInternal ? '#f0f9ff' : '#fff7ed',
-                          opacity: isClosed ? 0.65 : 1,
+                          background: archiveView ? '#f8fafc' : isInternal ? '#f0f9ff' : '#fff7ed',
                         }}
                       >
                         <Td style={{ fontWeight: 600 }}>{idx + 1}</Td>
@@ -554,11 +642,13 @@ export default function FinanceLendingPage() {
                           >
                             {typeLabel(r)}
                           </span>
-                          {isClosed ? (
-                            <div style={{ marginTop: 4, fontSize: 10, fontWeight: 600, color: '#64748b' }}>Закрыто (оплата)</div>
-                          ) : null}
                         </Td>
                         <Td style={{ fontSize: 13, whiteSpace: 'nowrap' }}>{formatDate(r.issued_on)}</Td>
+                        {archiveView ? (
+                          <Td style={{ fontSize: 13, whiteSpace: 'nowrap', fontWeight: 600, color: '#64748b' }}>
+                            {r.closed_at ? formatDate(r.closed_at) : '—'}
+                          </Td>
+                        ) : null}
                         <Td style={{ fontWeight: 700, whiteSpace: 'nowrap' }}>{formatMoneyNumber(Number(r.principal_uzs))}</Td>
                         <Td style={{ fontWeight: 700, color: isInternal ? '#94a3b8' : '#2563eb', whiteSpace: 'nowrap' }}>
                           {isInternal ? '—' : `${formatMoneyNumber(Number(r.monthly_rate_percent || 0))} %`}
@@ -571,10 +661,7 @@ export default function FinanceLendingPage() {
                         <Td style={{ fontSize: 13, color: '#475569', maxWidth: 200 }}>{r.period_note?.trim() || '—'}</Td>
                         <Td style={{ fontSize: 13, color: '#475569', maxWidth: 220 }}>{r.note?.trim() || '—'}</Td>
                         <Td>
-                          <div style={{ display: 'flex', gap: 8 }}>
-                            <BtnOutline type="button" onClick={() => openEdit(r)} style={{ fontSize: 12, padding: '5px 9px' }}>
-                              Изм.
-                            </BtnOutline>
+                          {archiveView ? (
                             <BtnOutline
                               type="button"
                               onClick={() => void remove(r)}
@@ -582,7 +669,20 @@ export default function FinanceLendingPage() {
                             >
                               Удалить
                             </BtnOutline>
-                          </div>
+                          ) : (
+                            <div style={{ display: 'flex', gap: 8 }}>
+                              <BtnOutline type="button" onClick={() => openEdit(r)} style={{ fontSize: 12, padding: '5px 9px' }}>
+                                Изм.
+                              </BtnOutline>
+                              <BtnOutline
+                                type="button"
+                                onClick={() => void remove(r)}
+                                style={{ fontSize: 12, padding: '5px 9px', color: '#b91c1c' }}
+                              >
+                                Удалить
+                              </BtnOutline>
+                            </div>
+                          )}
                         </Td>
                       </tr>
                     )
@@ -592,21 +692,23 @@ export default function FinanceLendingPage() {
               {filteredRows.length > 0 && (
                 <tfoot style={{ position: 'sticky', bottom: 0, zIndex: 2 }}>
                   <tr style={{ background: '#e2e8f0', fontWeight: 700, boxShadow: '0 -1px 0 #cbd5e1' }}>
-                    <Td colSpan={4} style={{ borderTop: '2px solid #94a3b8', color: '#334155' }}>
+                    <Td colSpan={archiveView ? 5 : 4} style={{ borderTop: '2px solid #94a3b8', color: '#334155' }}>
                       Итого{search.trim() || categoryFilter !== 'all' ? ' (по фильтру)' : ''}
+                      {archiveView ? ' · архив' : ''}
                     </Td>
                     <Td style={{ borderTop: '2px solid #94a3b8', whiteSpace: 'nowrap' }}>{formatMoneyNumber(totals.principal)}</Td>
                     <Td style={{ borderTop: '2px solid #94a3b8', color: '#64748b' }}>—</Td>
                     <Td style={{ borderTop: '2px solid #94a3b8', color: '#166534', whiteSpace: 'nowrap' }}>{formatMoneyNumber(totals.repayment)}</Td>
                     <Td colSpan={5} style={{ borderTop: '2px solid #94a3b8', color: '#1e3a5f', lineHeight: 1.45 }}>
-                      {totals.externalIncome > 0 ? (
+                      {!archiveView && totals.externalIncome > 0 ? (
                         <span>Потенциальный доход (внешнее): {formatMoneyNumber(totals.externalIncome)}</span>
                       ) : null}
-                      {totals.externalIncome > 0 && totals.internalFrozen > 0 ? ' · ' : null}
-                      {totals.internalFrozen > 0 ? (
+                      {!archiveView && totals.externalIncome > 0 && totals.internalFrozen > 0 ? ' · ' : null}
+                      {!archiveView && totals.internalFrozen > 0 ? (
                         <span>Замороженные деньги (внутреннее): {formatMoneyNumber(totals.internalFrozen)}</span>
                       ) : null}
-                      {totals.externalIncome <= 0 && totals.internalFrozen <= 0 ? '—' : null}
+                      {archiveView ? 'Исторические суммы закрытых записей' : null}
+                      {!archiveView && totals.externalIncome <= 0 && totals.internalFrozen <= 0 ? '—' : null}
                     </Td>
                   </tr>
                 </tfoot>
@@ -616,9 +718,17 @@ export default function FinanceLendingPage() {
         </Card>
 
         <div style={{ fontSize: 12, color: '#64748b', lineHeight: 1.55, maxWidth: 900 }}>
-          <strong>Внешнее</strong> — кредит от стороннего источника (можно привязать к проекту), процент считается по дате выдачи.
-          <strong> Внутреннее</strong> — свои деньги на проект до оплаты клиентом, без процентов; в итогах это «Замороженные деньги».
-          При оплате клиента по проекту активное кредитование снимается автоматически. Учёт не попадает в P&L.
+          {archiveView ? (
+            <>
+              Закрытые записи сохраняют историю: внутреннее и внешнее кредитование. При оплате клиента по проекту активная запись закрывается автоматически и переносится в архив.
+            </>
+          ) : (
+            <>
+              <strong>Внешнее</strong> — кредит от стороннего источника (можно привязать к проекту), процент считается по дате выдачи.
+              <strong> Внутреннее</strong> — свои деньги на проект до оплаты клиентом, без процентов; в итогах это «Замороженные деньги».
+              При оплате клиента по проекту активное кредитование уходит в <strong>Архив</strong>. Учёт не попадает в P&L.
+            </>
+          )}
         </div>
       </div>
 

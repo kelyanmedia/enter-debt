@@ -5,7 +5,7 @@ from datetime import date
 from decimal import Decimal
 from typing import List
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy.orm import Session, joinedload
 
 from app.core.security import require_finance_section
@@ -129,17 +129,26 @@ def _validate_row_rules(row: LendingRecord) -> None:
 
 @router.get("/lending", response_model=List[LendingRecordOut])
 def list_lending(
+    archived: bool = Query(False, description="true — только закрытые записи (архив)"),
     db: Session = Depends(get_db),
     _: User = Depends(require_lending_access),
 ):
     slug = get_request_company()
-    rows = (
+    q = (
         db.query(LendingRecord)
         .options(joinedload(LendingRecord.payment).joinedload(Payment.partner))
         .filter(LendingRecord.company_slug == slug)
-        .order_by(LendingRecord.closed_at.is_(None).desc(), LendingRecord.deadline_date.asc(), LendingRecord.id.asc())
-        .all()
     )
+    if archived:
+        q = q.filter(LendingRecord.closed_at.isnot(None)).order_by(
+            LendingRecord.closed_at.desc(), LendingRecord.id.desc()
+        )
+    else:
+        q = q.filter(LendingRecord.closed_at.is_(None)).order_by(
+            LendingRecord.deadline_date.asc().nullslast(),
+            LendingRecord.id.asc(),
+        )
+    rows = q.all()
     return [_to_out(r) for r in rows]
 
 
