@@ -99,6 +99,15 @@ const DEFAULT_COST_FIELD_LABELS: Record<CostFieldApi, string> = {
 
 const COL_COUNT = 18
 
+const footerMoneyTd: CSSProperties = {
+  borderTop: '2px solid #94a3b8',
+  whiteSpace: 'nowrap',
+  fontSize: 12,
+  fontVariantNumeric: 'tabular-nums',
+  padding: '10px 12px',
+  lineHeight: 1.2,
+}
+
 function todayYmd() {
   const d = new Date()
   return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`
@@ -1002,10 +1011,10 @@ export default function FinanceProjectsCostPage() {
                     <Th>Проект</Th>
                     <Th>Партнёр</Th>
                     <Th>Категория</Th>
-                    <Th>Стоимость</Th>
-                    <Th>Себест.</Th>
-                    <Th title="Разовый договор: стоимость договора − себестоимость; рекуррент: оплата факт − себестоимость. Далее − резерв % менеджера из «Комиссия»">Прибыль</Th>
-                    <Th>Оплата факт</Th>
+                    <Th style={{ minWidth: 108 }}>Стоимость</Th>
+                    <Th style={{ minWidth: 108 }}>Себест.</Th>
+                    <Th style={{ minWidth: 108 }} title="Разовый договор: стоимость договора − себестоимость; рекуррент: оплата факт − себестоимость. Далее − резерв % менеджера из «Комиссия»">Прибыль</Th>
+                    <Th style={{ minWidth: 118 }}>Оплата факт</Th>
                     <Th>Оплата %</Th>
                     <Th title="% менеджера из учёта комиссий (при привязке к проекту)">% комиссии</Th>
                     <Th title="Итого по статье: ручной ввод в таблице + суммы из задач «Команда», привязанных к проекту">
@@ -1296,33 +1305,29 @@ export default function FinanceProjectsCostPage() {
                 {tableRows.length > 0 && (
                   <tfoot style={{ position: 'sticky', bottom: 0, zIndex: 2 }}>
                     <tr style={{ background: '#e2e8f0', fontWeight: 700, boxShadow: '0 -1px 0 #cbd5e1' }}>
-                      <Td colSpan={4} style={{ borderTop: '2px solid #94a3b8', color: '#334155' }}>
+                      <Td
+                        colSpan={4}
+                        style={{
+                          borderTop: '2px solid #94a3b8',
+                          color: '#334155',
+                          padding: '10px 12px',
+                          whiteSpace: 'nowrap',
+                        }}
+                      >
                         Итого{tableSearch.trim() ? ' (по фильтру)' : ''}
                       </Td>
-                      <Td style={{ borderTop: '2px solid #94a3b8', whiteSpace: 'nowrap' }}>
-                        {formatMoneyNumber(totals.cost)}
-                      </Td>
-                      <Td style={{ borderTop: '2px solid #94a3b8' }}>{formatMoneyNumber(totals.internal)}</Td>
-                      <Td style={{ borderTop: '2px solid #94a3b8', color: '#1e3a5f' }}>{formatMoneyNumber(totals.profit)}</Td>
-                      <Td style={{ borderTop: '2px solid #94a3b8', color: '#166534' }}>{formatMoneyNumber(totals.paid)}</Td>
-                      <Td style={{ borderTop: '2px solid #94a3b8', color: '#64748b' }}>—</Td>
-                      <Td style={{ borderTop: '2px solid #94a3b8', color: '#64748b' }}>—</Td>
-                      <Td style={{ borderTop: '2px solid #94a3b8', fontSize: 12, whiteSpace: 'nowrap' }}>
-                        {formatMoneyNumber(totals.design)}
-                      </Td>
-                      <Td style={{ borderTop: '2px solid #94a3b8', fontSize: 12, whiteSpace: 'nowrap' }}>
-                        {formatMoneyNumber(totals.dev)}
-                      </Td>
-                      <Td style={{ borderTop: '2px solid #94a3b8', fontSize: 12, whiteSpace: 'nowrap' }}>
-                        {formatMoneyNumber(totals.other)}
-                      </Td>
-                      <Td style={{ borderTop: '2px solid #94a3b8', fontSize: 12, whiteSpace: 'nowrap' }}>
-                        {formatMoneyNumber(totals.seo)}
-                      </Td>
-                      <Td style={{ borderTop: '2px solid #94a3b8', fontSize: 12, whiteSpace: 'nowrap', color: '#0369a1' }}>
-                        {formatMoneyNumber(totals.lending)}
-                      </Td>
-                      <Td colSpan={3} style={{ borderTop: '2px solid #94a3b8' }} />
+                      <Td style={{ ...footerMoneyTd }}>{formatMoneyNumber(totals.cost)}</Td>
+                      <Td style={{ ...footerMoneyTd, color: '#334155' }}>{formatMoneyNumber(totals.internal)}</Td>
+                      <Td style={{ ...footerMoneyTd, color: '#1e3a5f' }}>{formatMoneyNumber(totals.profit)}</Td>
+                      <Td style={{ ...footerMoneyTd, color: '#166534' }}>{formatMoneyNumber(totals.paid)}</Td>
+                      <Td style={{ borderTop: '2px solid #94a3b8', color: '#64748b', padding: '10px 12px' }}>—</Td>
+                      <Td style={{ borderTop: '2px solid #94a3b8', color: '#64748b', padding: '10px 12px' }}>—</Td>
+                      <Td style={{ ...footerMoneyTd }}>{formatMoneyNumber(totals.design)}</Td>
+                      <Td style={{ ...footerMoneyTd }}>{formatMoneyNumber(totals.dev)}</Td>
+                      <Td style={{ ...footerMoneyTd }}>{formatMoneyNumber(totals.other)}</Td>
+                      <Td style={{ ...footerMoneyTd }}>{formatMoneyNumber(totals.seo)}</Td>
+                      <Td style={{ ...footerMoneyTd, color: '#0369a1' }}>{formatMoneyNumber(totals.lending)}</Td>
+                      <Td colSpan={3} style={{ borderTop: '2px solid #94a3b8', padding: '10px 12px' }} />
                     </tr>
                   </tfoot>
                 )}
