@@ -256,6 +256,7 @@ export default function FinanceProjectsCostPage() {
     note: '',
   })
   const [lendingSaving, setLendingSaving] = useState(false)
+  const [lendingDeleting, setLendingDeleting] = useState(false)
 
   const canManageLending = user ? canAccessFinanceSection(user, 'lending') : false
 
@@ -453,6 +454,33 @@ export default function FinanceProjectsCostPage() {
     }
   }, [lendingForm, lendingModalRow, load])
 
+  const removeLendingFromProject = useCallback(
+    async (row: ProjectCostRow) => {
+      const items = row.lending_items || []
+      if (items.length === 0) return
+      const summary = items
+        .map((i) => `${i.lending_category === 'internal' ? 'Внутр.' : 'Внеш.'}: ${formatMoneyNumber(Number(i.principal_uzs))}`)
+        .join(', ')
+      const msg =
+        items.length === 1
+          ? `Удалить кредитование (${summary})?`
+          : `Удалить ${items.length} записей кредитования (${summary})?`
+      if (!window.confirm(msg)) return
+      setLendingDeleting(true)
+      try {
+        for (const item of items) {
+          await api.delete(`finance/lending/${item.id}`)
+        }
+        await load()
+      } catch (e) {
+        alert(formatApiError(e))
+      } finally {
+        setLendingDeleting(false)
+      }
+    },
+    [load],
+  )
+
   const cancelCostEdit = useCallback(() => {
     setCostEdit(null)
     setCostDraft('')
@@ -614,41 +642,73 @@ export default function FinanceProjectsCostPage() {
   const renderLendingCell = (row: ProjectCostRow) => {
     const total = Number(row.lending_active_uzs) || 0
     const items = row.lending_items || []
+    const hasLending = total > 0 && items.length > 0
     const title =
       items.length > 0
         ? items
             .map((i) => `${i.lending_category === 'internal' ? 'Внутр.' : 'Внеш.'}: ${formatMoneyNumber(Number(i.principal_uzs))}`)
             .join(' · ')
         : 'Кредитование по проекту (не в P&L)'
+    const handleLendingAction = () => {
+      if (!canManageLending || lendingDeleting) return
+      if (hasLending) void removeLendingFromProject(row)
+      else openLendingModal(row)
+    }
     return (
       <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
-        <span title={title} style={{ fontSize: 12, fontWeight: total > 0 ? 700 : 500, color: total > 0 ? '#0369a1' : '#94a3b8' }}>
+        <button
+          type="button"
+          onClick={handleLendingAction}
+          disabled={!canManageLending || lendingDeleting}
+          title={
+            hasLending
+              ? `Удалить кредитование: ${title}`
+              : 'Добавить запись кредитования по проекту'
+          }
+          style={{
+            fontSize: 12,
+            fontWeight: total > 0 ? 700 : 500,
+            color: total > 0 ? '#0369a1' : '#94a3b8',
+            background: 'transparent',
+            border: 'none',
+            padding: 0,
+            cursor: canManageLending && !lendingDeleting ? 'pointer' : 'default',
+            fontFamily: 'inherit',
+            textAlign: 'left',
+          }}
+        >
           {total > 0 ? formatMoneyNumber(total) : '—'}
-        </span>
+        </button>
         {canManageLending ? (
           <button
             type="button"
-            onClick={() => openLendingModal(row)}
-            title="Добавить запись кредитования по проекту"
+            onClick={handleLendingAction}
+            disabled={lendingDeleting}
+            title={
+              hasLending
+                ? `Удалить кредитование: ${title}`
+                : 'Добавить запись кредитования по проекту'
+            }
             style={{
               width: 22,
               height: 22,
               borderRadius: 6,
-              border: '1px solid #bae6fd',
-              background: '#f0f9ff',
-              color: '#0369a1',
-              fontSize: 16,
+              border: hasLending ? '1px solid #fecaca' : '1px solid #bae6fd',
+              background: hasLending ? '#fef2f2' : '#f0f9ff',
+              color: hasLending ? '#b91c1c' : '#0369a1',
+              fontSize: hasLending ? 18 : 16,
               lineHeight: 1,
               fontWeight: 700,
-              cursor: 'pointer',
+              cursor: lendingDeleting ? 'wait' : 'pointer',
               fontFamily: 'inherit',
               display: 'inline-flex',
               alignItems: 'center',
               justifyContent: 'center',
               padding: 0,
+              opacity: lendingDeleting ? 0.6 : 1,
             }}
           >
-            +
+            {hasLending ? '×' : '+'}
           </button>
         ) : null}
       </div>
