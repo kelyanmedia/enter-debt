@@ -17,6 +17,7 @@ RUN npm ci
 COPY . .
 # Меняется на каждый коммит → Docker не отдаёт старый .next из кэша
 ARG GIT_COMMIT=unknown
+ENV NEXT_PUBLIC_GIT_COMMIT=${GIT_COMMIT}
 RUN echo "GIT_COMMIT=${GIT_COMMIT}" && npm run build
 
 EXPOSE 3000

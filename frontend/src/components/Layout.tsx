@@ -439,6 +439,7 @@ export default function Layout({ children }: { children: ReactNode }) {
     employee: 'Сотрудник',
     mop: 'МОП',
   }[user.role]
+  const buildSha = (process.env.NEXT_PUBLIC_GIT_COMMIT || '').trim().slice(0, 7)
 
   if (user.role === 'employee') {
     const activeWork = router.pathname === '/my-work'
@@ -871,6 +872,11 @@ export default function Layout({ children }: { children: ReactNode }) {
               <div style={{ flex: 1, minWidth: 0 }}>
                 <div style={{ fontSize: 13, fontWeight: 600, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{user.name}</div>
                 <div style={{ fontSize: 11, color: '#8a8fa8' }}>{roleLabel}</div>
+                {user.role === 'admin' && buildSha && buildSha !== 'unknown' ? (
+                  <div style={{ fontSize: 9, color: '#cbd5e1', marginTop: 2 }} title="Версия сборки на сервере">
+                    {buildSha}
+                  </div>
+                ) : null}
               </div>
               <button onClick={logout} title="Выйти" style={{ background: 'none', border: 'none', cursor: 'pointer', color: '#8a8fa8', fontSize: 16, padding: 2 }}>↩</button>
             </div>

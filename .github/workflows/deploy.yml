@@ -66,8 +66,13 @@ jobs:
             $COMPOSE ps 2>/dev/null || docker ps 2>/dev/null || echo "no docker"
 
             # Build images first — keep old containers running if build fails (avoids 502)
-            if ! $COMPOSE build --pull; then
-              echo "ERROR: docker compose build failed — старые контейнеры не трогали, деплой прерван."
+            # Frontend без кэша: иначе Docker иногда отдаёт старый .next после git pull
+            if ! $COMPOSE build --pull --no-cache frontend; then
+              echo "ERROR: docker compose build frontend failed"
+              exit 1
+            fi
+            if ! $COMPOSE build --pull backend bot; then
+              echo "ERROR: docker compose build backend failed — старые контейнеры не трогали, деплой прерван."
               exit 1
             fi
             echo "Build succeeded"
