@@ -162,6 +162,7 @@ export default function FinanceLendingPage() {
   const [fetching, setFetching] = useState(false)
   const [saving, setSaving] = useState(false)
   const [search, setSearch] = useState('')
+  const [categoryFilter, setCategoryFilter] = useState<'all' | LendingCategory>('all')
   const [modalOpen, setModalOpen] = useState(false)
   const [editingId, setEditingId] = useState<number | null>(null)
   const [form, setForm] = useState<LendingFormState>(() => emptyForm())
@@ -204,10 +205,14 @@ export default function FinanceLendingPage() {
   }, [user])
 
   const filteredRows = useMemo(() => {
+    let list = rows
+    if (categoryFilter !== 'all') {
+      list = list.filter((r) => (r.lending_category || 'external') === categoryFilter)
+    }
     const raw = search.trim().toLowerCase()
-    if (!raw) return rows
+    if (!raw) return list
     const tokens = raw.split(/\s+/).filter(Boolean)
-    return rows.filter((r) => {
+    return list.filter((r) => {
       const hay = [
         r.entity_name,
         r.payment_label,
@@ -223,7 +228,17 @@ export default function FinanceLendingPage() {
         .join(' ')
       return tokens.every((t) => hay.includes(t))
     })
-  }, [rows, search])
+  }, [rows, search, categoryFilter])
+
+  const categoryCounts = useMemo(() => {
+    let external = 0
+    let internal = 0
+    for (const r of rows) {
+      if ((r.lending_category || 'external') === 'internal') internal += 1
+      else external += 1
+    }
+    return { external, internal }
+  }, [rows])
 
   const totals = useMemo(() => {
     let principal = 0
@@ -245,9 +260,17 @@ export default function FinanceLendingPage() {
     return { principal, repayment, externalIncome, internalFrozen }
   }, [filteredRows])
 
-  const openCreate = () => {
+  const openCreate = (presetCategory?: LendingCategory) => {
     setEditingId(null)
-    setForm(emptyForm())
+    const base = emptyForm()
+    if (presetCategory) {
+      base.lending_category = presetCategory
+      if (presetCategory === 'internal') {
+        base.record_type = 'interest_free'
+        base.monthly_rate_percent = ''
+      }
+    }
+    setForm(base)
     setModalOpen(true)
     void loadProjectOptions()
   }
@@ -357,12 +380,64 @@ export default function FinanceLendingPage() {
       />
       <div style={{ padding: '22px 24px', display: 'flex', flexDirection: 'column', gap: 14, minHeight: 0 }}>
         <div style={{ display: 'flex', flexWrap: 'wrap', alignItems: 'center', gap: 10 }}>
-          <BtnPrimary type="button" onClick={openCreate}>
+          <BtnPrimary type="button" onClick={() => openCreate()}>
             Добавить запись
           </BtnPrimary>
           <BtnOutline type="button" onClick={() => void load()} disabled={fetching} style={{ fontSize: 12, padding: '6px 12px' }}>
             {fetching ? 'Загрузка…' : 'Обновить'}
           </BtnOutline>
+          <span style={{ width: 1, height: 22, background: '#e2e8f0', margin: '0 2px' }} aria-hidden />
+          {(['external', 'internal'] as const).map((cat) => {
+            const active = categoryFilter === cat
+            const label = cat === 'external' ? 'Внешнее' : 'Внутреннее'
+            const count = cat === 'external' ? categoryCounts.external : categoryCounts.internal
+            return (
+              <BtnOutline
+                key={cat}
+                type="button"
+                onClick={() => setCategoryFilter((prev) => (prev === cat ? 'all' : cat))}
+                title={
+                  cat === 'external'
+                    ? 'Кредит со стороны (с % или без). Повторный клик — показать все.'
+                    : 'Свои деньги на проект, без %. Повторный клик — показать все.'
+                }
+                style={{
+                  fontSize: 12,
+                  padding: '6px 12px',
+                  ...(active
+                    ? {
+                        background: cat === 'internal' ? '#0ea5e9' : '#ea580c',
+                        color: '#fff',
+                        borderColor: cat === 'internal' ? '#0284c7' : '#c2410c',
+                        fontWeight: 700,
+                      }
+                    : {}),
+                }}
+              >
+                {label}
+                <span style={{ marginLeft: 6, opacity: active ? 0.9 : 0.65, fontWeight: 600 }}>({count})</span>
+              </BtnOutline>
+            )
+          })}
+          {categoryFilter !== 'all' ? (
+            <button
+              type="button"
+              onClick={() => setCategoryFilter('all')}
+              style={{
+                fontSize: 12,
+                fontWeight: 600,
+                color: '#64748b',
+                background: 'transparent',
+                border: 'none',
+                cursor: 'pointer',
+                fontFamily: 'inherit',
+                textDecoration: 'underline',
+                textUnderlineOffset: 3,
+              }}
+            >
+              Все записи
+            </button>
+          ) : null}
         </div>
 
         <div
@@ -518,7 +593,7 @@ export default function FinanceLendingPage() {
                 <tfoot style={{ position: 'sticky', bottom: 0, zIndex: 2 }}>
                   <tr style={{ background: '#e2e8f0', fontWeight: 700, boxShadow: '0 -1px 0 #cbd5e1' }}>
                     <Td colSpan={4} style={{ borderTop: '2px solid #94a3b8', color: '#334155' }}>
-                      Итого{search.trim() ? ' (по фильтру)' : ''}
+                      Итого{search.trim() || categoryFilter !== 'all' ? ' (по фильтру)' : ''}
                     </Td>
                     <Td style={{ borderTop: '2px solid #94a3b8', whiteSpace: 'nowrap' }}>{formatMoneyNumber(totals.principal)}</Td>
                     <Td style={{ borderTop: '2px solid #94a3b8', color: '#64748b' }}>—</Td>
