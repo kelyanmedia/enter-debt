@@ -882,6 +882,27 @@ def _migrate():
         )""",
         "CREATE INDEX IF NOT EXISTS ix_sale_deal_tasks_deal_id ON sale_deal_tasks (deal_id)",
         "CREATE INDEX IF NOT EXISTS ix_sale_deal_tasks_due_at ON sale_deal_tasks (due_at)",
+        """UPDATE payments p
+           SET status = 'paid',
+               paid_at = agg.max_paid_at,
+               confirmed_by = COALESCE(p.confirmed_by, agg.last_confirmed_by),
+               received_payment_method = COALESCE(agg.last_method, p.received_payment_method)
+           FROM (
+             SELECT
+               pm.payment_id,
+               MAX(pm.paid_at) AS max_paid_at,
+               (ARRAY_AGG(pm.confirmed_by ORDER BY pm.paid_at DESC NULLS LAST, pm.id DESC))[1] AS last_confirmed_by,
+               (ARRAY_AGG(pm.received_payment_method ORDER BY pm.paid_at DESC NULLS LAST, pm.id DESC))[1] AS last_method,
+               COUNT(*) AS total,
+               COUNT(*) FILTER (WHERE pm.status = 'paid') AS paid_count
+             FROM payment_months pm
+             GROUP BY pm.payment_id
+             HAVING COUNT(*) > 0 AND COUNT(*) = COUNT(*) FILTER (WHERE pm.status = 'paid')
+           ) agg
+           WHERE p.id = agg.payment_id
+             AND p.trashed_at IS NULL
+             AND p.is_archived = FALSE
+             AND p.status NOT IN ('paid', 'archived', 'postponed')""",
     ]
     for sql in migrations:
         # Защита от случайного удаления данных (разрешены DROP CONSTRAINT / DROP INDEX для миграций схемы)

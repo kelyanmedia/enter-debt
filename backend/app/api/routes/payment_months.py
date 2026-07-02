@@ -22,7 +22,7 @@ def require_payment_month_schedule_write(current_user: User = Depends(get_curren
     return current_user
 from app.core.access import assert_payment_access
 from app.core.config import settings
-from app.api.routes.payments import _require_payment_not_trashed, load_payment
+from app.api.routes.payments import _require_payment_not_trashed, load_payment, sync_payment_status_from_months
 from app.services.telegram_cc import collect_telegram_cc_chat_ids
 
 router = APIRouter(prefix="/api/payments", tags=["payment-months"])
@@ -184,6 +184,10 @@ def add_month(
             status="pending",
         )
         db.add(pm)
+        db.flush()
+        pay_sync = load_payment(db, payment_id)
+        if pay_sync:
+            sync_payment_status_from_months(pay_sync)
         db.commit()
         db.refresh(pm)
         return pm
@@ -466,6 +470,7 @@ async def confirm_month(
         from app.services.lending_lifecycle import close_active_lending_for_payment
 
         close_active_lending_for_payment(db, payment_id, pay.company_slug)
+        sync_payment_status_from_months(pay)
         db.commit()
         db.refresh(pm)
         # Хостинг/домен: все строки графика оплачены — переносим «следующее продление» на +1 год (без предоплаты лет)
@@ -539,5 +544,9 @@ def delete_month(
     if not pm:
         raise HTTPException(status_code=404, detail="Month not found")
     db.delete(pm)
+    db.flush()
+    pay_after = load_payment(db, payment_id)
+    if pay_after:
+        sync_payment_status_from_months(pay_after)
     db.commit()
     return {"ok": True}

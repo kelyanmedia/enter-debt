@@ -83,10 +83,77 @@ def _require_payment_not_trashed(p: Optional[Payment]) -> Payment:
     return p
 
 
+def _due_date_for_payment_month(pm: PaymentMonth, p: Payment) -> date:
+    if pm.due_date:
+        return pm.due_date
+    y, m = pm.month.split("-")
+    yi, mi = int(y), int(m)
+    last_d = monthrange(yi, mi)[1]
+    if p.day_of_month:
+        return date(yi, mi, min(int(p.day_of_month), last_d))
+    return date(yi, mi, last_d)
+
+
+def effective_payment_status(p: Payment, today: Optional[date] = None) -> str:
+    """Статус проекта с учётом графика месяцев (для отображения и синхронизации)."""
+    if p.status in ("archived", "postponed"):
+        return p.status
+    months = p.months or []
+    if not months:
+        return p.status
+    unpaid = [m for m in months if m.status != "paid"]
+    if not unpaid:
+        return "paid"
+    t = today or date.today()
+    due = min(_due_date_for_payment_month(m, p) for m in unpaid)
+    return "overdue" if due < t else "pending"
+
+
+def sync_payment_status_from_months(p: Payment) -> bool:
+    """
+    Синхронизирует payments.status/paid_at с графиком месяцев.
+    Возвращает True, если запись проекта изменилась.
+    """
+    if p.status in ("archived", "postponed"):
+        return False
+    months = p.months or []
+    if not months:
+        return False
+
+    all_paid = all(m.status == "paid" for m in months)
+    if all_paid:
+        if p.status == "paid":
+            return False
+        p.status = "paid"
+        paid_months = [m for m in months if m.paid_at]
+        if paid_months:
+            latest = max(paid_months, key=lambda m: (m.paid_at, m.id))
+            p.paid_at = latest.paid_at
+            if latest.confirmed_by:
+                p.confirmed_by = latest.confirmed_by
+            rm = getattr(latest, "received_payment_method", None)
+            if rm:
+                p.received_payment_method = rm
+        elif not p.paid_at:
+            p.paid_at = datetime.now(timezone.utc)
+        p.postponed_until = None
+        return True
+
+    if p.status == "paid":
+        p.status = "pending"
+        p.paid_at = None
+        return True
+    return False
+
+
 def project_calendar_due_date(p: Payment, today: date) -> Optional[date]:
     """Срок «по договору» без графика месяцев: фиксированная дата или ближайший расчётный день месяца."""
     if p.status == "archived":
         return None
+    months = p.months or []
+    if months and all(m.status == "paid" for m in months):
+        if getattr(p, "project_category", None) != "hosting_domain":
+            return None
     # Хостинг: показываем следующее ежегодное продление даже если проект помечен «оплачен» на уровне записи
     if getattr(p, "project_category", None) == "hosting_domain":
         d = hosting_computed_next_due(p)
@@ -135,6 +202,8 @@ def enrich(p: Payment) -> PaymentOut:
     """
     out = PaymentOut.model_validate(p)
     today = date.today()
+    eff_status = effective_payment_status(p, today)
+    out.status = eff_status
     unpaid = [m for m in (p.months or []) if m.status != "paid"]
     if unpaid:
         pm = min(unpaid, key=lambda m: (_due_date_for_payment_month(m, p), m.id))
@@ -142,6 +211,16 @@ def enrich(p: Payment) -> PaymentOut:
         out.next_payment_due_date = due
         out.next_payment_month = pm.month
         out.days_until_due = (due - today).days
+    elif eff_status == "paid":
+        if getattr(p, "project_category", None) == "hosting_domain":
+            pdue = project_calendar_due_date(p, today)
+            out.next_payment_due_date = pdue
+            out.next_payment_month = None
+            out.days_until_due = (pdue - today).days if pdue else None
+        else:
+            out.next_payment_due_date = None
+            out.next_payment_month = None
+            out.days_until_due = None
     else:
         pdue = project_calendar_due_date(p, today)
         out.next_payment_due_date = pdue
@@ -150,17 +229,6 @@ def enrich(p: Payment) -> PaymentOut:
     out.source_payment_month_id = None
     out.service_month = None
     return out
-
-
-def _due_date_for_payment_month(pm: PaymentMonth, p: Payment) -> date:
-    if pm.due_date:
-        return pm.due_date
-    y, m = pm.month.split("-")
-    yi, mi = int(y), int(m)
-    last_d = monthrange(yi, mi)[1]
-    if p.day_of_month:
-        return date(yi, mi, min(int(p.day_of_month), last_d))
-    return date(yi, mi, last_d)
 
 
 def enrich_as_month_line(p: Payment, pm: PaymentMonth, today: date) -> PaymentOut:
