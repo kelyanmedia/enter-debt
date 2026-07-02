@@ -1,5 +1,6 @@
 import { Fragment, useCallback, useEffect, useMemo, useRef, useState, type CSSProperties } from 'react'
 import Link from 'next/link'
+import DatePicker from '@/components/DatePicker'
 import { useRouter } from 'next/router'
 import Layout from '@/components/Layout'
 import { PageHeader, Card, Th, Td, Empty, formatMoneyNumber, BtnOutline, BtnPrimary, MoneyInput, Input, Field, Modal } from '@/components/ui'
@@ -63,6 +64,16 @@ interface ProjectCostRow {
   manager_commission_percent?: string | null
   manager_commission_reserved_uzs?: string | null
   profit_after_manager_uzs: string
+  lending_active_uzs?: string
+  lending_items?: ProjectCostLendingItem[]
+}
+
+interface ProjectCostLendingItem {
+  id: number
+  lending_category: 'external' | 'internal'
+  principal_uzs: string
+  entity_name: string
+  issued_on: string
 }
 
 const COST_MANUAL_FIELD: Record<CostFieldApi, keyof ProjectCostRow> = {
@@ -86,7 +97,12 @@ const DEFAULT_COST_FIELD_LABELS: Record<CostFieldApi, string> = {
   cost_seo_uzs: 'SEO',
 }
 
-const COL_COUNT = 17
+const COL_COUNT = 18
+
+function todayYmd() {
+  const d = new Date()
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`
+}
 
 function formatApiError(e: unknown): string {
   const err = e as { response?: { data?: { detail?: unknown } }; message?: string }
@@ -230,6 +246,18 @@ export default function FinanceProjectsCostPage() {
   const [labelDraft, setLabelDraft] = useState('')
   const [labelSaving, setLabelSaving] = useState(false)
   const [confirmingScheduleKey, setConfirmingScheduleKey] = useState<string | null>(null)
+  const [lendingModalRow, setLendingModalRow] = useState<ProjectCostRow | null>(null)
+  const [lendingForm, setLendingForm] = useState({
+    lending_category: 'internal' as 'external' | 'internal',
+    principal_uzs: '',
+    issued_on: todayYmd(),
+    monthly_rate_percent: '5',
+    record_type: 'interest_loan' as 'interest_loan' | 'interest_free',
+    note: '',
+  })
+  const [lendingSaving, setLendingSaving] = useState(false)
+
+  const canManageLending = user ? canAccessFinanceSection(user, 'lending') : false
 
   const canEditCostLabels =
     user?.role === 'admin' || user?.role === 'accountant' || user?.role === 'financier'
@@ -368,6 +396,62 @@ export default function FinanceProjectsCostPage() {
     },
     [load],
   )
+
+  const openLendingModal = useCallback((row: ProjectCostRow) => {
+    setLendingModalRow(row)
+    setLendingForm({
+      lending_category: 'internal',
+      principal_uzs: '',
+      issued_on: todayYmd(),
+      monthly_rate_percent: '5',
+      record_type: 'interest_loan',
+      note: '',
+    })
+  }, [])
+
+  const closeLendingModal = useCallback(() => {
+    if (lendingSaving) return
+    setLendingModalRow(null)
+  }, [lendingSaving])
+
+  const saveLendingFromProject = useCallback(async () => {
+    if (!lendingModalRow) return
+    const principal = Number(lendingForm.principal_uzs.replace(/\s/g, '').replace(',', '.'))
+    if (!Number.isFinite(principal) || principal <= 0) {
+      alert('Укажите сумму кредитования')
+      return
+    }
+    if (
+      lendingForm.lending_category === 'external' &&
+      lendingForm.record_type === 'interest_loan' &&
+      !lendingForm.monthly_rate_percent.trim()
+    ) {
+      alert('Для внешнего кредита укажите % в месяц')
+      return
+    }
+    setLendingSaving(true)
+    try {
+      await api.post('finance/lending', {
+        entity_name: lendingModalRow.project_name || lendingModalRow.partner_name,
+        payment_id: lendingModalRow.payment_id,
+        lending_category: lendingForm.lending_category,
+        record_type: lendingForm.lending_category === 'internal' ? 'interest_free' : lendingForm.record_type,
+        issued_on: lendingForm.issued_on,
+        principal_uzs: String(principal),
+        monthly_rate_percent:
+          lendingForm.lending_category === 'internal' || lendingForm.record_type === 'interest_free'
+            ? null
+            : lendingForm.monthly_rate_percent || '0',
+        note: lendingForm.note.trim() || null,
+      })
+      setLendingModalRow(null)
+      await load()
+    } catch (e) {
+      alert(formatApiError(e))
+    } finally {
+      setLendingSaving(false)
+    }
+  }, [lendingForm, lendingModalRow, load])
 
   const cancelCostEdit = useCallback(() => {
     setCostEdit(null)
@@ -527,6 +611,50 @@ export default function FinanceProjectsCostPage() {
     )
   }
 
+  const renderLendingCell = (row: ProjectCostRow) => {
+    const total = Number(row.lending_active_uzs) || 0
+    const items = row.lending_items || []
+    const title =
+      items.length > 0
+        ? items
+            .map((i) => `${i.lending_category === 'internal' ? 'Внутр.' : 'Внеш.'}: ${formatMoneyNumber(Number(i.principal_uzs))}`)
+            .join(' · ')
+        : 'Кредитование по проекту (не в P&L)'
+    return (
+      <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+        <span title={title} style={{ fontSize: 12, fontWeight: total > 0 ? 700 : 500, color: total > 0 ? '#0369a1' : '#94a3b8' }}>
+          {total > 0 ? formatMoneyNumber(total) : '—'}
+        </span>
+        {canManageLending ? (
+          <button
+            type="button"
+            onClick={() => openLendingModal(row)}
+            title="Добавить запись кредитования по проекту"
+            style={{
+              width: 22,
+              height: 22,
+              borderRadius: 6,
+              border: '1px solid #bae6fd',
+              background: '#f0f9ff',
+              color: '#0369a1',
+              fontSize: 16,
+              lineHeight: 1,
+              fontWeight: 700,
+              cursor: 'pointer',
+              fontFamily: 'inherit',
+              display: 'inline-flex',
+              alignItems: 'center',
+              justifyContent: 'center',
+              padding: 0,
+            }}
+          >
+            +
+          </button>
+        ) : null}
+      </div>
+    )
+  }
+
   const openLabelEdit = useCallback((field: CostFieldApi) => {
     setLabelEditField(field)
     setLabelDraft(costFieldLabels[field] || DEFAULT_COST_FIELD_LABELS[field])
@@ -592,6 +720,7 @@ export default function FinanceProjectsCostPage() {
     let dev = 0
     let other = 0
     let seo = 0
+    let lending = 0
     for (const r of tableRows) {
       cost += Number(r.billing_unit_amount) || 0
       internal += Number(r.internal_cost_sum) || 0
@@ -601,8 +730,9 @@ export default function FinanceProjectsCostPage() {
       dev += Number(r.cost_dev_uzs) || 0
       other += Number(r.cost_other_uzs) || 0
       seo += Number(r.cost_seo_uzs) || 0
+      lending += Number(r.lending_active_uzs) || 0
     }
-    return { cost, internal, profit, paid, design, dev, other, seo }
+    return { cost, internal, profit, paid, design, dev, other, seo, lending }
   }, [tableRows])
 
   if (loading || !user || !canAccessFinanceSection(user, 'projects_cost')) return null
@@ -830,6 +960,9 @@ export default function FinanceProjectsCostPage() {
                     <Th title="Итого по статье: ручной ввод в таблице + суммы из задач «Команда», привязанных к проекту">
                       {renderCostHeader('cost_seo_uzs')}
                     </Th>
+                    <Th title="Активное кредитование по проекту (не в P&L). Снимается при оплате клиента.">
+                      Кредитование
+                    </Th>
                     <Th>Начало</Th>
                     <Th style={{ minWidth: 120 }}>График</Th>
                     <Th>ПМ</Th>
@@ -959,40 +1092,48 @@ export default function FinanceProjectsCostPage() {
                               <Td style={{ fontSize: 12, verticalAlign: 'middle' }}>{renderBreakdownCell(r, 'cost_dev_uzs')}</Td>
                               <Td style={{ fontSize: 12, verticalAlign: 'middle' }}>{renderBreakdownCell(r, 'cost_other_uzs')}</Td>
                               <Td style={{ fontSize: 12, verticalAlign: 'middle' }}>{renderBreakdownCell(r, 'cost_seo_uzs')}</Td>
+                              <Td style={{ fontSize: 12, verticalAlign: 'middle', whiteSpace: 'nowrap' }}>
+                                {renderLendingCell(r)}
+                              </Td>
                             </>
                           ) : (
-                            <Td colSpan={4} style={{ verticalAlign: 'middle', padding: '8px 10px' }}>
-                              <div style={{ display: 'flex', alignItems: 'center', gap: 10, whiteSpace: 'nowrap' }}>
-                                <span
-                                  title="Итого по скрытым статьям: дизайн + разработка + прочее + SEO"
-                                  style={{ fontSize: 13, fontWeight: 700, color: '#334155' }}
-                                >
-                                  {formatMoneyNumber(previewInternal)}
-                                </span>
-                                <button
-                                  type="button"
-                                  onClick={() => toggle(r.payment_id)}
-                                  title="Открыть статьи себестоимости (4 кликабельные суммы) и порядок оплат по месяцам"
-                                  style={{
-                                    fontSize: 11,
-                                    fontWeight: 600,
-                                    color: '#1a6b3c',
-                                    background: '#fff',
-                                    border: '1px solid #c3e6d0',
-                                    borderRadius: 6,
-                                    padding: '5px 10px',
-                                    cursor: 'pointer',
-                                    fontFamily: 'inherit',
-                                    display: 'inline-flex',
-                                    alignItems: 'center',
-                                    gap: 6,
-                                  }}
-                                >
-                                  Показать всё
-                                  <span style={{ fontWeight: 500, color: '#64748b' }}>({r.schedule_months.length})</span>
-                                </button>
-                              </div>
-                            </Td>
+                            <>
+                              <Td colSpan={4} style={{ verticalAlign: 'middle', padding: '8px 10px' }}>
+                                <div style={{ display: 'flex', alignItems: 'center', gap: 10, whiteSpace: 'nowrap' }}>
+                                  <span
+                                    title="Итого по скрытым статьям: дизайн + разработка + прочее + SEO"
+                                    style={{ fontSize: 13, fontWeight: 700, color: '#334155' }}
+                                  >
+                                    {formatMoneyNumber(previewInternal)}
+                                  </span>
+                                  <button
+                                    type="button"
+                                    onClick={() => toggle(r.payment_id)}
+                                    title="Открыть статьи себестоимости (4 кликабельные суммы) и порядок оплат по месяцам"
+                                    style={{
+                                      fontSize: 11,
+                                      fontWeight: 600,
+                                      color: '#1a6b3c',
+                                      background: '#fff',
+                                      border: '1px solid #c3e6d0',
+                                      borderRadius: 6,
+                                      padding: '5px 10px',
+                                      cursor: 'pointer',
+                                      fontFamily: 'inherit',
+                                      display: 'inline-flex',
+                                      alignItems: 'center',
+                                      gap: 6,
+                                    }}
+                                  >
+                                    Показать всё
+                                    <span style={{ fontWeight: 500, color: '#64748b' }}>({r.schedule_months.length})</span>
+                                  </button>
+                                </div>
+                              </Td>
+                              <Td style={{ fontSize: 12, verticalAlign: 'middle', whiteSpace: 'nowrap' }}>
+                                {renderLendingCell(r)}
+                              </Td>
+                            </>
                           )}
                           <Td style={{ fontSize: 13 }}>{formatStart(r.project_start)}</Td>
                           <Td>
@@ -1118,6 +1259,9 @@ export default function FinanceProjectsCostPage() {
                       <Td style={{ borderTop: '2px solid #94a3b8', fontSize: 12, whiteSpace: 'nowrap' }}>
                         {formatMoneyNumber(totals.seo)}
                       </Td>
+                      <Td style={{ borderTop: '2px solid #94a3b8', fontSize: 12, whiteSpace: 'nowrap', color: '#0369a1' }}>
+                        {formatMoneyNumber(totals.lending)}
+                      </Td>
                       <Td colSpan={3} style={{ borderTop: '2px solid #94a3b8' }} />
                     </tr>
                   </tfoot>
@@ -1135,8 +1279,100 @@ export default function FinanceProjectsCostPage() {
           только к текущему разделу («Услуги» или «Хостинг/домен»); при поиске суммируются видимые строки. В свёрнутой строке
           колонки статей скрыты; «Показать всё» раскрывает их и график. Фиксация «оплата прошла» по периоду здесь совпадает с
           действием в карточке проекта; отдельный учёт выплат сотрудникам по задачам — в «Команда» и связанных отчётах.
+          Колонка «Кредитование» — учёт замороженных средств до оплаты клиентом (не в P&L); при оплате запись закрывается автоматически.
         </div>
       </div>
+      <Modal
+        open={lendingModalRow !== null}
+        onClose={closeLendingModal}
+        title={lendingModalRow ? `Кредитование · ${lendingModalRow.project_name || lendingModalRow.partner_name}` : 'Кредитование'}
+        width={520}
+        footer={
+          <>
+            <BtnOutline type="button" onClick={closeLendingModal} disabled={lendingSaving}>
+              Отмена
+            </BtnOutline>
+            <BtnPrimary type="button" onClick={() => void saveLendingFromProject()} disabled={lendingSaving}>
+              {lendingSaving ? 'Сохранение…' : 'Добавить'}
+            </BtnPrimary>
+          </>
+        }
+      >
+        <div style={{ fontSize: 13, color: '#64748b', lineHeight: 1.45, marginBottom: 12 }}>
+          Проект #{lendingModalRow?.payment_id}. После оплаты клиента кредитование снимается. Не учитывается в P&L.
+        </div>
+        <Field label="Категория">
+          <select
+            value={lendingForm.lending_category}
+            onChange={(e) =>
+              setLendingForm((f) => ({
+                ...f,
+                lending_category: e.target.value as 'external' | 'internal',
+                record_type: e.target.value === 'internal' ? 'interest_free' : f.record_type,
+              }))
+            }
+            style={{
+              width: '100%',
+              border: '1px solid #e8e9ef',
+              borderRadius: 9,
+              padding: '9px 12px',
+              fontSize: 13.5,
+              fontFamily: 'inherit',
+            }}
+          >
+            <option value="internal">Внутреннее (свои деньги, без %)</option>
+            <option value="external">Внешнее (кредит со стороны)</option>
+          </select>
+        </Field>
+        {lendingForm.lending_category === 'external' ? (
+          <Field label="Тип внешнего кредита">
+            <select
+              value={lendingForm.record_type}
+              onChange={(e) => setLendingForm((f) => ({ ...f, record_type: e.target.value as 'interest_loan' | 'interest_free' }))}
+              style={{
+                width: '100%',
+                border: '1px solid #e8e9ef',
+                borderRadius: 9,
+                padding: '9px 12px',
+                fontSize: 13.5,
+                fontFamily: 'inherit',
+              }}
+            >
+              <option value="interest_loan">Кредит под %</option>
+              <option value="interest_free">Безвозмездно</option>
+            </select>
+          </Field>
+        ) : null}
+        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
+          <Field label="Сумма">
+            <MoneyInput
+              value={lendingForm.principal_uzs}
+              onChange={(v) => setLendingForm((f) => ({ ...f, principal_uzs: v }))}
+              placeholder="0"
+              autoFocus
+            />
+          </Field>
+          <Field label="Дата выдачи">
+            <DatePicker value={lendingForm.issued_on} onChange={(v) => setLendingForm((f) => ({ ...f, issued_on: v }))} />
+          </Field>
+        </div>
+        {lendingForm.lending_category === 'external' && lendingForm.record_type === 'interest_loan' ? (
+          <Field label="% в месяц">
+            <MoneyInput
+              value={lendingForm.monthly_rate_percent}
+              onChange={(v) => setLendingForm((f) => ({ ...f, monthly_rate_percent: v }))}
+              placeholder="5"
+            />
+          </Field>
+        ) : null}
+        <Field label="Комментарий">
+          <Input
+            value={lendingForm.note}
+            onChange={(e) => setLendingForm((f) => ({ ...f, note: e.target.value }))}
+            placeholder="Необязательно"
+          />
+        </Field>
+      </Modal>
       <Modal
         open={labelEditField !== null}
         onClose={() => {

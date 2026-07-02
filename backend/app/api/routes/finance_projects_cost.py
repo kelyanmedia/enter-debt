@@ -24,7 +24,9 @@ from app.models.payment import Payment, PaymentMonth
 from app.models.user import User
 from app.models.pl_manual_line import PlManualLine, PlManualMonthCell
 from app.models.employee_task import EmployeeTask
+from app.models.lending_record import LendingRecord
 from app.finance.cash_flow_catalog import expense_pl_bucket
+from app.services.lending_lifecycle import active_lending_by_payment_id
 from app.finance.projects_cost_categories import pc_cost_column_bucket
 from app.schemas.schemas import (
     PLCellOut,
@@ -36,6 +38,7 @@ from app.schemas.schemas import (
     PLManualCellPut,
     ProjectCostBreakdownPut,
     ProjectCostProfitPut,
+    ProjectCostLendingItemOut,
     ProjectCostRowOut,
     ProjectCostScheduleMonthOut,
 )
@@ -198,6 +201,154 @@ def _cf_entry_cost_uzs(
     return uzs.quantize(Decimal("0.01"))
 
 
+def _task_cost_net_uzs(t: EmployeeTask, rates: Dict[str, Decimal]) -> Decimal:
+    """Чистая себестоимость задачи «Команда» в UZS (amount − budget)."""
+    if not pc_cost_column_bucket(t.cost_category):
+        return Decimal("0")
+    amt = Decimal(str(t.amount or 0))
+    bud = Decimal(str(t.budget_amount or 0))
+    net = amt - bud
+    if net <= 0:
+        return Decimal("0")
+    ym = f"{t.work_date.year}-{str(t.work_date.month).zfill(2)}"
+    cur = (t.currency or "USD").upper()
+    if cur == "USD":
+        rfx = rates.get(ym) or Decimal(0)
+        if rfx <= 0:
+            return Decimal("0")
+        return (net * rfx).quantize(Decimal("0.01"))
+    return net.quantize(Decimal("0.01"))
+
+
+def _payment_manual_projects_cost_uzs(p: Payment) -> Decimal:
+    def _cz(attr: str) -> Decimal:
+        v = getattr(p, attr, None)
+        return Decimal(str(v)) if v is not None else Decimal("0")
+
+    return (
+        _cz("projects_cost_design_uzs")
+        + _cz("projects_cost_dev_uzs")
+        + _cz("projects_cost_other_uzs")
+        + _cz("projects_cost_seo_uzs")
+    ).quantize(Decimal("0.01"))
+
+
+def _project_started_date(p: Payment) -> date:
+    if isinstance(p.created_at, datetime):
+        started = p.created_at.date()
+    else:
+        started = p.created_at  # type: ignore[assignment]
+    months_sorted = _sort_payment_month_lines(p.months)
+    if months_sorted:
+        try:
+            y_s, m_s = months_sorted[0].month.split("-")
+            d0 = date(int(y_s), int(m_s), 1)
+            if d0 < started:
+                started = d0
+        except (ValueError, IndexError):
+            pass
+    return started
+
+
+def _distribute_manual_cost_to_year_months(
+    p: Payment,
+    manual_uzs: Decimal,
+    year: int,
+    out: List[Decimal],
+) -> None:
+    """Ручная себестоимость проекта — пропорционально оплатам в году или в месяц старта."""
+    if manual_uzs <= 0:
+        return
+    weights: List[Tuple[int, Decimal]] = []
+    for pm in p.months or []:
+        if pm.status != "paid":
+            continue
+        try:
+            ys, ms = pm.month.split("-")
+            if int(ys) != year:
+                continue
+            mi = int(ms)
+            if not (1 <= mi <= 12):
+                continue
+        except (ValueError, AttributeError):
+            continue
+        weights.append((mi - 1, _line_amount(pm, p)))
+    if weights:
+        total = sum(w for _, w in weights)
+        if total > 0:
+            remainder = manual_uzs
+            for idx, (mi, w) in enumerate(weights):
+                if idx == len(weights) - 1:
+                    share = remainder
+                else:
+                    share = (manual_uzs * w / total).quantize(Decimal("0.01"))
+                    remainder -= share
+                out[mi] += share
+        return
+    started = _project_started_date(p)
+    if started.year == year:
+        out[started.month - 1] += manual_uzs
+
+
+def _pl_projects_cost_expense_uzs_by_month(
+    db: Session,
+    current_user: User,
+    year: int,
+    n: int = 12,
+) -> List[Decimal]:
+    """Себестоимость проектов (ручной ввод + задачи «Команда» + ДДС по проекту) по месяцам P&L."""
+    out = [Decimal("0") for _ in range(n)]
+    rates = {
+        r.period_month: Decimal(str(r.usd_to_uzs_rate or 0))
+        for r in db.query(AvailableFundsManual)
+        .filter(AvailableFundsManual.company_slug == get_request_company())
+        .all()
+    }
+    for t in (
+        db.query(EmployeeTask)
+        .filter(EmployeeTask.allocated_payment_id.isnot(None))
+        .filter(EmployeeTask.cost_category.isnot(None))
+        .filter(EmployeeTask.company_slug == get_request_company())
+        .all()
+    ):
+        if t.work_date.year != year:
+            continue
+        net_uzs = _task_cost_net_uzs(t, rates)
+        if net_uzs > 0:
+            out[t.work_date.month - 1] += net_uzs
+    for e in (
+        db.query(CashFlowEntry)
+        .filter(CashFlowEntry.direction == "expense")
+        .filter(CashFlowEntry.payment_id.isnot(None))
+        .filter(CashFlowEntry.cost_category.isnot(None))
+        .filter(CashFlowEntry.employee_task_id.is_(None))
+        .filter(CashFlowEntry.company_slug == get_request_company())
+        .all()
+    ):
+        try:
+            ys, ms = e.period_month.split("-")
+            if int(ys) != year:
+                continue
+            mi = int(ms)
+            if not (1 <= mi <= 12):
+                continue
+            idx = mi - 1
+        except (ValueError, AttributeError):
+            continue
+        net_uzs = _cf_entry_cost_uzs(e, rates)
+        if net_uzs > 0:
+            out[idx] += net_uzs
+    q = (
+        db.query(Payment)
+        .options(joinedload(Payment.months))
+        .filter(Payment.is_archived == False)
+    )
+    q = filter_payments_query(q, db, current_user)
+    for p in q.all():
+        _distribute_manual_cost_to_year_months(p, _payment_manual_projects_cost_uzs(p), year, out)
+    return [x.quantize(Decimal("0.01")) for x in out]
+
+
 def _task_allocated_cost_uzs_by_payment(db: Session) -> Dict[int, Dict[str, Decimal]]:
     """Себестоимость в UZS по payment_id и статье: задачи команды + расходы ДДС с привязкой."""
     rates = {
@@ -217,20 +368,9 @@ def _task_allocated_cost_uzs_by_payment(db: Session) -> Dict[int, Dict[str, Deci
         bucket = pc_cost_column_bucket(t.cost_category)
         if not bucket:
             continue
-        amt = Decimal(str(t.amount or 0))
-        bud = Decimal(str(t.budget_amount or 0))
-        net = amt - bud
-        if net <= 0:
+        net_uzs = _task_cost_net_uzs(t, rates)
+        if net_uzs <= 0:
             continue
-        ym = f"{t.work_date.year}-{str(t.work_date.month).zfill(2)}"
-        cur = (t.currency or "USD").upper()
-        if cur == "USD":
-            rfx = rates.get(ym) or Decimal(0)
-            if rfx <= 0:
-                continue
-            net_uzs = (net * rfx).quantize(Decimal("0.01"))
-        else:
-            net_uzs = net.quantize(Decimal("0.01"))
         pid = int(t.allocated_payment_id)  # type: ignore[arg-type]
         if pid not in out:
             out[pid] = {k: Decimal(0) for k in _TASK_COST_CATS}
@@ -273,10 +413,30 @@ def _commission_percent_by_payment_id(db: Session) -> Dict[int, Decimal]:
     return out
 
 
+def _lending_items_for_payment(
+    db: Session,
+    payment_id: int,
+) -> Tuple[Decimal, List[ProjectCostLendingItemOut]]:
+    lend_total, lend_rows = active_lending_by_payment_id(db).get(payment_id, (Decimal("0"), []))
+    items = [
+        ProjectCostLendingItemOut(
+            id=int(lr.id),
+            lending_category=(getattr(lr, "lending_category", None) or "external"),  # type: ignore[arg-type]
+            principal_uzs=Decimal(str(lr.principal_uzs or 0)),
+            entity_name=lr.entity_name,
+            issued_on=lr.issued_on,
+        )
+        for lr in lend_rows
+    ]
+    return lend_total, items
+
+
 def _payment_to_project_cost_row(
     p: Payment,
     manager_commission_percent: Optional[Decimal] = None,
     task_alloc: Optional[Dict[str, Decimal]] = None,
+    lending_active_uzs: Optional[Decimal] = None,
+    lending_items: Optional[List[ProjectCostLendingItemOut]] = None,
 ) -> ProjectCostRowOut:
     """Одна строка отчёта Projects Cost из загруженного Payment (partner + months)."""
     months_sorted = _sort_payment_month_lines(p.months)
@@ -399,6 +559,8 @@ def _payment_to_project_cost_row(
         manager_commission_percent=mcp,
         manager_commission_reserved_uzs=reserved,
         profit_after_manager_uzs=profit_after,
+        lending_active_uzs=(lending_active_uzs or Decimal("0")).quantize(Decimal("0.01")),
+        lending_items=lending_items or [],
     )
 
 
@@ -446,9 +608,19 @@ def projects_cost_report(
         payments_sorted = [p for p in payments_sorted if _payment_overlaps_month_window(p, mf, mt)]
     pct_map = _commission_percent_by_payment_id(db)
     task_amap = _task_allocated_cost_uzs_by_payment(db)
-    return [
-        _payment_to_project_cost_row(p, pct_map.get(p.id), task_amap.get(p.id)) for p in payments_sorted
-    ]
+    out_rows: List[ProjectCostRowOut] = []
+    for p in payments_sorted:
+        lend_total, lend_items = _lending_items_for_payment(db, p.id)
+        out_rows.append(
+            _payment_to_project_cost_row(
+                p,
+                pct_map.get(p.id),
+                task_amap.get(p.id),
+                lend_total,
+                lend_items,
+            )
+        )
+    return out_rows
 
 
 @router.put("/projects-cost/{payment_id}/cost-breakdown", response_model=ProjectCostRowOut)
@@ -494,7 +666,8 @@ def put_projects_cost_breakdown(
     )
     pct_map = _commission_percent_by_payment_id(db)
     task_amap = _task_allocated_cost_uzs_by_payment(db)
-    return _payment_to_project_cost_row(p, pct_map.get(p.id), task_amap.get(p.id))
+    lend_total, lend_items = _lending_items_for_payment(db, p.id)
+    return _payment_to_project_cost_row(p, pct_map.get(p.id), task_amap.get(p.id), lend_total, lend_items)
 
 
 def _sum_paid_for_payment(p: Payment) -> Decimal:
@@ -577,7 +750,8 @@ def put_projects_cost_profit(
         .first()
     )
     pct_map = _commission_percent_by_payment_id(db)
-    return _payment_to_project_cost_row(p, pct_map.get(p.id), task_amap.get(p.id))
+    lend_total, lend_items = _lending_items_for_payment(db, p.id)
+    return _payment_to_project_cost_row(p, pct_map.get(p.id), task_amap.get(p.id), lend_total, lend_items)
 
 
 _REV_CATEGORY_LABELS: Dict[str, str] = {
@@ -657,7 +831,8 @@ def pl_report(
         raise HTTPException(status_code=403, detail="Доступ запрещён")
     """
     P&L по месяцам: выручка — оплаты по графику проектов (категории) + приходы из ДДС;
-    расходы — команда + ДДС по статьям + ручные строки.
+    расходы — себестоимость проектов (Projects Cost) + команда + ДДС по статьям + ручные строки.
+    Задачи «Команда», привязанные к проекту, идут в себестоимость, а не в зарплатный фонд (без двойного учёта).
     Суммы в USD (строки ДДС, выплаты команде в долларах) при заданном в ДДС курсе за соответствующий месяц
     (usd_to_uzs_rate в «Доступные средства») переводятся в сумы и попадают в строку «Зарплатный фонд» (команда + ДДС зарплата);
     при курсе 0 для месяца USD остаётся отдельной колонкой.
@@ -800,6 +975,8 @@ def pl_report(
             continue
         if getattr(e, "employee_task_id", None):
             continue
+        if getattr(e, "payment_id", None) and getattr(e, "cost_category", None):
+            continue
         au = Decimal(str(e.amount_uzs or 0))
         ad = Decimal(str(e.amount_usd or 0))
         apply_fx = bool(getattr(e, "apply_fx_to_uzs", False))
@@ -908,7 +1085,8 @@ def pl_report(
         else:
             salary_uzs[m_idx - 1] += pl_amt
 
-    # Факт выплат из «Команда»: отмеченные «оплачено» попадают в P&L по месяцу оплаты (с привязкой к Projects Cost или без).
+    # Факт выплат из «Команда»: отмеченные «оплачено» попадают в P&L по месяцу оплаты.
+    # Задачи с привязкой к проекту учитываются в себестоимости Projects Cost, не в зарплатном фонде.
     for t in (
         db.query(EmployeeTask)
         .filter(
@@ -917,6 +1095,8 @@ def pl_report(
         )
         .all()
     ):
+        if t.allocated_payment_id and t.cost_category:
+            continue
         paid_dt = t.paid_at.date() if isinstance(t.paid_at, datetime) else t.paid_at
         d = paid_dt or t.work_date
         if d.year != y:
@@ -1038,6 +1218,8 @@ def pl_report(
     grand_rev_uzs = [total_rev[i] + cf_in_uzs[i] + manual_rev_sum_uzs[i] for i in range(n)]
     grand_rev_usd = [cf_in_usd[i] + manual_rev_sum_usd[i] for i in range(n)]
 
+    pc_cost_uzs = _pl_projects_cost_expense_uzs_by_month(db, current_user, y, n)
+
     rows: List[PLDataRowOut] = []
 
     # Выручка: строки по категориям (стабильный порядок + любые новые категории в конце)
@@ -1131,6 +1313,19 @@ def pl_report(
             is_calculated=False,
             cells=[
                 PLCellOut(uzs=mgr_comm_uzs[i].quantize(Decimal("0.01")), usd=Decimal("0"))
+                for i in range(n)
+            ],
+        )
+    )
+
+    rows.append(
+        PLDataRowOut(
+            row_id="exp_projects_cost",
+            label="Себестоимость проектов (Projects Cost)",
+            section="expenses_fixed",
+            is_calculated=False,
+            cells=[
+                PLCellOut(uzs=pc_cost_uzs[i].quantize(Decimal("0.01")), usd=Decimal("0"))
                 for i in range(n)
             ],
         )
@@ -1330,6 +1525,7 @@ def pl_report(
     exp_total_uzs = [
         merged_sal_uzs[i]
         + mgr_comm_uzs[i]
+        + pc_cost_uzs[i]
         + cf_off_uzs[i]
         + cf_acc_uzs[i]
         + cf_pub_uzs[i]

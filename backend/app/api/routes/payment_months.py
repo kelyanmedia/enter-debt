@@ -463,6 +463,9 @@ async def confirm_month(
             pm.paid_at = now
         pm.confirmed_by = current_user.id
         pm.received_payment_method = body.received_payment_method
+        from app.services.lending_lifecycle import close_active_lending_for_payment
+
+        close_active_lending_for_payment(db, payment_id, pay.company_slug)
         db.commit()
         db.refresh(pm)
         # Хостинг/домен: все строки графика оплачены — переносим «следующее продление» на +1 год (без предоплаты лет)

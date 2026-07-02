@@ -416,6 +416,9 @@ def confirm_payment(
         p.confirmed_by = current_user.id
         p.postponed_until = None
         p.received_payment_method = data.received_payment_method or "transfer"
+        from app.services.lending_lifecycle import close_active_lending_for_payment
+
+        close_active_lending_for_payment(db, payment_id, p.company_slug)
     db.commit()
     p = load_payment(db, payment_id)
     return enrich(p)

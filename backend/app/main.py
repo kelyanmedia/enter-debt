@@ -30,7 +30,7 @@ import app.models.telegram_join  # noqa: F401 — таблица telegram_join_r
 import app.models.feed_notification  # noqa: F401 — лента событий
 import app.models.ceo_metric_override  # noqa: F401 — ручные значения CEO dashboard
 from app.api.routes import auth, users, partners, payments, dashboard, notifications, archive, payment_months, telegram_join, feed_notifications, contract_requests, employee_tasks, employee_payment_records, finance_projects_cost, finance_cash_flow, finance_lending, sales_companies, trash
-from app.api.routes import commissions, subscription_items, access_entries, company_ui, pm_commissions
+from app.api.routes import commissions, subscription_items, access_entries, company_assets, company_ui, pm_commissions
 from app.api.routes import sale_pipelines
 from app.api.routes import sales_analytics
 from app.api.routes import sales_calendar
@@ -41,6 +41,7 @@ import app.models.employee_task  # noqa: F401
 import app.models.subscription_item  # noqa: F401
 import app.models.employee_payment_record  # noqa: F401
 import app.models.access_entry  # noqa: F401
+import app.models.company_asset  # noqa: F401 — имущество
 import app.models.cash_flow  # noqa: F401 — ДДС
 import app.models.company_ui  # noqa: F401 — подписи разделов/линий по компании
 import app.models.ceo_dashboard_block  # noqa: F401 — блоки CEO Dashboard по компании
@@ -229,6 +230,7 @@ app.include_router(commissions.router)
 app.include_router(pm_commissions.router)
 app.include_router(subscription_items.router)
 app.include_router(access_entries.router)
+app.include_router(company_assets.router)
 app.include_router(company_ui.router)
 app.include_router(trash.router)
 
@@ -481,6 +483,19 @@ def _migrate():
         "CREATE INDEX IF NOT EXISTS ix_access_entries_category ON access_entries (category)",
         "ALTER TABLE access_entries ADD COLUMN IF NOT EXISTS service_type VARCHAR(120)",
         "ALTER TABLE access_entries ADD COLUMN IF NOT EXISTS shared_with_administration BOOLEAN NOT NULL DEFAULT FALSE",
+        """CREATE TABLE IF NOT EXISTS company_assets (
+            id SERIAL PRIMARY KEY,
+            company_slug VARCHAR(32) NOT NULL DEFAULT 'kelyanmedia',
+            name VARCHAR(300) NOT NULL,
+            purchased_on DATE,
+            serial_number VARCHAR(220),
+            seller_contacts TEXT,
+            notes TEXT,
+            photo_path VARCHAR(500),
+            created_at TIMESTAMP WITH TIME ZONE DEFAULT now(),
+            updated_at TIMESTAMP WITH TIME ZONE
+        )""",
+        "CREATE INDEX IF NOT EXISTS ix_company_assets_company_slug ON company_assets (company_slug)",
         """CREATE TABLE IF NOT EXISTS cash_flow_template_lines (
             id SERIAL PRIMARY KEY,
             template_group VARCHAR(40) NOT NULL,
@@ -560,6 +575,9 @@ def _migrate():
         "ALTER TABLE lending_records ALTER COLUMN deadline_date DROP NOT NULL",
         "CREATE INDEX IF NOT EXISTS ix_lending_records_company_slug ON lending_records (company_slug)",
         "CREATE INDEX IF NOT EXISTS ix_lending_records_payment_id ON lending_records (payment_id)",
+        "ALTER TABLE lending_records ADD COLUMN IF NOT EXISTS lending_category VARCHAR(16) NOT NULL DEFAULT 'external'",
+        "ALTER TABLE lending_records ADD COLUMN IF NOT EXISTS closed_at TIMESTAMP WITH TIME ZONE",
+        "CREATE INDEX IF NOT EXISTS ix_lending_records_closed_at ON lending_records (closed_at)",
         """CREATE TABLE IF NOT EXISTS sales_company_groups (
             id SERIAL PRIMARY KEY,
             company_slug VARCHAR(32) NOT NULL DEFAULT 'kelyanmedia',
@@ -1010,6 +1028,8 @@ def _migrate():
         "lending_records": [
             ("payment_id", "ALTER TABLE lending_records ADD COLUMN payment_id INTEGER REFERENCES payments(id) ON DELETE SET NULL"),
             ("issued_on", "ALTER TABLE lending_records ADD COLUMN issued_on DATE NOT NULL DEFAULT CURRENT_DATE"),
+            ("lending_category", "ALTER TABLE lending_records ADD COLUMN lending_category VARCHAR(16) NOT NULL DEFAULT 'external'"),
+            ("closed_at", "ALTER TABLE lending_records ADD COLUMN closed_at TIMESTAMP"),
         ],
         "sales_companies": [
             ("client_type", "ALTER TABLE sales_companies ADD COLUMN client_type VARCHAR(1)"),

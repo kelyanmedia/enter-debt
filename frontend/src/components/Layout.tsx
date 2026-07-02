@@ -97,6 +97,12 @@ const NAV_SECTIONS: NavSection[] = [
         icon: '🔐',
         activePathPrefix: '/subscriptions/accesses',
       },
+      {
+        href: '/subscriptions/property',
+        label: 'Имущество',
+        icon: '🏷️',
+        activePathPrefix: '/subscriptions/property',
+      },
     ],
   },
   {
@@ -249,7 +255,7 @@ function filterVisibleNavItems(section: NavSection, user: { role: string; can_vi
     if (n.salesCalendar) return hasCrmPipelineAccess(user)
     if (n.salesCompanies) return hasSalesCompaniesAccess(user)
     if (user.role === 'administration') {
-      if (n.href.startsWith('/subscriptions/accesses')) {
+      if (n.href.startsWith('/subscriptions/accesses') || n.href.startsWith('/subscriptions/property')) {
         if (!user.can_view_accesses) return false
       } else if (n.href.startsWith('/subscriptions')) {
         if (!user.can_view_subscriptions) return false

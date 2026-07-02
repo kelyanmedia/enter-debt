@@ -368,6 +368,21 @@ class AccessEntryOut(AccessEntryBase):
         from_attributes = True
 
 
+class CompanyAssetOut(BaseModel):
+    id: int
+    name: str
+    purchased_on: Optional[date] = None
+    serial_number: Optional[str] = None
+    seller_contacts: Optional[str] = None
+    notes: Optional[str] = None
+    has_photo: bool = False
+    created_at: Optional[datetime] = None
+    updated_at: Optional[datetime] = None
+
+    class Config:
+        from_attributes = True
+
+
 # ── SUBSCRIPTION ITEMS (реестр: бытовые / телефоны / сервисы) ─────────────────
 SubscriptionRecurrence = Literal["once", "monthly", "yearly"]
 SubscriptionStatus = Literal["active", "inactive"]
@@ -740,6 +755,7 @@ class LendingRecordOut(BaseModel):
 
     id: int
     entity_name: str
+    lending_category: Literal["external", "internal"] = "external"
     record_type: Literal["interest_loan", "interest_free"]
     payment_id: Optional[int] = None
     payment_label: Optional[str] = None
@@ -752,6 +768,7 @@ class LendingRecordOut(BaseModel):
     calculation_date: date
     period_note: Optional[str] = None
     note: Optional[str] = None
+    closed_at: Optional[datetime] = None
     created_at: Optional[datetime] = None
 
     class Config:
@@ -761,7 +778,8 @@ class LendingRecordOut(BaseModel):
 class LendingRecordCreate(BaseModel):
     entity_name: str = Field(..., min_length=1, max_length=500)
     payment_id: Optional[int] = None
-    record_type: Literal["interest_loan", "interest_free"]
+    lending_category: Literal["external", "internal"] = "external"
+    record_type: Literal["interest_loan", "interest_free"] = "interest_loan"
     issued_on: date
     principal_uzs: Decimal = Field(..., ge=0)
     monthly_rate_percent: Optional[Decimal] = None
@@ -771,14 +789,19 @@ class LendingRecordCreate(BaseModel):
 
     @model_validator(mode="after")
     def _lending_create_rates(self) -> "LendingRecordCreate":
+        if self.lending_category == "internal":
+            object.__setattr__(self, "record_type", "interest_free")
+            object.__setattr__(self, "monthly_rate_percent", None)
+            return self
         if self.record_type == "interest_loan" and self.monthly_rate_percent is None:
-            raise ValueError("Для кредита с процентом укажите ставку % в месяц")
+            raise ValueError("Для внешнего кредита с процентом укажите ставку % в месяц")
         return self
 
 
 class LendingRecordUpdate(BaseModel):
     entity_name: Optional[str] = Field(None, min_length=1, max_length=500)
     payment_id: Optional[int] = None
+    lending_category: Optional[Literal["external", "internal"]] = None
     record_type: Optional[Literal["interest_loan", "interest_free"]] = None
     issued_on: Optional[date] = None
     principal_uzs: Optional[Decimal] = None
@@ -954,6 +977,17 @@ class ProjectCostProfitPut(BaseModel):
     profit_uzs: Decimal = Field(ge=Decimal("0"))
 
 
+class ProjectCostLendingItemOut(BaseModel):
+    id: int
+    lending_category: Literal["external", "internal"]
+    principal_uzs: Decimal
+    entity_name: str
+    issued_on: date
+
+    class Config:
+        from_attributes = True
+
+
 class ProjectCostRowOut(BaseModel):
     """Сводка по проекту для отчёта «Projects Cost»: синхронизировано с payments / payment_months.
 
@@ -995,6 +1029,8 @@ class ProjectCostRowOut(BaseModel):
     manager_commission_percent: Optional[Decimal] = None  # % из привязанной записи «Комиссия»
     manager_commission_reserved_uzs: Optional[Decimal] = None  # маржа × % / 100
     profit_after_manager_uzs: Decimal  # маржа − резерв комиссии (если % нет — как profit_actual)
+    lending_active_uzs: Decimal = Decimal("0")  # активное кредитование по проекту (не в P&L)
+    lending_items: List[ProjectCostLendingItemOut] = []
 
 
 # ── DASHBOARD ─────────────────────────────────────────────────────────────────

@@ -19,6 +19,7 @@ router = APIRouter(prefix="/api/finance", tags=["finance"])
 require_lending_access = require_finance_section("lending")
 
 _VALID_TYPES = frozenset({"interest_loan", "interest_free"})
+_VALID_CATEGORIES = frozenset({"external", "internal"})
 
 
 def _charged_months(issued_on: date, calculation_date: date) -> int:
@@ -39,7 +40,8 @@ def _calculated_total(row: LendingRecord) -> tuple[Decimal, int, date]:
     principal = Decimal(str(row.principal_uzs or 0))
     calc_date = _calculation_date(row)
     months = _charged_months(row.issued_on, calc_date)
-    if row.record_type == "interest_free":
+    cat = (getattr(row, "lending_category", None) or "external").strip().lower()
+    if row.record_type == "interest_free" or cat == "internal":
         return principal.quantize(Decimal("0.01")), months, calc_date
     rate = Decimal(str(row.monthly_rate_percent or 0))
     total = principal + (principal * rate / Decimal("100") * Decimal(months))
@@ -74,11 +76,30 @@ def _validate_payment_id(db: Session, payment_id: int | None) -> int | None:
     return int(payment_id)
 
 
+def _normalize_lending_row(row: LendingRecord) -> None:
+    cat = (getattr(row, "lending_category", None) or "external").strip().lower()
+    if cat not in _VALID_CATEGORIES:
+        cat = "external"
+    row.lending_category = cat
+    if cat == "internal":
+        row.record_type = "interest_free"
+        row.monthly_rate_percent = None
+        return
+    if row.record_type not in _VALID_TYPES:
+        row.record_type = "interest_loan"
+    if row.record_type == "interest_free":
+        row.monthly_rate_percent = None
+
+
 def _to_out(row: LendingRecord) -> LendingRecordOut:
     total, months, calc_date = _calculated_total(row)
+    cat = (getattr(row, "lending_category", None) or "external").strip().lower()
+    if cat not in _VALID_CATEGORIES:
+        cat = "external"
     return LendingRecordOut(
         id=int(row.id),
         entity_name=row.entity_name,
+        lending_category=cat,  # type: ignore[arg-type]
         record_type=row.record_type,  # type: ignore[arg-type]
         payment_id=row.payment_id,
         payment_label=_payment_label(row),
@@ -91,17 +112,19 @@ def _to_out(row: LendingRecord) -> LendingRecordOut:
         calculation_date=calc_date,
         period_note=row.period_note,
         note=row.note,
+        closed_at=getattr(row, "closed_at", None),
         created_at=row.created_at,
     )
 
 
 def _validate_row_rules(row: LendingRecord) -> None:
+    _normalize_lending_row(row)
     if row.record_type not in _VALID_TYPES:
         raise HTTPException(status_code=400, detail="Некорректный тип записи")
     if row.deadline_date is not None and row.deadline_date < row.issued_on:
         raise HTTPException(status_code=400, detail="Дедлайн не может быть раньше даты выдачи")
-    if row.record_type == "interest_loan" and row.monthly_rate_percent is None:
-        raise HTTPException(status_code=400, detail="Для кредита с процентом укажите ставку % в месяц")
+    if row.lending_category == "external" and row.record_type == "interest_loan" and row.monthly_rate_percent is None:
+        raise HTTPException(status_code=400, detail="Для внешнего кредита с процентом укажите ставку % в месяц")
 
 
 @router.get("/lending", response_model=List[LendingRecordOut])
@@ -114,7 +137,7 @@ def list_lending(
         db.query(LendingRecord)
         .options(joinedload(LendingRecord.payment).joinedload(Payment.partner))
         .filter(LendingRecord.company_slug == slug)
-        .order_by(LendingRecord.deadline_date.asc(), LendingRecord.id.asc())
+        .order_by(LendingRecord.closed_at.is_(None).desc(), LendingRecord.deadline_date.asc(), LendingRecord.id.asc())
         .all()
     )
     return [_to_out(r) for r in rows]
@@ -131,6 +154,7 @@ def create_lending(
         company_slug=slug,
         entity_name=body.entity_name,
         payment_id=_validate_payment_id(db, body.payment_id),
+        lending_category=body.lending_category,
         record_type=body.record_type,
         issued_on=body.issued_on,
         principal_uzs=body.principal_uzs,

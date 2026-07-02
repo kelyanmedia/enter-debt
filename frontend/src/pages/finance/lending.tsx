@@ -21,10 +21,12 @@ import api from '@/lib/api'
 import { canAccessFinanceSection } from '@/lib/roles'
 
 type LendingType = 'interest_loan' | 'interest_free'
+type LendingCategory = 'external' | 'internal'
 
 interface LendingRecord {
   id: number
   entity_name: string
+  lending_category: LendingCategory
   record_type: LendingType
   payment_id?: number | null
   payment_label?: string | null
@@ -37,12 +39,14 @@ interface LendingRecord {
   calculation_date: string
   period_note?: string | null
   note?: string | null
+  closed_at?: string | null
   created_at?: string | null
 }
 
 interface LendingFormState {
   entity_name: string
   payment_id: string
+  lending_category: LendingCategory
   record_type: LendingType
   issued_on: string
   principal_uzs: string
@@ -56,6 +60,7 @@ interface LendingFormState {
 const emptyForm = (): LendingFormState => ({
   entity_name: '',
   payment_id: '',
+  lending_category: 'external',
   record_type: 'interest_loan',
   issued_on: todayYmd(),
   principal_uzs: '',
@@ -110,13 +115,20 @@ function calculatedRepayment(form: LendingFormState) {
   const principal = Number(form.principal_uzs) || 0
   const calcDate = form.deadline_date || todayYmd()
   const months = chargedMonths(form.issued_on, calcDate)
-  if (form.record_type === 'interest_free') return { total: principal, months, calcDate }
+  if (form.lending_category === 'internal' || form.record_type === 'interest_free') {
+    return { total: principal, months, calcDate }
+  }
   const rate = Number(form.monthly_rate_percent) || 0
   return { total: Math.round((principal + principal * (rate / 100) * months) * 100) / 100, months, calcDate }
 }
 
-function typeLabel(t: LendingType) {
-  return t === 'interest_loan' ? 'Кредит под %' : 'Безвозмездно / инвестиция'
+function categoryLabel(c: LendingCategory) {
+  return c === 'internal' ? 'Внутреннее' : 'Внешнее'
+}
+
+function typeLabel(r: LendingRecord) {
+  if (r.lending_category === 'internal') return 'Внутреннее'
+  return r.record_type === 'interest_loan' ? 'Внешнее · кредит под %' : 'Внешнее · безвозмездно'
 }
 
 function formatApiError(e: unknown): string {
@@ -131,6 +143,7 @@ function formFromRecord(r: LendingRecord): LendingFormState {
   return {
     entity_name: r.entity_name || '',
     payment_id: r.payment_id != null ? String(r.payment_id) : '',
+    lending_category: r.lending_category || 'external',
     record_type: r.record_type,
     issued_on: r.issued_on || todayYmd(),
     principal_uzs: String(Number(r.principal_uzs) || ''),
@@ -198,7 +211,8 @@ export default function FinanceLendingPage() {
       const hay = [
         r.entity_name,
         r.payment_label,
-        typeLabel(r.record_type),
+        typeLabel(r),
+        categoryLabel(r.lending_category),
         r.period_note,
         r.note,
         r.issued_on,
@@ -214,11 +228,21 @@ export default function FinanceLendingPage() {
   const totals = useMemo(() => {
     let principal = 0
     let repayment = 0
+    let externalIncome = 0
+    let internalFrozen = 0
     for (const r of filteredRows) {
-      principal += Number(r.principal_uzs) || 0
-      repayment += Number(r.total_repayment_uzs) || 0
+      if (r.closed_at) continue
+      const p = Number(r.principal_uzs) || 0
+      const rep = Number(r.total_repayment_uzs) || 0
+      principal += p
+      repayment += rep
+      if (r.lending_category === 'internal') {
+        internalFrozen += p
+      } else {
+        externalIncome += rep - p
+      }
     }
-    return { principal, repayment, income: repayment - principal }
+    return { principal, repayment, externalIncome, internalFrozen }
   }, [filteredRows])
 
   const openCreate = () => {
@@ -261,18 +285,21 @@ export default function FinanceLendingPage() {
       alert('Укажите сумму кредита')
       return
     }
-    if (form.record_type === 'interest_loan' && form.monthly_rate_percent.trim() === '') {
-      alert('Для кредита под процент укажите % в месяц')
+    if (form.lending_category === 'external' && form.record_type === 'interest_loan' && form.monthly_rate_percent.trim() === '') {
+      alert('Для внешнего кредита под процент укажите % в месяц')
       return
     }
     const payload = {
       entity_name: entity,
       payment_id: form.payment_id ? Number(form.payment_id) : null,
-      record_type: form.record_type,
+      lending_category: form.lending_category,
+      record_type: form.lending_category === 'internal' ? 'interest_free' : form.record_type,
       issued_on: form.issued_on,
       principal_uzs: form.principal_uzs || '0',
       monthly_rate_percent:
-        form.record_type === 'interest_loan' ? form.monthly_rate_percent || '0' : null,
+        form.lending_category === 'internal' || form.record_type === 'interest_free'
+          ? null
+          : form.monthly_rate_percent || '0',
       deadline_date: form.deadline_date || null,
       period_note: form.period_note.trim() || null,
       note: form.note.trim() || null,
@@ -301,6 +328,15 @@ export default function FinanceLendingPage() {
     } catch (e) {
       alert(formatApiError(e))
     }
+  }
+
+  const setCategory = (lendingCategory: LendingCategory) => {
+    setForm((f) => ({
+      ...f,
+      lending_category: lendingCategory,
+      record_type: lendingCategory === 'internal' ? 'interest_free' : f.record_type === 'interest_free' ? 'interest_loan' : f.record_type,
+      monthly_rate_percent: lendingCategory === 'internal' ? '' : f.monthly_rate_percent || '5',
+    }))
   }
 
   const setType = (recordType: LendingType) => {
@@ -409,9 +445,17 @@ export default function FinanceLendingPage() {
                   </tr>
                 ) : (
                   filteredRows.map((r, idx) => {
-                    const isFree = r.record_type === 'interest_free'
+                    const isInternal = r.lending_category === 'internal'
+                    const isClosed = Boolean(r.closed_at)
                     return (
-                      <tr key={r.id} style={{ borderBottom: '1px solid #eef2f7', background: isFree ? '#f8fafc' : '#fff7ed' }}>
+                      <tr
+                        key={r.id}
+                        style={{
+                          borderBottom: '1px solid #eef2f7',
+                          background: isClosed ? '#f1f5f9' : isInternal ? '#f0f9ff' : '#fff7ed',
+                          opacity: isClosed ? 0.65 : 1,
+                        }}
+                      >
                         <Td style={{ fontWeight: 600 }}>{idx + 1}</Td>
                         <Td style={{ fontWeight: 700, maxWidth: 240, lineHeight: 1.35 }}>
                           <div>{r.entity_name}</div>
@@ -429,17 +473,20 @@ export default function FinanceLendingPage() {
                               borderRadius: 999,
                               fontSize: 11,
                               fontWeight: 700,
-                              color: isFree ? '#334155' : '#9a3412',
-                              background: isFree ? '#e2e8f0' : '#ffedd5',
+                              color: isInternal ? '#0369a1' : '#9a3412',
+                              background: isInternal ? '#e0f2fe' : '#ffedd5',
                             }}
                           >
-                            {typeLabel(r.record_type)}
+                            {typeLabel(r)}
                           </span>
+                          {isClosed ? (
+                            <div style={{ marginTop: 4, fontSize: 10, fontWeight: 600, color: '#64748b' }}>Закрыто (оплата)</div>
+                          ) : null}
                         </Td>
                         <Td style={{ fontSize: 13, whiteSpace: 'nowrap' }}>{formatDate(r.issued_on)}</Td>
                         <Td style={{ fontWeight: 700, whiteSpace: 'nowrap' }}>{formatMoneyNumber(Number(r.principal_uzs))}</Td>
-                        <Td style={{ fontWeight: 700, color: isFree ? '#94a3b8' : '#2563eb', whiteSpace: 'nowrap' }}>
-                          {isFree ? '—' : `${formatMoneyNumber(Number(r.monthly_rate_percent || 0))} %`}
+                        <Td style={{ fontWeight: 700, color: isInternal ? '#94a3b8' : '#2563eb', whiteSpace: 'nowrap' }}>
+                          {isInternal ? '—' : `${formatMoneyNumber(Number(r.monthly_rate_percent || 0))} %`}
                         </Td>
                         <Td style={{ fontWeight: 700, color: '#166534', whiteSpace: 'nowrap' }}>{formatMoneyNumber(Number(r.total_repayment_uzs))}</Td>
                         <Td style={{ fontSize: 13, fontWeight: 700, color: '#334155', whiteSpace: 'nowrap' }}>{r.charged_months}</Td>
@@ -476,8 +523,15 @@ export default function FinanceLendingPage() {
                     <Td style={{ borderTop: '2px solid #94a3b8', whiteSpace: 'nowrap' }}>{formatMoneyNumber(totals.principal)}</Td>
                     <Td style={{ borderTop: '2px solid #94a3b8', color: '#64748b' }}>—</Td>
                     <Td style={{ borderTop: '2px solid #94a3b8', color: '#166534', whiteSpace: 'nowrap' }}>{formatMoneyNumber(totals.repayment)}</Td>
-                    <Td colSpan={5} style={{ borderTop: '2px solid #94a3b8', color: '#1e3a5f' }}>
-                      Потенциальный доход: {formatMoneyNumber(totals.income)}
+                    <Td colSpan={5} style={{ borderTop: '2px solid #94a3b8', color: '#1e3a5f', lineHeight: 1.45 }}>
+                      {totals.externalIncome > 0 ? (
+                        <span>Потенциальный доход (внешнее): {formatMoneyNumber(totals.externalIncome)}</span>
+                      ) : null}
+                      {totals.externalIncome > 0 && totals.internalFrozen > 0 ? ' · ' : null}
+                      {totals.internalFrozen > 0 ? (
+                        <span>Замороженные деньги (внутреннее): {formatMoneyNumber(totals.internalFrozen)}</span>
+                      ) : null}
+                      {totals.externalIncome <= 0 && totals.internalFrozen <= 0 ? '—' : null}
                     </Td>
                   </tr>
                 </tfoot>
@@ -487,8 +541,9 @@ export default function FinanceLendingPage() {
         </Card>
 
         <div style={{ fontSize: 12, color: '#64748b', lineHeight: 1.55, maxWidth: 900 }}>
-          Запись может быть про внутренний проект или компанию, которую кредитуем. Расчёт простой: сумма + сумма × % в месяц ×
-          количество начисленных месяцев. День после очередной месячной даты уже открывает следующий месяц процента.
+          <strong>Внешнее</strong> — кредит от стороннего источника (можно привязать к проекту), процент считается по дате выдачи.
+          <strong> Внутреннее</strong> — свои деньги на проект до оплаты клиентом, без процентов; в итогах это «Замороженные деньги».
+          При оплате клиента по проекту активное кредитование снимается автоматически. Учёт не попадает в P&L.
         </div>
       </div>
 
@@ -550,11 +605,11 @@ export default function FinanceLendingPage() {
           </select>
         </Field>
 
-        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, minmax(0, 1fr))', gap: 12 }}>
-          <Field label="Тип">
+        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2, minmax(0, 1fr))', gap: 12 }}>
+          <Field label="Категория">
             <select
-              value={form.record_type}
-              onChange={(e) => setType(e.target.value as LendingType)}
+              value={form.lending_category}
+              onChange={(e) => setCategory(e.target.value as LendingCategory)}
               style={{
                 width: '100%',
                 border: '1px solid #e8e9ef',
@@ -566,10 +621,38 @@ export default function FinanceLendingPage() {
                 fontFamily: 'inherit',
               }}
             >
-              <option value="interest_loan">Кредит под % в месяц</option>
-              <option value="interest_free">Безвозмездно / инвестиция</option>
+              <option value="external">Внешнее (кредит со стороны)</option>
+              <option value="internal">Внутреннее (свои деньги, без %)</option>
             </select>
           </Field>
+          {form.lending_category === 'external' ? (
+            <Field label="Тип внешнего кредита">
+              <select
+                value={form.record_type}
+                onChange={(e) => setType(e.target.value as LendingType)}
+                style={{
+                  width: '100%',
+                  border: '1px solid #e8e9ef',
+                  borderRadius: 9,
+                  padding: '9px 12px',
+                  fontSize: 13.5,
+                  color: '#1a1d23',
+                  background: '#fff',
+                  fontFamily: 'inherit',
+                }}
+              >
+                <option value="interest_loan">Кредит под % в месяц</option>
+                <option value="interest_free">Безвозмездно / инвестиция</option>
+              </select>
+            </Field>
+          ) : (
+            <Field label="Внутреннее кредитование">
+              <Input value="Без процентов — учёт замороженных денег" readOnly style={{ background: '#f8fafc', color: '#64748b' }} />
+            </Field>
+          )}
+        </div>
+
+        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2, minmax(0, 1fr))', gap: 12 }}>
           <Field label="Дата выдачи">
             <DatePicker
               value={form.issued_on}
@@ -597,15 +680,15 @@ export default function FinanceLendingPage() {
               value={form.monthly_rate_percent}
               onChange={(v) => setForm((f) => ({ ...f, monthly_rate_percent: v }))}
               placeholder="5"
-              disabled={form.record_type === 'interest_free'}
+              disabled={form.lending_category === 'internal' || form.record_type === 'interest_free'}
             />
           </Field>
-          <Field label="К возврату">
+          <Field label={form.lending_category === 'internal' ? 'Заморожено' : 'К возврату'}>
             <Input
               value={formatMoneyNumber(repaymentCalc.total)}
               readOnly
               title={`Начислено месяцев: ${repaymentCalc.months}. Расчёт на ${formatDate(repaymentCalc.calcDate)}.`}
-              style={{ background: '#f8fafc', fontWeight: 700, color: '#166534' }}
+              style={{ background: '#f8fafc', fontWeight: 700, color: form.lending_category === 'internal' ? '#0369a1' : '#166534' }}
             />
           </Field>
         </div>

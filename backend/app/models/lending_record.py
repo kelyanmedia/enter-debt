@@ -15,8 +15,11 @@ class LendingRecord(Base):
     payment_id = Column(Integer, ForeignKey("payments.id", ondelete="SET NULL"), nullable=True, index=True)
     # Проект внутри компании или название компании-заёмщика (произвольный текст)
     entity_name = Column(String(500), nullable=False)
-    # interest_loan — % в месяц; interest_free — без процентов на период (инвестиция / безвозмездно)
+    # external — кредит со стороны (может быть под %); internal — свои деньги, без процентов
+    lending_category = Column(String(16), nullable=False, default="external")
+    # interest_loan — % в месяц; interest_free — без процентов (внутреннее всегда interest_free)
     record_type = Column(String(32), nullable=False)
+    closed_at = Column(DateTime(timezone=True), nullable=True)
     issued_on = Column(Date, nullable=False)
     principal_uzs = Column(Numeric(15, 2), nullable=False)
     monthly_rate_percent = Column(Numeric(10, 4), nullable=True)

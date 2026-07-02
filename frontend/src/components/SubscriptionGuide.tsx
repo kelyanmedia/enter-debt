@@ -34,6 +34,12 @@ export const SUBSCRIPTION_TABS = [
     title: 'Доступы сотрудников к сервисам и технике',
   },
   {
+    href: '/subscriptions/property',
+    label: 'Имущество',
+    icon: '🏷️',
+    title: 'Купленные активы компании',
+  },
+  {
     href: '/subscriptions/service-accesses',
     label: 'Доступы сервисов',
     icon: '🧩',
@@ -46,7 +52,7 @@ export function SubscriptionsTopTabs() {
   const { user } = useAuth()
   const tabs = SUBSCRIPTION_TABS.filter((tab) => {
     if (user?.role !== 'administration') return true
-    if (tab.href === '/subscriptions/accesses' || tab.href === '/subscriptions/service-accesses') {
+    if (tab.href === '/subscriptions/accesses' || tab.href === '/subscriptions/service-accesses' || tab.href === '/subscriptions/property') {
       return !!user.can_view_accesses
     }
     return !!user.can_view_subscriptions
