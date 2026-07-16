@@ -135,6 +135,7 @@ class DealIn(BaseModel):
 
 
 class DealUpdate(BaseModel):
+    pipeline_id: Optional[int] = None
     stage_id: Optional[int] = None
     title: Optional[str] = Field(None, min_length=1, max_length=300)
     contact_name: Optional[str] = Field(None, max_length=220)
@@ -884,6 +885,31 @@ def update_deal(
 
     dump = body.model_dump(exclude_unset=True)
     new_stage_name = old_stage_name
+
+    # Смена воронки (до этапа) — можно перекинуть сделку в другую воронку менеджера
+    if "pipeline_id" in dump:
+        new_pid = dump["pipeline_id"]
+        if new_pid != d.pipeline_id:
+            p = (
+                db.query(SalePipeline)
+                .filter(
+                    SalePipeline.id == new_pid,
+                    SalePipeline.company_slug == get_request_company(),
+                )
+                .first()
+            )
+            if not p:
+                raise HTTPException(status_code=404, detail="Воронка не найдена")
+            d.pipeline_id = int(new_pid)
+            if "stage_id" not in dump:
+                first_stage = (
+                    db.query(SalePipelineStage)
+                    .filter(SalePipelineStage.pipeline_id == d.pipeline_id)
+                    .order_by(SalePipelineStage.sort_order, SalePipelineStage.id)
+                    .first()
+                )
+                dump["stage_id"] = first_stage.id if first_stage else None
+
     if "stage_id" in dump:
         new_stage = dump["stage_id"]
         if new_stage != d.stage_id:

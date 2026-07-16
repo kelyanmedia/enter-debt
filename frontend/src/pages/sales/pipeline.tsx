@@ -1601,6 +1601,7 @@ export default function PipelinePage() {
           deal={dealModal.deal}
           stages={activePipeline.stages}
           pipelineId={activePipeline.id}
+          pipelines={pipelines.map(p => ({ id: p.id, name: p.name }))}
           users={salesUsers}
           defaultAssignedUserId={dealModal.deal ? undefined : selectedManagerId}
           onSave={handleDealSaved}

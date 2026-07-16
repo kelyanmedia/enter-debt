@@ -194,13 +194,13 @@ export function SaleDealComposer({
     <div style={{ background: '#fff', borderTop: '1px solid #dfe3ea', flexShrink: 0 }}>
       {mode === 'task' && taskExpanded && (
         <div style={{
-          padding: '10px 14px',
+          padding: '8px 12px',
           borderBottom: '1px solid #eef1f5',
           display: 'flex',
           flexWrap: 'wrap',
           alignItems: 'center',
-          gap: 8,
-          fontSize: 15,
+          gap: 6,
+          fontSize: 13,
           color: '#475569',
         }}>
           <select
@@ -209,8 +209,8 @@ export function SaleDealComposer({
             style={{
               border: '1px solid #e2e8f0',
               borderRadius: 6,
-              padding: '6px 10px',
-              fontSize: 15,
+              padding: '4px 8px',
+              fontSize: 13,
               fontFamily: 'inherit',
               background: '#fff',
             }}
@@ -222,7 +222,7 @@ export function SaleDealComposer({
           <DateTimePicker
             value={dueAt}
             onChange={v => setDueAt(v)}
-            style={{ fontSize: 15 }}
+            style={{ fontSize: 13 }}
           />
           <select
             value={remindMin}
@@ -230,8 +230,8 @@ export function SaleDealComposer({
             style={{
               border: '1px solid #e2e8f0',
               borderRadius: 6,
-              padding: '6px 10px',
-              fontSize: 15,
+              padding: '4px 8px',
+              fontSize: 13,
               fontFamily: 'inherit',
               background: '#fff',
             }}
@@ -240,12 +240,12 @@ export function SaleDealComposer({
               <option key={m} value={m}>🔔 за {m} мин</option>
             ))}
           </select>
-          <span style={{ color: '#94a3b8', fontSize: 14 }}>{dealTitle}</span>
+          <span style={{ color: '#94a3b8', fontSize: 12 }}>{dealTitle}</span>
         </div>
       )}
 
-      <div style={{ padding: '10px 14px 12px' }}>
-        <div style={{ position: 'relative', marginBottom: 8, display: 'flex', alignItems: 'center', gap: 10 }}>
+      <div style={{ padding: '8px 12px 10px' }}>
+        <div style={{ position: 'relative', marginBottom: 6, display: 'flex', alignItems: 'center', gap: 8 }}>
           <button
             type="button"
             onClick={() => setModeOpen(v => !v)}
@@ -254,7 +254,7 @@ export function SaleDealComposer({
               border: 'none',
               padding: 0,
               cursor: 'pointer',
-              fontSize: 15,
+              fontSize: 13,
               fontWeight: 700,
               color: '#2563eb',
               fontFamily: 'inherit',
@@ -326,11 +326,11 @@ export function SaleDealComposer({
                     display: 'block',
                     width: '100%',
                     textAlign: 'left',
-                    padding: '10px 14px',
+                    padding: '8px 12px',
                     border: 'none',
                     background: mode === m ? '#f1f5f9' : '#fff',
                     cursor: 'pointer',
-                    fontSize: 15,
+                    fontSize: 13,
                     fontFamily: 'inherit',
                     fontWeight: mode === m ? 700 : 400,
                   }}
@@ -407,13 +407,13 @@ export function SaleDealComposer({
               boxSizing: 'border-box',
               border: 'none',
               outline: 'none',
-              padding: '12px 14px',
-              fontSize: 16,
+              padding: '8px 10px',
+              fontSize: 13,
               fontFamily: 'inherit',
               resize: 'none',
               color: '#0f172a',
               background: 'transparent',
-              lineHeight: 1.5,
+              lineHeight: 1.4,
             }}
             onKeyDown={e => {
               if (e.key === 'Enter' && !e.shiftKey) {
@@ -438,15 +438,15 @@ export function SaleDealComposer({
         </div>
 
         {taskError && (
-          <div style={{ color: '#dc2626', fontSize: 14, marginTop: 6 }}>{taskError}</div>
+          <div style={{ color: '#dc2626', fontSize: 12, marginTop: 4 }}>{taskError}</div>
         )}
 
         <div style={{
           display: 'flex',
           justifyContent: 'space-between',
           alignItems: 'center',
-          marginTop: 8,
-          fontSize: 13,
+          marginTop: 6,
+          fontSize: 11,
           color: '#94a3b8',
         }}>
           <span>
@@ -462,7 +462,7 @@ export function SaleDealComposer({
               border: 'none',
               background: 'none',
               color: saving || (mode === 'note' && !canSendNote) ? '#cbd5e1' : '#2563eb',
-              fontSize: 15,
+              fontSize: 13,
               fontWeight: 700,
               cursor: saving || (mode === 'note' && !canSendNote) ? 'default' : 'pointer',
               fontFamily: 'inherit',

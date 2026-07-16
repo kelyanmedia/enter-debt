@@ -74,7 +74,21 @@ interface SalesUser {
   role?: string
 }
 
-const SOURCE_OPTIONS = ['Веб-сайт', 'Рекомендация', 'Холодный звонок', 'Соцсети', 'Выставка', 'Партнёр', 'Другое']
+const SOURCE_OPTIONS = [
+  'Холодный звонок',
+  'Электронная почта',
+  'Веб-сайт',
+  'Реклама',
+  'Рекомендация',
+  'Соцсети',
+  'Выставка',
+  'Тендер',
+  'Лид от партнера',
+  'Партнёр',
+  'Входящее обращение',
+  'Повторные продажи',
+  'Другое',
+]
 
 const CONTACT_ROLE_PRESETS = ['ЛПР', 'ЛВР', 'Помощник'] as const
 const CONTACT_ROLE_CUSTOM = '__custom__'
@@ -133,29 +147,24 @@ function budgetToInput(v: number | null | undefined): string {
 }
 
 const BACKDROP_VISIBLE = '8%'
-const LEFT_COL_FLEX = '0 0 52%'
-const LEFT_COL_MIN = 380
-const LEFT_COL_MAX = 560
+const LEFT_COL_FLEX = '0 0 48%'
+const LEFT_COL_MIN = 340
+const LEFT_COL_MAX = 480
 
 const FS = {
-  label: 13,
-  section: 13,
-  input: 15,
-  body: 15,
-  meta: 14,
-  hint: 13,
-  title: 22,
-  icon: 18,
+  label: 11,
+  section: 11,
+  input: 13,
+  body: 13,
+  meta: 12,
+  hint: 11,
+  title: 18,
+  icon: 15,
 }
 
 function fmtDateTime(iso: string) {
   const d = new Date(iso)
   return d.toLocaleString('ru-RU', { day: '2-digit', month: '2-digit', year: 'numeric', hour: '2-digit', minute: '2-digit' })
-}
-
-function fmtMonthLabel(iso: string) {
-  const d = new Date(iso)
-  return d.toLocaleDateString('ru-RU', { month: 'long' }).replace(/^./, c => c.toUpperCase())
 }
 
 function daysSince(iso: string) {
@@ -216,8 +225,8 @@ const fieldInput: React.CSSProperties = {
   width: '100%',
   boxSizing: 'border-box',
   border: '1px solid #d1d9e6',
-  borderRadius: 10,
-  padding: '10px 12px',
+  borderRadius: 8,
+  padding: '7px 10px',
   fontSize: FS.input,
   outline: 'none',
   fontFamily: 'inherit',
@@ -227,8 +236,8 @@ const fieldInput: React.CSSProperties = {
 
 const sectionBox: React.CSSProperties = {
   border: '1px solid #d8dee9',
-  borderRadius: 12,
-  padding: 16,
+  borderRadius: 10,
+  padding: 12,
   background: '#fff',
   boxShadow: '0 1px 2px rgba(15,23,42,.03)',
 }
@@ -239,7 +248,7 @@ const sectionTitle: React.CSSProperties = {
   color: '#64748b',
   textTransform: 'uppercase',
   letterSpacing: '.05em',
-  marginBottom: 10,
+  marginBottom: 8,
 }
 
 const inlineFieldInput: React.CSSProperties = {
@@ -251,7 +260,7 @@ const inlineFieldInput: React.CSSProperties = {
   color: '#0f172a',
   fontFamily: 'inherit',
   padding: 0,
-  lineHeight: 1.35,
+  lineHeight: 1.3,
 }
 
 function DealSection({ title, children, muted }: { title: string; children: React.ReactNode; muted?: boolean }) {
@@ -584,8 +593,8 @@ function DealFieldBox({
   return (
     <div style={{
       border: `1px solid ${error ? '#ef4444' : '#d1d9e6'}`,
-      borderRadius: 8,
-      padding: '8px 10px',
+      borderRadius: 7,
+      padding: '6px 8px',
       background: error ? '#fef2f2' : '#fff',
       boxShadow: error ? '0 0 0 1px rgba(239,68,68,.25)' : undefined,
     }}>
@@ -629,44 +638,143 @@ function fmtChatDate(iso: string) {
   return d.toLocaleDateString('ru-RU', { day: '2-digit', month: '2-digit', year: 'numeric' })
 }
 
+function feedGroupLabel(iso: string) {
+  const d = new Date(iso)
+  const now = new Date()
+  if (d.toDateString() === now.toDateString()) return 'Сегодня'
+  const yesterday = new Date(now)
+  yesterday.setDate(yesterday.getDate() - 1)
+  if (d.toDateString() === yesterday.toDateString()) return 'Вчера'
+  return d.toLocaleDateString('ru-RU', { month: 'long' }).replace(/^./, c => c.toUpperCase())
+}
+
+function stagePillColor(name: string | null | undefined): string {
+  if (!name) return '#64748b'
+  const key = name.trim().toUpperCase()
+  return STAGE_COLOR_BY_NAME[key] || '#64748b'
+}
+
 function MonthPill({ label }: { label: string }) {
   return (
-    <div style={{ textAlign: 'center', margin: '14px 0 10px' }}>
+    <div style={{
+      display: 'flex',
+      alignItems: 'center',
+      gap: 10,
+      margin: '12px 0 10px',
+    }}>
+      <div style={{ flex: 1, height: 1, background: '#e5e7eb' }} />
       <span style={{
         display: 'inline-block',
-        padding: '4px 14px',
+        padding: '3px 10px',
         borderRadius: 999,
-        border: '1px solid #e2e8f0',
+        border: '1px solid #e5e7eb',
         background: '#fff',
-        fontSize: FS.hint,
-        color: '#64748b',
+        fontSize: 11,
+        color: '#6b7280',
         fontWeight: 600,
+        whiteSpace: 'nowrap',
       }}>
         {label}
       </span>
+      <div style={{ flex: 1, height: 1, background: '#e5e7eb' }} />
     </div>
   )
+}
+
+function StageNamePill({ name }: { name: string }) {
+  const bg = stagePillColor(name)
+  const color = contrastText(bg)
+  return (
+    <span style={{
+      display: 'inline-block',
+      padding: '2px 8px',
+      borderRadius: 4,
+      background: bg,
+      color,
+      fontSize: 12,
+      fontWeight: 700,
+      lineHeight: 1.3,
+      verticalAlign: 'middle',
+    }}>
+      {name}
+    </span>
+  )
+}
+
+function AuthorChip({ name }: { name: string }) {
+  return (
+    <span style={{
+      display: 'inline-block',
+      padding: '1px 6px',
+      borderRadius: 4,
+      background: '#eef1f4',
+      color: '#374151',
+      fontSize: 12,
+      fontWeight: 600,
+      lineHeight: 1.3,
+      verticalAlign: 'middle',
+    }}>
+      {name}
+    </span>
+  )
+}
+
+interface PipelineOption {
+  id: number
+  name: string
+}
+
+function groupStagesForPicker(stages: Stage[]) {
+  const open = stages.filter(s => !s.is_closed_won && !s.is_closed_lost)
+  const lost = stages.filter(s => s.is_closed_lost)
+  const won = stages.filter(s => s.is_closed_won)
+  const first = open[0] ? [open[0]] : []
+  const mid = open.slice(1)
+  return { first, mid, lost, won }
 }
 
 function StagePicker({
   stages,
   value,
+  pipelineId,
+  pipelines,
   onChange,
+  onSelectPipelineStage,
 }: {
   stages: Stage[]
   value: number
+  pipelineId: number
+  pipelines: PipelineOption[]
   onChange: (id: number) => void
+  onSelectPipelineStage: (pipelineId: number, stageId: number) => void
 }) {
   const [open, setOpen] = useState(false)
-  const rootRef = useRef<HTMLDivElement | null>(null)
+  const btnRef = useRef<HTMLButtonElement | null>(null)
+  const menuRef = useRef<HTMLDivElement | null>(null)
+  const [menuPos, setMenuPos] = useState<{ top: number; left: number; width: number } | null>(null)
+  const [previewPipelineId, setPreviewPipelineId] = useState(pipelineId)
+  const [previewStages, setPreviewStages] = useState<Stage[]>(stages)
+  const [loadingStages, setLoadingStages] = useState(false)
+
   const current = stages.find(s => s.id === value) ?? stages[0]
   const accent = current ? stageColor(current) : '#64748b'
   const text = contrastText(accent)
+  const currentPipelineName = pipelines.find(p => p.id === pipelineId)?.name || 'Воронка'
+  const otherPipelines = pipelines.filter(p => p.id !== previewPipelineId)
+  const groups = groupStagesForPicker(previewStages)
+  const previewName = pipelines.find(p => p.id === previewPipelineId)?.name || currentPipelineName
+
+  useEffect(() => {
+    setPreviewPipelineId(pipelineId)
+    setPreviewStages(stages)
+  }, [pipelineId, stages])
 
   useEffect(() => {
     if (!open) return
     function onDoc(e: MouseEvent) {
-      if (!rootRef.current?.contains(e.target as Node)) setOpen(false)
+      const t = e.target as Node
+      if (btnRef.current?.contains(t) || menuRef.current?.contains(t)) return
+      setOpen(false)
     }
     function onKey(e: KeyboardEvent) {
       if (e.key === 'Escape') setOpen(false)
@@ -679,11 +787,231 @@ function StagePicker({
     }
   }, [open])
 
-  return (
-    <div ref={rootRef} style={{ position: 'relative', minWidth: 180, maxWidth: '100%' }}>
+  useEffect(() => {
+    if (!open || !btnRef.current) {
+      setMenuPos(null)
+      return
+    }
+    function place() {
+      if (!btnRef.current) return
+      const r = btnRef.current.getBoundingClientRect()
+      const width = Math.min(Math.max(r.width, 280), 360)
+      let left = r.left
+      if (left + width > window.innerWidth - 12) left = window.innerWidth - width - 12
+      if (left < 12) left = 12
+      setMenuPos({ top: r.bottom + 8, left, width })
+    }
+    place()
+    window.addEventListener('scroll', place, true)
+    window.addEventListener('resize', place)
+    return () => {
+      window.removeEventListener('scroll', place, true)
+      window.removeEventListener('resize', place)
+    }
+  }, [open])
+
+  async function openPipeline(id: number) {
+    if (id === previewPipelineId) return
+    setPreviewPipelineId(id)
+    if (id === pipelineId) {
+      setPreviewStages(stages)
+      return
+    }
+    setLoadingStages(true)
+    try {
+      const r = await api.get<{ stages: Stage[] }>(`sales/pipelines/${id}`)
+      setPreviewStages((r.data.stages || []).map(s => ({
+        id: s.id,
+        name: s.name,
+        color: s.color,
+        is_closed_lost: s.is_closed_lost,
+        is_closed_won: s.is_closed_won,
+      })))
+    } catch {
+      setPreviewStages([])
+    } finally {
+      setLoadingStages(false)
+    }
+  }
+
+  function pickStage(stageId: number) {
+    if (previewPipelineId === pipelineId) onChange(stageId)
+    else onSelectPipelineStage(previewPipelineId, stageId)
+    setOpen(false)
+  }
+
+  function renderStageBtn(s: Stage, blockBg?: string) {
+    const c = stageColor(s)
+    const selected = previewPipelineId === pipelineId && s.id === value
+    return (
       <button
+        key={s.id}
         type="button"
-        aria-label="Этап сделки"
+        role="option"
+        aria-selected={selected}
+        onClick={() => pickStage(s.id)}
+        style={{
+          display: 'flex',
+          alignItems: 'center',
+          justifyContent: 'space-between',
+          gap: 8,
+          width: '100%',
+          textAlign: 'left',
+          border: 'none',
+          borderRadius: 0,
+          padding: '7px 10px',
+          cursor: 'pointer',
+          fontFamily: 'inherit',
+          fontSize: 13,
+          fontWeight: selected ? 700 : 500,
+          color: '#1f2937',
+          background: selected ? 'rgba(255,255,255,.55)' : (blockBg || 'transparent'),
+        }}
+        onMouseEnter={e => {
+          if (!selected) e.currentTarget.style.background = 'rgba(255,255,255,.72)'
+        }}
+        onMouseLeave={e => {
+          if (!selected) e.currentTarget.style.background = selected ? 'rgba(255,255,255,.55)' : (blockBg || 'transparent')
+        }}
+      >
+        <span style={{ display: 'flex', alignItems: 'center', gap: 10, minWidth: 0 }}>
+          <span style={{
+            width: 8,
+            height: 8,
+            borderRadius: 99,
+            background: c,
+            flexShrink: 0,
+          }} />
+          <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{s.name}</span>
+        </span>
+        {selected ? <span style={{ color: '#16a34a', fontWeight: 800 }}>✓</span> : null}
+      </button>
+    )
+  }
+
+  const menu = open && menuPos && typeof document !== 'undefined'
+    ? createPortal(
+      <div
+        ref={menuRef}
+        role="listbox"
+        style={{
+          position: 'fixed',
+          top: menuPos.top,
+          left: menuPos.left,
+          width: menuPos.width,
+          maxHeight: 'min(70vh, 520px)',
+          overflowY: 'auto',
+          zIndex: 10020,
+          background: '#f3f4f6',
+          border: '1px solid #e5e7eb',
+          borderRadius: 12,
+          boxShadow: '0 18px 40px rgba(15,23,42,.2)',
+          padding: 8,
+        }}
+      >
+        {otherPipelines.length > 0 && (
+          <div style={{ marginBottom: 8 }}>
+            {otherPipelines.map(p => (
+              <button
+                key={p.id}
+                type="button"
+                onClick={() => void openPipeline(p.id)}
+                style={{
+                  display: 'block',
+                  width: '100%',
+                  textAlign: 'left',
+                  border: '1px solid #e5e7eb',
+                  borderRadius: 8,
+                  padding: '11px 12px',
+                  marginBottom: 6,
+                  background: '#fff',
+                  cursor: 'pointer',
+                  fontFamily: 'inherit',
+                  fontSize: 14,
+                  fontWeight: 600,
+                  color: '#111827',
+                  boxShadow: '0 1px 2px rgba(15,23,42,.04)',
+                }}
+              >
+                {p.name}
+              </button>
+            ))}
+          </div>
+        )}
+
+        <div style={{
+          fontSize: 13,
+          fontWeight: 800,
+          color: '#111827',
+          padding: '6px 4px 8px',
+        }}>
+          {previewName}
+          {previewPipelineId !== pipelineId ? (
+            <span style={{ marginLeft: 8, fontWeight: 600, color: '#6b7280' }}>· другая воронка</span>
+          ) : null}
+        </div>
+
+        {loadingStages ? (
+          <div style={{ padding: 16, color: '#6b7280', fontSize: 13 }}>Загрузка этапов…</div>
+        ) : (
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+            {groups.first.length > 0 && (
+              <div style={{ borderRadius: 8, overflow: 'hidden', background: '#e5e7eb' }}>
+                {groups.first.map(s => renderStageBtn(s))}
+              </div>
+            )}
+            {groups.mid.length > 0 && (
+              <div style={{ borderRadius: 8, overflow: 'hidden', background: '#bfdbfe' }}>
+                {groups.mid.map(s => renderStageBtn(s))}
+              </div>
+            )}
+            {groups.lost.length > 0 && (
+              <div style={{ borderRadius: 8, overflow: 'hidden', background: '#fecaca' }}>
+                {groups.lost.map(s => renderStageBtn(s))}
+              </div>
+            )}
+            {groups.won.length > 0 && (
+              <div style={{ borderRadius: 8, overflow: 'hidden', background: '#bbf7d0' }}>
+                {groups.won.map(s => renderStageBtn(s))}
+              </div>
+            )}
+            {previewStages.length === 0 && (
+              <div style={{ padding: 12, color: '#6b7280', fontSize: 13 }}>В этой воронке нет этапов</div>
+            )}
+          </div>
+        )}
+
+        {previewPipelineId !== pipelineId && (
+          <button
+            type="button"
+            onClick={() => void openPipeline(pipelineId)}
+            style={{
+              marginTop: 10,
+              width: '100%',
+              border: 'none',
+              background: 'transparent',
+              color: '#2563eb',
+              fontWeight: 700,
+              fontSize: 13,
+              cursor: 'pointer',
+              fontFamily: 'inherit',
+              padding: '8px 4px',
+            }}
+          >
+            ← Вернуться к «{currentPipelineName}»
+          </button>
+        )}
+      </div>,
+      document.body,
+    )
+    : null
+
+  return (
+    <div style={{ position: 'relative', minWidth: 180, maxWidth: '100%' }}>
+      <button
+        ref={btnRef}
+        type="button"
+        aria-label="Этап и воронка"
         aria-expanded={open}
         onClick={() => setOpen(v => !v)}
         style={{
@@ -693,26 +1021,26 @@ function StagePicker({
           justifyContent: 'space-between',
           gap: 10,
           border: 'none',
-          borderRadius: 12,
-          padding: '10px 14px',
-          fontSize: 13,
+          borderRadius: 10,
+          padding: '7px 12px',
+          fontSize: 12,
           fontWeight: 800,
-          letterSpacing: '0.04em',
+          letterSpacing: '0.03em',
           textTransform: 'uppercase',
           color: text,
           background: accent,
           fontFamily: 'inherit',
           cursor: 'pointer',
-          boxShadow: `0 6px 16px ${accent}40, 0 1px 2px rgba(15,23,42,.08)`,
+          boxShadow: `0 4px 12px ${accent}38, 0 1px 2px rgba(15,23,42,.06)`,
           transition: 'transform .12s ease, box-shadow .12s ease',
         }}
         onMouseEnter={e => {
           e.currentTarget.style.transform = 'translateY(-1px)'
-          e.currentTarget.style.boxShadow = `0 10px 22px ${accent}50, 0 2px 4px rgba(15,23,42,.1)`
+          e.currentTarget.style.boxShadow = `0 8px 16px ${accent}48, 0 2px 4px rgba(15,23,42,.08)`
         }}
         onMouseLeave={e => {
           e.currentTarget.style.transform = 'translateY(0)'
-          e.currentTarget.style.boxShadow = `0 6px 16px ${accent}40, 0 1px 2px rgba(15,23,42,.08)`
+          e.currentTarget.style.boxShadow = `0 4px 12px ${accent}38, 0 1px 2px rgba(15,23,42,.06)`
         }}
       >
         <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
@@ -720,82 +1048,7 @@ function StagePicker({
         </span>
         <span style={{ opacity: 0.85, fontSize: 12 }}>{open ? '▴' : '▾'}</span>
       </button>
-      {open && (
-        <div
-          role="listbox"
-          style={{
-            position: 'absolute',
-            top: 'calc(100% + 6px)',
-            left: 0,
-            zIndex: 40,
-            minWidth: '100%',
-            width: 'max-content',
-            maxWidth: 320,
-            maxHeight: 340,
-            overflowY: 'auto',
-            background: '#fff',
-            borderRadius: 12,
-            border: '1px solid #e2e8f0',
-            boxShadow: '0 12px 32px rgba(15,23,42,.16)',
-            padding: 6,
-          }}
-        >
-          {stages.map(s => {
-            const c = stageColor(s)
-            const selected = s.id === value
-            return (
-              <button
-                key={s.id}
-                type="button"
-                role="option"
-                aria-selected={selected}
-                onClick={() => {
-                  onChange(s.id)
-                  setOpen(false)
-                }}
-                style={{
-                  display: 'flex',
-                  alignItems: 'center',
-                  gap: 10,
-                  width: '100%',
-                  textAlign: 'left',
-                  border: 'none',
-                  borderRadius: 8,
-                  padding: '9px 10px',
-                  cursor: 'pointer',
-                  fontFamily: 'inherit',
-                  fontSize: FS.meta,
-                  fontWeight: selected ? 800 : 600,
-                  letterSpacing: '0.02em',
-                  textTransform: 'uppercase',
-                  color: selected ? contrastText(c) : '#0f172a',
-                  background: selected ? c : 'transparent',
-                }}
-                onMouseEnter={e => {
-                  if (!selected) e.currentTarget.style.background = `${c}22`
-                }}
-                onMouseLeave={e => {
-                  if (!selected) e.currentTarget.style.background = 'transparent'
-                }}
-              >
-                <span
-                  aria-hidden
-                  style={{
-                    width: 10,
-                    height: 10,
-                    borderRadius: 99,
-                    background: c,
-                    flexShrink: 0,
-                    boxShadow: selected ? `0 0 0 2px ${contrastText(c)}66` : 'none',
-                  }}
-                />
-                <span style={{ flex: 1, minWidth: 0 }}>{s.name}</span>
-                {selected ? <span aria-hidden>✓</span> : null}
-              </button>
-            )
-          })}
-        </div>
-      )}
+      {menu}
     </div>
   )
 }
@@ -898,49 +1151,140 @@ function ChatFeedLine({ comment }: { comment: DealComment }) {
     || (comment.kind === 'system' || comment.kind === 'stage_change' ? 'Система' : 'Пользователь')
   const time = fmtChatTime(comment.created_at)
   const date = fmtChatDate(comment.created_at)
+  const whenLabel = (() => {
+    const d = new Date(comment.created_at)
+    const now = new Date()
+    if (d.toDateString() === now.toDateString()) return `Сегодня ${time}`
+    return `${date} ${time}`
+  })()
   const imageUrls = comment.images?.length
     ? comment.images
     : (comment.meta_json?.images || []).map(name =>
       name.startsWith('/api/') ? name : `/api/sales/deal-comment-images/${name}`,
     )
 
-  let body = comment.body
-  let tag: string | null = null
-
+  // ── Смена этапа: как в CRM — автор + цветной статус ──
   if (comment.kind === 'stage_change') {
-    tag = comment.meta_json?.to || comment.body.replace('Новый этап: ', '').replace('Этап: ', '')
-    body = `Новый этап: ${tag}`
-    tag = null
-  } else if (comment.kind === 'task') {
-    tag = 'задача'
-    const dueAt = comment.meta_json?.due_at
-    if (dueAt) body = `${body} · до ${fmtDateTime(dueAt)}`
-  } else if (comment.kind === 'system') {
-    tag = null
-  }
-
-  const hideBody = body === 'Фото' && imageUrls.length > 0
-
-  return (
-    <div style={{ padding: '8px 0', borderBottom: '1px solid #eef1f5' }}>
-      <div style={{ fontSize: FS.body, color: '#334155', lineHeight: 1.5 }}>
-        <span style={{ color: '#475569', fontWeight: 600 }}>{time}</span>
-        <span style={{ margin: '0 8px', color: '#64748b', fontWeight: 500 }}>{date}</span>
-        <span style={{ fontWeight: 700, color: '#1e293b' }}>{author}</span>
-        {tag && (
-          <span style={{ marginLeft: 8, fontSize: FS.meta, color: '#2563eb', fontWeight: 600 }}>{tag}</span>
-        )}
-        {!hideBody && body ? (
-          <span style={{ marginLeft: 8 }}>{body}</span>
+    const toName = comment.meta_json?.to || comment.body.replace(/^Новый этап:\s*/i, '').replace(/^Этап:\s*/i, '') || '—'
+    const fromName = comment.meta_json?.from || null
+    return (
+      <div style={{
+        padding: '5px 2px',
+        fontSize: 12,
+        color: '#4b5563',
+        lineHeight: 1.45,
+        display: 'flex',
+        flexWrap: 'wrap',
+        alignItems: 'center',
+        gap: 5,
+      }}>
+        <span style={{ color: '#9ca3af', fontVariantNumeric: 'tabular-nums' }}>{date}</span>
+        <span style={{ color: '#9ca3af', fontVariantNumeric: 'tabular-nums' }}>{time}</span>
+        <span style={{ color: '#6b7280' }}>Новый этап:</span>
+        <AuthorChip name={author} />
+        <StageNamePill name={toName} />
+        {fromName ? (
+          <span style={{ color: '#9ca3af' }}>
+            из <span style={{ color: '#6b7280' }}>{fromName}</span>
+          </span>
         ) : null}
       </div>
-      {imageUrls.length > 0 && (
-        <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8, marginTop: 8, marginLeft: 2 }}>
-          {imageUrls.map((src) => (
-            <CommentAuthImage key={src} src={src} />
-          ))}
+    )
+  }
+
+  // ── Задача / система — компактная строка ──
+  if (comment.kind === 'task' || comment.kind === 'system') {
+    let body = comment.body
+    if (comment.kind === 'task' && comment.meta_json?.due_at) {
+      body = `${body} · до ${fmtDateTime(comment.meta_json.due_at)}`
+    }
+    return (
+      <div style={{ padding: '5px 2px', fontSize: 12, color: '#4b5563', lineHeight: 1.45 }}>
+        <span style={{ color: '#9ca3af' }}>{date}</span>
+        <span style={{ margin: '0 5px', color: '#9ca3af' }}>{time}</span>
+        <AuthorChip name={author} />
+        {comment.kind === 'task' ? (
+          <span style={{
+            marginLeft: 5,
+            display: 'inline-block',
+            padding: '1px 6px',
+            borderRadius: 4,
+            background: '#eff6ff',
+            color: '#1d4ed8',
+            fontSize: 11,
+            fontWeight: 700,
+          }}>
+            задача
+          </span>
+        ) : null}
+        <span style={{ marginLeft: 6 }}>{body}</span>
+      </div>
+    )
+  }
+
+  // ── Примечание / сообщение — выделенная карточка ──
+  const hideBody = comment.body === 'Фото' && imageUrls.length > 0
+
+  return (
+    <div style={{
+      margin: '5px 0',
+      padding: '10px 12px',
+      background: '#fff',
+      border: '1px solid #e5e7eb',
+      borderRadius: 7,
+      boxShadow: '0 1px 2px rgba(15,23,42,.04)',
+      display: 'flex',
+      gap: 10,
+      alignItems: 'flex-start',
+    }}>
+      <div style={{
+        width: 28,
+        height: 28,
+        borderRadius: 99,
+        background: '#eef2f7',
+        color: '#64748b',
+        display: 'flex',
+        alignItems: 'center',
+        justifyContent: 'center',
+        flexShrink: 0,
+      }} aria-hidden>
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none">
+          <path d="M7 3h7l5 5v13a1 1 0 0 1-1 1H7a1 1 0 0 1-1-1V4a1 1 0 0 1 1-1z" stroke="currentColor" strokeWidth="1.7" />
+          <path d="M14 3v5h5" stroke="currentColor" strokeWidth="1.7" />
+          <path d="M8 13h8M8 17h5" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" />
+        </svg>
+      </div>
+      <div style={{ minWidth: 0, flex: 1 }}>
+        <div style={{
+          fontSize: 12,
+          color: '#9ca3af',
+          fontWeight: 500,
+          marginBottom: hideBody && !imageUrls.length ? 0 : 4,
+          lineHeight: 1.3,
+        }}>
+          {whenLabel}
+          <span style={{ margin: '0 5px', color: '#d1d5db' }}>·</span>
+          <span style={{ color: '#6b7280', fontWeight: 600 }}>{author}</span>
         </div>
-      )}
+        {!hideBody && comment.body ? (
+          <div style={{
+            fontSize: 13,
+            color: '#111827',
+            lineHeight: 1.4,
+            whiteSpace: 'pre-wrap',
+            wordBreak: 'break-word',
+          }}>
+            {comment.body}
+          </div>
+        ) : null}
+        {imageUrls.length > 0 && (
+          <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6, marginTop: comment.body && !hideBody ? 8 : 0 }}>
+            {imageUrls.map((src) => (
+              <CommentAuthImage key={src} src={src} />
+            ))}
+          </div>
+        )}
+      </div>
     </div>
   )
 }
@@ -1001,6 +1345,7 @@ export function SaleDealCard({
   deal,
   stages,
   pipelineId,
+  pipelines = [],
   users,
   defaultAssignedUserId,
   onSave,
@@ -1010,6 +1355,7 @@ export function SaleDealCard({
   deal: DealData | null
   stages: Stage[]
   pipelineId: number
+  pipelines?: PipelineOption[]
   users: SalesUser[]
   /** При создании сделки на доске конкретного МОПа — сразу назначить его */
   defaultAssignedUserId?: number | null
@@ -1026,6 +1372,8 @@ export function SaleDealCard({
   const [saving, setSaving] = useState(false)
   const [confirmDelete, setConfirmDelete] = useState(false)
   const [closeWonOpen, setCloseWonOpen] = useState(false)
+  const [activePipelineId, setActivePipelineId] = useState(pipelineId)
+  const [localStages, setLocalStages] = useState<Stage[]>(stages)
 
   const [title, setTitle] = useState(deal?.title ?? '')
   const [contact, setContact] = useState(deal?.contact_name ?? '')
@@ -1050,6 +1398,12 @@ export function SaleDealCard({
   )
   const [requiredFields, setRequiredFields] = useState<string[]>([])
   const [showReqErrors, setShowReqErrors] = useState(false)
+  const [moveError, setMoveError] = useState('')
+
+  useEffect(() => {
+    setActivePipelineId(pipelineId)
+    setLocalStages(stages)
+  }, [pipelineId, stages])
 
   const loadDetail = useCallback(async (id: number) => {
     setLoadingDetail(true)
@@ -1073,6 +1427,7 @@ export function SaleDealCard({
       setBudget(budgetToInput(res.data.budget))
       setCurrency(res.data.currency ?? 'USD')
       setStageId(res.data.stage_id ?? stages[0]?.id ?? 0)
+      if (res.data.pipeline_id) setActivePipelineId(res.data.pipeline_id)
       setAssignedId(res.data.assigned_user_id?.toString() ?? '')
     } catch {
       // silent
@@ -1180,7 +1535,7 @@ export function SaleDealCard({
     )
     const groups: { month: string; items: DealComment[] }[] = []
     for (const c of sorted) {
-      const month = fmtMonthLabel(c.created_at)
+      const month = feedGroupLabel(c.created_at)
       const g = groups.find(x => x.month === month)
       if (g) g.items.push(c)
       else groups.push({ month, items: [c] })
@@ -1221,18 +1576,76 @@ export function SaleDealCard({
     }
     try {
       if (isNew) {
-        const r = await api.post<DealData>('sales/deals', { pipeline_id: pipelineId, ...payload })
+        const r = await api.post<DealData>('sales/deals', {
+          pipeline_id: activePipelineId,
+          ...payload,
+        })
         setDetail(r.data)
         onSave(r.data)
         void loadDetail(r.data.id)
       } else {
         const id = deal?.id ?? detail?.id
-        const r = await api.patch<DealData>(`sales/deals/${id}`, payload)
+        const r = await api.patch<DealData>(`sales/deals/${id}`, {
+          ...payload,
+          pipeline_id: activePipelineId,
+        })
         onSave(r.data)
         void loadDetail(id!)
       }
     } catch {
       // silent
+    } finally {
+      setSaving(false)
+    }
+  }
+
+  async function handleSelectPipelineStage(nextPipelineId: number, nextStageId: number) {
+    setMoveError('')
+    if (isNew) {
+      try {
+        const r = await api.get<{ stages: Stage[] }>(`sales/pipelines/${nextPipelineId}`)
+        const nextStages = (r.data.stages || []).map(s => ({
+          id: s.id,
+          name: s.name,
+          color: s.color,
+          is_closed_lost: s.is_closed_lost,
+          is_closed_won: s.is_closed_won,
+        }))
+        setActivePipelineId(nextPipelineId)
+        setLocalStages(nextStages)
+        setStageId(nextStageId)
+      } catch {
+        setMoveError('Не удалось открыть воронку')
+      }
+      return
+    }
+    const id = deal?.id ?? detail?.id
+    if (!id) return
+    setSaving(true)
+    try {
+      const r = await api.patch<DealData>(`sales/deals/${id}`, {
+        pipeline_id: nextPipelineId,
+        stage_id: nextStageId,
+      })
+      setActivePipelineId(nextPipelineId)
+      setStageId(nextStageId)
+      try {
+        const pr = await api.get<{ stages: Stage[] }>(`sales/pipelines/${nextPipelineId}`)
+        setLocalStages((pr.data.stages || []).map(s => ({
+          id: s.id,
+          name: s.name,
+          color: s.color,
+          is_closed_lost: s.is_closed_lost,
+          is_closed_won: s.is_closed_won,
+        })))
+      } catch {
+        // keep local stages
+      }
+      setDetail(prev => ({ ...(prev || r.data), ...r.data }))
+      onSave(r.data)
+    } catch (err: unknown) {
+      const msg = (err as { response?: { data?: { detail?: string } } })?.response?.data?.detail
+      setMoveError(typeof msg === 'string' ? msg : 'Не удалось перенести в другую воронку')
     } finally {
       setSaving(false)
     }
@@ -1300,12 +1713,12 @@ export function SaleDealCard({
         }}>
           {/* Шапка */}
           <div style={{
-            padding: '16px 16px 14px',
+            padding: '12px 12px 10px',
             borderBottom: '1px solid #e2e8f0',
             flexShrink: 0,
             background: 'linear-gradient(180deg, #ffffff 0%, #f8fafc 100%)',
           }}>
-            <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', gap: 12 }}>
+            <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', gap: 10 }}>
               <div style={{ minWidth: 0, flex: 1 }}>
                 <input
                   value={title}
@@ -1316,31 +1729,31 @@ export function SaleDealCard({
                     border: 'none',
                     outline: 'none',
                     background: 'transparent',
-                    fontSize: 24,
+                    fontSize: FS.title,
                     fontWeight: 800,
                     color: '#0f172a',
                     fontFamily: 'inherit',
                     lineHeight: 1.2,
-                    letterSpacing: '-0.02em',
+                    letterSpacing: '-0.015em',
                     padding: 0,
                   }}
                 />
                 <div style={{
                   display: 'flex',
                   alignItems: 'center',
-                  gap: 6,
-                  marginTop: 10,
+                  gap: 5,
+                  marginTop: 8,
                   flexWrap: 'wrap',
                 }}>
                   <span style={{
                     display: 'inline-flex',
                     alignItems: 'center',
-                    gap: 6,
-                    padding: '4px 10px',
+                    gap: 5,
+                    padding: '2px 8px',
                     borderRadius: 999,
                     background: '#eff6ff',
                     border: '1px solid #bfdbfe',
-                    fontSize: 12,
+                    fontSize: 11,
                     fontWeight: 700,
                     color: '#1d4ed8',
                     letterSpacing: '0.01em',
@@ -1351,11 +1764,11 @@ export function SaleDealCard({
                     display: 'inline-flex',
                     alignItems: 'center',
                     maxWidth: '100%',
-                    padding: '4px 10px',
+                    padding: '2px 8px',
                     borderRadius: 999,
                     background: '#f8fafc',
                     border: '1px solid #e2e8f0',
-                    fontSize: 12,
+                    fontSize: 11,
                     fontWeight: 600,
                     color: '#475569',
                     overflow: 'hidden',
@@ -1366,10 +1779,10 @@ export function SaleDealCard({
                   </span>
                   {detail?.id ? (
                     <span style={{
-                      padding: '4px 8px',
+                      padding: '2px 7px',
                       borderRadius: 999,
                       background: '#f1f5f9',
-                      fontSize: 11,
+                      fontSize: 10,
                       fontWeight: 700,
                       color: '#64748b',
                       fontVariantNumeric: 'tabular-nums',
@@ -1384,14 +1797,14 @@ export function SaleDealCard({
                 onClick={onClose}
                 aria-label="Закрыть"
                 style={{
-                  width: 34,
-                  height: 34,
+                  width: 28,
+                  height: 28,
                   border: '1px solid #e2e8f0',
-                  borderRadius: 10,
+                  borderRadius: 8,
                   background: '#fff',
                   color: '#64748b',
                   cursor: 'pointer',
-                  fontSize: 20,
+                  fontSize: 16,
                   lineHeight: 1,
                   flexShrink: 0,
                   boxShadow: '0 1px 2px rgba(15,23,42,.04)',
@@ -1413,16 +1826,22 @@ export function SaleDealCard({
             </div>
 
             <div style={{
-              marginTop: 14,
+              marginTop: 10,
               display: 'flex',
               flexDirection: 'column',
-              gap: 10,
+              gap: 8,
             }}>
               <StagePicker
-                stages={stages}
+                stages={localStages}
                 value={stageId}
+                pipelineId={activePipelineId}
+                pipelines={pipelines.length ? pipelines : [{ id: activePipelineId, name: 'Воронка' }]}
                 onChange={setStageId}
+                onSelectPipelineStage={(pid, sid) => { void handleSelectPipelineStage(pid, sid) }}
               />
+              {moveError ? (
+                <div style={{ fontSize: 12, fontWeight: 700, color: '#dc2626' }}>{moveError}</div>
+              ) : null}
               <div style={{
                 display: 'flex',
                 alignItems: 'center',
@@ -1434,17 +1853,17 @@ export function SaleDealCard({
                     display: 'inline-flex',
                     alignItems: 'center',
                     gap: 6,
-                    padding: '5px 10px',
-                    borderRadius: 8,
+                    padding: '3px 8px',
+                    borderRadius: 7,
                     background: '#fff',
                     border: '1px solid #e8edf3',
-                    fontSize: 12,
+                    fontSize: 11,
                     fontWeight: 600,
                     color: '#64748b',
                   }}>
                     <span style={{
-                      width: 6,
-                      height: 6,
+                      width: 5,
+                      height: 5,
                       borderRadius: 99,
                       background: '#94a3b8',
                       flexShrink: 0,
@@ -1455,12 +1874,12 @@ export function SaleDealCard({
                 <span style={{
                   display: 'inline-flex',
                   alignItems: 'center',
-                  gap: 6,
-                  padding: '5px 10px',
-                  borderRadius: 8,
+                  gap: 5,
+                  padding: '3px 8px',
+                  borderRadius: 7,
                   background: '#fff',
                   border: '1px solid #e8edf3',
-                  fontSize: 12,
+                  fontSize: 11,
                   fontWeight: 600,
                   color: '#475569',
                 }}>
@@ -1471,12 +1890,12 @@ export function SaleDealCard({
                   <span style={{
                     display: 'inline-flex',
                     alignItems: 'center',
-                    gap: 6,
-                    padding: '5px 10px',
-                    borderRadius: 8,
+                    gap: 5,
+                    padding: '3px 8px',
+                    borderRadius: 7,
                     background: '#fff',
                     border: '1px solid #e8edf3',
-                    fontSize: 12,
+                    fontSize: 11,
                     fontWeight: 600,
                     color: '#475569',
                   }}>
@@ -1489,7 +1908,7 @@ export function SaleDealCard({
           </div>
 
           {/* Контент */}
-          <div style={{ flex: 1, overflowY: 'auto', padding: '10px 14px 14px', display: 'flex', flexDirection: 'column', gap: 10 }}>
+          <div style={{ flex: 1, overflowY: 'auto', padding: '8px 10px 12px', display: 'flex', flexDirection: 'column', gap: 8 }}>
             <DealSection title="Контакты">
               {missingRequired.length > 0 && (
                 <div style={{
@@ -1753,7 +2172,7 @@ export function SaleDealCard({
                 <TipButton tip="Удалить сделку" type="button" onClick={() => setConfirmDelete(true)} style={{ ...iconBtn, ...iconBtnGhostDanger }}>🗑</TipButton>
               )
             )}
-            {!isNew && !detail?.payment_id && stages.some(s => s.is_closed_won) && (
+            {!isNew && !detail?.payment_id && localStages.some(s => s.is_closed_won) && (
               <TipButton
                 tip="Закрыть сделку как выигранную ($)"
                 type="button"
@@ -1814,7 +2233,8 @@ export function SaleDealCard({
               flex: 1,
               minHeight: 0,
               overflowY: 'auto',
-              padding: '10px 14px 6px',
+              padding: '12px 16px 10px',
+              background: '#f7f8fa',
             }}
           >
             {loadingDetail ? (
@@ -1864,7 +2284,7 @@ export function SaleDealCard({
       {!isNew && (detail?.id || deal?.id) && (
         <DealCloseWonModal
           deal={detail ?? deal!}
-          stages={stages}
+          stages={localStages}
           open={closeWonOpen}
           onClose={() => setCloseWonOpen(false)}
           mopDefaultPercent={(user as any)?.mop_default_commission_percent ?? null}
@@ -1880,10 +2300,10 @@ export function SaleDealCard({
 }
 
 const iconBtn: React.CSSProperties = {
-  width: 36,
-  height: 36,
+  width: 30,
+  height: 30,
   padding: 0,
-  borderRadius: 8,
+  borderRadius: 7,
   display: 'inline-flex',
   alignItems: 'center',
   justifyContent: 'center',
@@ -1913,7 +2333,7 @@ const iconBtnSuccess: React.CSSProperties = {
   background: '#15803d',
   color: '#fff',
   border: 'none',
-  fontSize: 18,
+  fontSize: 15,
   fontWeight: 700,
 }
 
