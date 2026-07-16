@@ -33,6 +33,11 @@ def is_sales_rop(user: User) -> bool:
     return bool(getattr(user, "is_sales_rop", False))
 
 
+def can_edit_deal_field_automations(user: User) -> bool:
+    """Админ или РОП — настройка обязательных полей сделки. Обычный МОП — нет."""
+    return user.role == "admin" or is_sales_rop(user)
+
+
 def can_manage_crm_structure(user: User) -> bool:
     return user.role in ("admin", "mop")
 

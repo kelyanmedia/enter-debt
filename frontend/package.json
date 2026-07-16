@@ -4,6 +4,7 @@
   "private": true,
   "scripts": {
     "dev": "WATCHPACK_POLLING=true CHOKIDAR_USEPOLLING=true next dev -p 3000 -H 0.0.0.0",
+    "dev:3003": "WATCHPACK_POLLING=true CHOKIDAR_USEPOLLING=true next dev -p 3003 -H 127.0.0.1",
     "dev:clean": "rm -rf .next node_modules/.cache && WATCHPACK_POLLING=true CHOKIDAR_USEPOLLING=true next dev -p 3000 -H 0.0.0.0",
     "build": "next build",
     "start": "next start -p 3000 -H 0.0.0.0",

@@ -3,8 +3,10 @@ import { useRouter } from 'next/router'
 import Layout from '@/components/Layout'
 import { useAuth } from '@/context/AuthContext'
 import api from '@/lib/api'
-import { canManageCrmStructure, canBrowseTeamManagers, hasCrmPipelineAccess, isSalesRop } from '@/lib/salesAccess'
+import { canManageCrmStructure, canBrowseTeamManagers, canEditDealFieldAutomations, hasCrmPipelineAccess, isSalesRop } from '@/lib/salesAccess'
+import { dealHasAutomationBlock } from '@/lib/dealRequiredFields'
 import { SaleDealCard } from '@/components/SaleDealCard'
+import { DealFieldAutomationsModal } from '@/components/DealFieldAutomationsModal'
 import { EntityCarousel } from '@/components/EntityCarousel'
 import { DateRangePicker, isDateInRange, previousMonthRange, thisMonthRange } from '@/components/DateRangePicker'
 
@@ -45,6 +47,10 @@ interface Deal {
   title: string
   contact_name: string | null
   company_name: string | null
+  phone?: string | null
+  contact_position?: string | null
+  source?: string | null
+  client_geo?: string | null
   budget: number | null
   currency: string
   service_type?: string | null
@@ -160,6 +166,14 @@ function PipelineSettingsIcon() {
   )
 }
 
+function PipelineAutomationsIcon() {
+  return (
+    <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
+      <path d="M13 2 3 14h9l-1 8 10-12h-9l1-8z" />
+    </svg>
+  )
+}
+
 function PipelinePlusIcon() {
   return (
     <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" aria-hidden>
@@ -189,6 +203,8 @@ function DealCard({
   onDragStart,
   onDragEnd,
   isDragging,
+  blocked,
+  flashRed,
   onClick,
   accent,
 }: {
@@ -196,6 +212,8 @@ function DealCard({
   onDragStart: () => void
   onDragEnd: () => void
   isDragging: boolean
+  blocked?: boolean
+  flashRed?: boolean
   onClick: () => void
   accent: string
 }) {
@@ -204,24 +222,35 @@ function DealCard({
   const metaParts = [deal.contact_name, deal.company_name].filter(Boolean)
   const metaLine = metaParts.join(', ')
   const dateStr = fmtDate(deal.updated_at || deal.created_at)
+  const showRed = Boolean(blocked || flashRed)
+  const borderColor = showRed
+    ? '#ef4444'
+    : (isDragging ? accent + '66' : '#dfe3ea')
+  const bg = showRed ? '#fef2f2' : (isDragging ? '#fafbfc' : '#fff')
 
   return (
     <div
-      draggable
-      onDragStart={onDragStart}
+      draggable={!blocked}
+      onDragStart={blocked ? undefined : onDragStart}
       onDragEnd={onDragEnd}
       onClick={onClick}
+      onPointerDown={() => {
+        if (blocked) onDragStart()
+      }}
+      title={blocked ? 'Заполните обязательные поля — перенос заблокирован автоматизацией' : undefined}
       style={{
-        background: isDragging ? '#fafbfc' : '#fff',
+        background: bg,
         borderRadius: 6,
         padding: '10px 12px',
         marginBottom: 8,
-        cursor: 'grab',
+        cursor: blocked ? 'not-allowed' : 'grab',
         opacity: isDragging ? 0.75 : 1,
-        boxShadow: isDragging ? '0 4px 16px rgba(15,23,42,.1)' : 'none',
-        border: `1px solid ${isDragging ? accent + '66' : '#dfe3ea'}`,
+        boxShadow: showRed
+          ? '0 0 0 2px rgba(239,68,68,.35)'
+          : (isDragging ? '0 4px 16px rgba(15,23,42,.1)' : 'none'),
+        border: `1px solid ${borderColor}`,
         userSelect: 'none',
-        transition: 'border-color .15s, box-shadow .15s, opacity .15s',
+        transition: 'border-color .15s, box-shadow .15s, opacity .15s, background .15s',
       }}
     >
       <div style={{ display: 'flex', justifyContent: 'space-between', gap: 10, alignItems: 'flex-start' }}>
@@ -325,9 +354,16 @@ function DealCard({
 // AddDealForm (inline quick add)
 // ---------------------------------------------------------------------------
 
-function AddDealForm({ stageId, pipelineId, onAdded, onCancel }: {
+function AddDealForm({
+  stageId,
+  pipelineId,
+  assignedUserId,
+  onAdded,
+  onCancel,
+}: {
   stageId: number
   pipelineId: number
+  assignedUserId?: number | null
   onAdded: (deal: Deal) => void
   onCancel: () => void
 }) {
@@ -344,11 +380,15 @@ function AddDealForm({ stageId, pipelineId, onAdded, onCancel }: {
     setSaving(true)
     setError('')
     try {
-      const res = await api.post<Deal>('sales/deals', {
+      const payload: Record<string, unknown> = {
         pipeline_id: pipelineId,
         stage_id: stageId,
         title: title.trim(),
-      })
+      }
+      if (assignedUserId != null) {
+        payload.assigned_user_id = assignedUserId
+      }
+      const res = await api.post<Deal>('sales/deals', payload)
       onAdded(res.data)
     } catch (err: unknown) {
       const msg = (err as { response?: { data?: { detail?: string } } })?.response?.data?.detail
@@ -813,11 +853,14 @@ export default function PipelinePage() {
   const [salesUsers, setSalesUsers] = useState<SalesUser[]>([])
   const [loadingBoard, setLoadingBoard] = useState(false)
   const [showCreatePipeline, setShowCreatePipeline] = useState(false)
+  const [showAutomations, setShowAutomations] = useState(false)
   const [dealModal, setDealModal] = useState<{ deal: Deal | null; stageId?: number } | null>(null)
   const [addingInStage, setAddingInStage] = useState<number | null>(null)
   const [search, setSearch] = useState('')
   const [dealScope, setDealScope] = useState<'team' | 'mine'>('team')
   const [selectedManagerId, setSelectedManagerId] = useState<number | null>(null)
+  const [requirementsByManager, setRequirementsByManager] = useState<Record<number, string[]>>({})
+  const [blockedFlashDealId, setBlockedFlashDealId] = useState<number | null>(null)
   const [dateFrom, setDateFrom] = useState(() => thisMonthRange().from)
   const [dateTo, setDateTo] = useState(() => thisMonthRange().to)
 
@@ -830,14 +873,40 @@ export default function PipelinePage() {
   const [dragOverStageId, setDragOverStageId] = useState<number | null>(null)
 
   const canManage = canManageCrmStructure(user)
+  const canEditAutomations = canEditDealFieldAutomations(user)
 
   useEffect(() => {
     if (!loading && user) {
       if (!hasCrmPipelineAccess(user)) { router.replace('/'); return }
       void loadPipelines()
       void loadUsers()
+      void loadRequirements()
     }
   }, [loading, user])
+
+  async function loadRequirements() {
+    try {
+      if (canEditDealFieldAutomations(user)) {
+        const r = await api.get<{ managers: { manager_user_id: number; required_fields: string[] }[] }>(
+          'sales/deal-field-requirements',
+        )
+        const map: Record<number, string[]> = {}
+        for (const m of r.data.managers) {
+          map[m.manager_user_id] = m.required_fields || []
+        }
+        setRequirementsByManager(map)
+        return
+      }
+      if (user?.id) {
+        const r = await api.get<{ required_fields: string[] }>(
+          `sales/deal-field-requirements/${user.id}`,
+        )
+        setRequirementsByManager({ [user.id]: r.data.required_fields || [] })
+      }
+    } catch {
+      // silent — без автоматизаций перенос не блокируем
+    }
+  }
 
   async function loadPipelines() {
     try {
@@ -902,11 +971,40 @@ export default function PipelinePage() {
     setDragOverStageId(stageId)
   }
 
+  function findDeal(dealId: number): Deal | undefined {
+    if (!activePipeline) return undefined
+    for (const s of activePipeline.stages) {
+      const d = s.deals.find(x => x.id === dealId)
+      if (d) return d
+    }
+    return undefined
+  }
+
+  function isDealMoveBlocked(deal: Deal | undefined): boolean {
+    if (!deal) return false
+    return dealHasAutomationBlock(deal, requirementsByManager)
+  }
+
+  function flashBlocked(dealId: number) {
+    setBlockedFlashDealId(dealId)
+    window.setTimeout(() => {
+      setBlockedFlashDealId(prev => (prev === dealId ? null : prev))
+    }, 1600)
+  }
+
   async function handleDrop(targetStageId: number) {
     const dealId = dragDealId.current
     const fromStageId = dragFromStageId.current
     if (!dealId || fromStageId === targetStageId) {
       setDragOverStageId(null)
+      return
+    }
+    const moving = findDeal(dealId)
+    if (isDealMoveBlocked(moving)) {
+      flashBlocked(dealId)
+      setDragOverStageId(null)
+      dragDealId.current = null
+      dragFromStageId.current = null
       return
     }
     setActivePipeline(prev => {
@@ -936,8 +1034,11 @@ export default function PipelinePage() {
     dragFromStageId.current = null
     try {
       await api.patch(`sales/deals/${dealId}`, { stage_id: targetStageId })
-    } catch {
-      // revert on error
+    } catch (err: unknown) {
+      const msg = (err as { response?: { data?: { detail?: string } } })?.response?.data?.detail
+      if (typeof msg === 'string' && msg.includes('обязательные')) {
+        flashBlocked(dealId)
+      }
       void loadBoard(activePipelineId!)
     }
   }
@@ -1143,6 +1244,23 @@ export default function PipelinePage() {
           )}
 
           <div style={{ display: 'flex', alignItems: 'center', gap: 6, flexShrink: 0 }}>
+            {canEditAutomations && (
+              <button
+                type="button"
+                title="Автоматизации · обязательные поля"
+                aria-label="Автоматизации"
+                onClick={() => setShowAutomations(true)}
+                style={{
+                  ...pipelineIconBtn,
+                  background: '#fff7ed',
+                  color: '#c2410c',
+                  border: '1px solid #fdba74',
+                  boxShadow: '0 1px 2px rgba(0,0,0,.04)',
+                }}
+              >
+                <PipelineAutomationsIcon />
+              </button>
+            )}
             {canManage && (
               <button
                 type="button"
@@ -1318,7 +1436,15 @@ export default function PipelinePage() {
                             key={deal.id}
                             deal={deal}
                             accent={accent}
-                            onDragStart={() => handleDragStart(deal.id, stage.id)}
+                            blocked={isDealMoveBlocked(deal)}
+                            flashRed={blockedFlashDealId === deal.id}
+                            onDragStart={() => {
+                              if (isDealMoveBlocked(deal)) {
+                                flashBlocked(deal.id)
+                                return
+                              }
+                              handleDragStart(deal.id, stage.id)
+                            }}
                             onDragEnd={handleDragEnd}
                             isDragging={dragDealId.current === deal.id}
                             onClick={() => setDealModal({ deal, stageId: stage.id })}
@@ -1329,6 +1455,7 @@ export default function PipelinePage() {
                           <AddDealForm
                             stageId={stage.id}
                             pipelineId={activePipeline.id}
+                            assignedUserId={selectedManagerId}
                             onAdded={handleDealAdded}
                             onCancel={() => setAddingInStage(null)}
                           />
@@ -1429,6 +1556,16 @@ export default function PipelinePage() {
       </div>
 
       {/* Modals */}
+      {showAutomations && (
+        <DealFieldAutomationsModal
+          open={showAutomations}
+          onClose={() => {
+            setShowAutomations(false)
+            void loadRequirements()
+          }}
+        />
+      )}
+
       {showCreatePipeline && (
         <CreatePipelineModal
           onCreated={p => {
@@ -1447,6 +1584,7 @@ export default function PipelinePage() {
           stages={activePipeline.stages}
           pipelineId={activePipeline.id}
           users={salesUsers}
+          defaultAssignedUserId={dealModal.deal ? undefined : selectedManagerId}
           onSave={handleDealSaved}
           onDelete={handleDealDeleted}
           onClose={handleDealModalClose}

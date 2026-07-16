@@ -3,9 +3,10 @@ import { useRouter } from 'next/router'
 import Layout from '@/components/Layout'
 import { ClientsGeoMap } from '@/components/ClientsGeoMap'
 import { DateRangePicker, previousMonthRange, thisMonthRange, toYMD } from '@/components/DateRangePicker'
+import { EntityCarousel } from '@/components/EntityCarousel'
 import { useAuth } from '@/context/AuthContext'
 import api from '@/lib/api'
-import { hasCrmPipelineAccess } from '@/lib/salesAccess'
+import { canBrowseTeamManagers, hasCrmPipelineAccess, isSalesRop } from '@/lib/salesAccess'
 import {
   Area,
   AreaChart,
@@ -475,14 +476,19 @@ function DonutChart({
 
 function SalesFunnel({ stages }: { stages: { name: string; count: number; color: string }[] }) {
   const [hovered, setHovered] = useState<number | null>(null)
-  const shown = stages.slice(0, 5)
+  const shown = stages.slice(0, 6)
   const count = Math.max(shown.length, 1)
-  const palette = ['#86dff2', '#b9a9f5', '#fed28c', '#9fc3f6', '#b9e878']
+  const palette = ['#86dff2', '#b9a9f5', '#fed28c', '#9fc3f6', '#b9e878', '#86efac']
+  const firstCount = shown[0]?.count || 0
 
   const stageStats = shown.map((s, i) => {
-    const prev = i === 0 ? s.count : shown[i - 1]?.count || 0
-    const conversion = i === 0 ? (s.count > 0 ? 100 : 0) : prev > 0 ? Math.round((s.count / prev) * 100) : 0
-    return { ...s, conversion, color: palette[i % palette.length] }
+    // Конверсия относительно первого этапа воронки (не к «пустым» закрытым)
+    const conversion = i === 0
+      ? (s.count > 0 ? 100 : 0)
+      : firstCount > 0
+        ? Math.round((s.count / firstCount) * 100)
+        : 0
+    return { ...s, conversion, color: s.color || palette[i % palette.length] }
   })
 
   return (
@@ -506,7 +512,7 @@ function SalesFunnel({ stages }: { stages: { name: string; count: number; color:
           const active = hovered === null || hovered === i
           return (
             <div
-              key={s.name}
+              key={`${s.name}-${i}`}
               onMouseEnter={() => setHovered(i)}
               onMouseLeave={() => setHovered(null)}
               title={`${s.name}: ${fmtNum(s.count)} сделок, ${s.conversion}%`}
@@ -531,7 +537,7 @@ function SalesFunnel({ stages }: { stages: { name: string; count: number; color:
           const active = hovered === null || hovered === i
           return (
             <div
-              key={s.name}
+              key={`${s.name}-label-${i}`}
               onMouseEnter={() => setHovered(i)}
               onMouseLeave={() => setHovered(null)}
               style={{
@@ -621,7 +627,6 @@ export default function SalesAnalyticsPage() {
   const [fetching, setFetching] = useState(true)
   const [fetchError, setFetchError] = useState('')
   const chartsReady = useClientReady()
-  const [search, setSearch] = useState('')
   const [dateFrom, setDateFrom] = useState(() => {
     const d = new Date()
     d.setDate(1)
@@ -631,8 +636,56 @@ export default function SalesAnalyticsPage() {
   const [displayCurrency, setDisplayCurrency] = useState<'UZS' | 'USD'>('UZS')
   const [retentionMonths, setRetentionMonths] = useState(12)
   const [revenuePeriod, setRevenuePeriod] = useState<'7d' | '30d' | '3m' | '12m'>('30d')
+  const [salesUsers, setSalesUsers] = useState<{ id: number; name: string; role: string }[]>([])
+  const [selectedManagerId, setSelectedManagerId] = useState<number | null>(null)
 
   const canAccess = hasCrmPipelineAccess(user)
+  const showManagerPicker = canBrowseTeamManagers(user)
+  const managersReady = !showManagerPicker || salesUsers.length > 0
+
+  useEffect(() => {
+    if (!user || !canAccess || !showManagerPicker) return
+    void (async () => {
+      try {
+        const r = await api.get<{ id: number; name: string; role: string }[]>('sales/users-list')
+        setSalesUsers(r.data)
+      } catch {
+        setSalesUsers([])
+      }
+    })()
+  }, [user, canAccess, showManagerPicker])
+
+  const managerItems = useMemo(() => {
+    if (!showManagerPicker || !user) return []
+    const mops = salesUsers
+      .filter((u) => u.role === 'mop')
+      .map((u) => ({ id: u.id as number | null, name: u.name, subtitle: 'МОП' }))
+    const managers = salesUsers
+      .filter((u) => u.role === 'manager')
+      .map((u) => ({ id: u.id as number | null, name: u.name, subtitle: 'Менеджер' }))
+    if (user.role === 'admin') {
+      return [
+        { id: null, name: 'Все менеджеры', subtitle: 'Общая аналитика' },
+        ...mops,
+        ...managers,
+      ]
+    }
+    if (isSalesRop(user)) {
+      return [
+        { id: null, name: 'Вся команда', subtitle: 'МОПы' },
+        { id: user.id, name: user.name || 'Моя аналитика', subtitle: 'Мои сделки' },
+        ...mops.filter((u) => u.id !== user.id),
+      ]
+    }
+    return []
+  }, [showManagerPicker, user, salesUsers])
+
+  useEffect(() => {
+    if (!showManagerPicker || managerItems.length === 0) return
+    setSelectedManagerId((prev) =>
+      managerItems.some((i) => i.id === prev) ? prev : managerItems[0].id,
+    )
+  }, [showManagerPicker, managerItems])
 
   function setThisMonthRange() {
     const r = thisMonthRange()
@@ -647,18 +700,21 @@ export default function SalesAnalyticsPage() {
   }
 
   const load = useCallback(async () => {
+    if (showManagerPicker && !managersReady) return
     setFetching(true)
     setFetchError('')
     try {
-      const res = await api.get<AnalyticsData>('sales/analytics', {
-        params: {
-          date_from: dateFrom,
-          date_to: dateTo,
-          display_currency: displayCurrency,
-          months: retentionMonths,
-          revenue_period: revenuePeriod,
-        },
-      })
+      const params: Record<string, string | number> = {
+        date_from: dateFrom,
+        date_to: dateTo,
+        display_currency: displayCurrency,
+        months: retentionMonths,
+        revenue_period: revenuePeriod,
+      }
+      if (showManagerPicker && selectedManagerId != null) {
+        params.assigned_user_id = selectedManagerId
+      }
+      const res = await api.get<AnalyticsData>('sales/analytics', { params })
       setData(res.data)
     } catch (e: unknown) {
       const msg =
@@ -669,7 +725,7 @@ export default function SalesAnalyticsPage() {
     } finally {
       setFetching(false)
     }
-  }, [dateFrom, dateTo, displayCurrency, retentionMonths, revenuePeriod])
+  }, [dateFrom, dateTo, displayCurrency, retentionMonths, revenuePeriod, showManagerPicker, managersReady, selectedManagerId])
 
   useEffect(() => {
     if (!loading && user && !canAccess) void router.replace('/')
@@ -681,6 +737,7 @@ export default function SalesAnalyticsPage() {
   }, [loading, user, canAccess, load])
 
   const viewData = data ?? EMPTY_ANALYTICS
+  const currentManager = managerItems.find((m) => m.id === selectedManagerId)
 
   const revenueChart = useMemo(() => {
     const { labels, revenue, expenses, profit } = viewData.revenue_performance
@@ -696,7 +753,7 @@ export default function SalesAnalyticsPage() {
     const k = viewData.kpis
     return [
       { title: 'Выручка', value: fmtMoneyCompact(k.total_revenue, displayCurrency), change: k.total_revenue_change_pct, suffix: 'к прошлому месяцу' },
-      { title: 'Всего лидов', value: fmtNum(k.total_leads), change: k.total_leads_change_pct, suffix: '' },
+      { title: 'Всего лидов', value: fmtNum(k.total_leads), change: k.total_leads_change_pct, suffix: 'карточки сделок' },
       { title: 'Новые клиенты', value: fmtNum(k.new_customers), change: k.new_customers_change_pct, suffix: '' },
       { title: 'Конверсия', value: `${k.conversion_rate}%`, change: k.conversion_rate_change_pct, suffix: '' },
       { title: 'Активные сделки', value: fmtNum(k.active_deals), change: k.active_deals_change_pct, suffix: '' },
@@ -706,7 +763,13 @@ export default function SalesAnalyticsPage() {
 
   const funnelStages = useMemo(() => {
     const rows = viewData.funnel.length ? viewData.funnel : [{ name: 'Нет данных', count: 0, color: '#e2e8f0' }]
-    return rows.slice(0, 5)
+    // Бэкенд уже отдал этапы с карточками в порядке воронки — берём до 6
+    return rows.slice(0, 6)
+  }, [viewData])
+
+  const sourcesTotal = useMemo(() => {
+    if (!viewData.lead_sources.length) return viewData.kpis.total_leads
+    return viewData.lead_sources.reduce((s, x) => s + (x.count || 0), 0)
   }, [viewData])
 
   const revenueTickInterval = revenuePeriod === '30d' ? 4 : revenuePeriod === '3m' ? 1 : 0
@@ -726,21 +789,13 @@ export default function SalesAnalyticsPage() {
       <div style={{ minHeight: '100%', background: '#f4f5f7', overflowY: 'auto' }}>
         {/* Header */}
         <div style={{ background: '#fff', borderBottom: '1px solid #e8e9ef' }}>
-          <div style={{ padding: '28px 36px 18px' }}>
+          <div style={{ padding: '22px 36px 12px' }}>
             <div style={{ fontSize: 34, fontWeight: 900, color: '#111827', letterSpacing: '-.04em', lineHeight: 1.05 }}>
               Аналитика продаж
+              {showManagerPicker && currentManager && selectedManagerId != null ? (
+                <span style={{ fontWeight: 600, fontSize: 20, color: '#64748b' }}> · {currentManager.name}</span>
+              ) : null}
             </div>
-            <input
-              value={search}
-              onChange={(e) => setSearch(e.target.value)}
-              placeholder="Поиск или команда…"
-              style={{
-                marginTop: 16, width: '100%', maxWidth: 420, padding: '14px 18px',
-                borderRadius: 15, border: '1px solid #e2e8f0', background: '#f8fafc',
-                fontSize: 15, fontFamily: 'inherit', outline: 'none',
-                boxShadow: 'inset 0 1px 2px rgba(15,23,42,.03)',
-              }}
-            />
           </div>
 
           <div style={{
@@ -748,7 +803,7 @@ export default function SalesAnalyticsPage() {
             flexWrap: 'wrap',
             gap: 10,
             alignItems: 'center',
-            padding: '12px 36px 18px',
+            padding: '10px 36px 16px',
             borderTop: '1px solid #f1f5f9',
           }}>
             <DateRangePicker
@@ -766,6 +821,14 @@ export default function SalesAnalyticsPage() {
             <button type="button" onClick={setPreviousMonthRange} style={quickHeaderBtn}>
               Прошлый месяц
             </button>
+            {showManagerPicker && managerItems.length > 0 && (
+              <EntityCarousel
+                items={managerItems}
+                value={selectedManagerId}
+                onChange={setSelectedManagerId}
+                ariaLabel="Менеджер"
+              />
+            )}
             <div style={{
               display: 'inline-flex',
               padding: 4,
@@ -989,8 +1052,8 @@ export default function SalesAnalyticsPage() {
                 <div style={{ ...CARD, padding: 32, minHeight: 410 }}>
                   <div style={{ fontSize: 20, fontWeight: 900, color: '#111827', marginBottom: 20 }}>Источники лидов</div>
                   <DonutChart
-                    total={viewData.kpis.total_leads}
-                    label="Всего лидов"
+                    total={sourcesTotal}
+                    label="Всего сделок"
                     slices={viewData.lead_sources.length ? viewData.lead_sources : [{ name: 'Нет данных', pct: 100, color: '#e2e8f0' }]}
                   />
                 </div>

@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { createPortal } from 'react-dom'
 import api from '@/lib/api'
 import { SaleDealComposer, type DealTask } from '@/components/SaleDealTaskComposer'
 import { DealCloseWonModal } from '@/components/DealCloseWonModal'
@@ -28,6 +29,8 @@ export interface DealData {
   company_name: string | null
   phone?: string | null
   email?: string | null
+  contact_position?: string | null
+  contact_role?: string | null
   source?: string | null
   client_geo?: string | null
   service_type?: string | null
@@ -64,6 +67,57 @@ interface SalesUser {
 
 const SOURCE_OPTIONS = ['Веб-сайт', 'Рекомендация', 'Холодный звонок', 'Соцсети', 'Выставка', 'Партнёр', 'Другое']
 
+const CONTACT_ROLE_PRESETS = ['ЛПР', 'ЛВР', 'Помощник'] as const
+const CONTACT_ROLE_CUSTOM = '__custom__'
+
+/** Палитра по имени этапа — если в БД нет своего цвета */
+const STAGE_COLOR_BY_NAME: Record<string, string> = {
+  'ПЕРВИЧНЫЙ КОНТАКТ': '#94a3b8',
+  'В РАБОТЕ': '#3b82f6',
+  'ОТПРАВКА КП': '#8b5cf6',
+  'ОЖИДАНИЕ': '#f59e0b',
+  'НЕДОСТУПЕН': '#ef4444',
+  'НЕ ИНТЕРЕСУЕТ': '#f97316',
+  'ВЫБРАЛИ ДРУГИХ': '#fb7185',
+  'ВЫСОКАЯ ЦЕНА': '#eab308',
+  'НЕЦЕЛЕВОЙ': '#a855f7',
+  'НЕ НАШ ПРОФИЛЬ РАБОТЫ': '#64748b',
+  'НЕ ВЫШЛИ НА ЛПР': '#ec4899',
+  'СДЕЛКА ВЫИГРАНА': '#22c55e',
+}
+
+function stageColor(s: { name: string; color: string | null; is_closed_won?: boolean; is_closed_lost?: boolean }): string {
+  if (s.color) {
+    const mapped = STAGE_COLOR_BY_NAME[s.name.toUpperCase()]
+    // старые одинаковые коралловые «проигрыши» — подменяем на палитру
+    if (s.is_closed_lost && (s.color === '#ff7f6e' || s.color === '#e74c3c') && mapped) return mapped
+    if (!s.is_closed_lost && !s.is_closed_won && mapped && (s.color === '#b8c0cc' || s.color === '#6ba3d6' || s.color === '#4a90d9' || s.color === '#3a7bc8')) {
+      return mapped
+    }
+    return s.color
+  }
+  const byName = STAGE_COLOR_BY_NAME[s.name.toUpperCase()]
+  if (byName) return byName
+  if (s.is_closed_won) return '#22c55e'
+  if (s.is_closed_lost) return '#ef4444'
+  return '#64748b'
+}
+
+function contrastText(bg: string): string {
+  const hex = bg.replace('#', '')
+  if (hex.length !== 6) return '#fff'
+  const r = parseInt(hex.slice(0, 2), 16)
+  const g = parseInt(hex.slice(2, 4), 16)
+  const b = parseInt(hex.slice(4, 6), 16)
+  const lum = (0.299 * r + 0.587 * g + 0.114 * b) / 255
+  return lum > 0.62 ? '#0f172a' : '#fff'
+}
+
+function roleSelectValue(role: string): string {
+  if (!role) return ''
+  return (CONTACT_ROLE_PRESETS as readonly string[]).includes(role) ? role : CONTACT_ROLE_CUSTOM
+}
+
 function budgetToInput(v: number | null | undefined): string {
   if (v == null || !Number.isFinite(v)) return ''
   return String(Math.round(v))
@@ -75,14 +129,14 @@ const LEFT_COL_MIN = 380
 const LEFT_COL_MAX = 560
 
 const FS = {
-  label: 11,
-  section: 11,
-  input: 13,
-  body: 13,
-  meta: 12,
-  hint: 11,
-  title: 18,
-  icon: 16,
+  label: 13,
+  section: 13,
+  input: 15,
+  body: 15,
+  meta: 14,
+  hint: 13,
+  title: 22,
+  icon: 18,
 }
 
 function fmtDateTime(iso: string) {
@@ -107,6 +161,25 @@ function normalizePhoneForLinks(phone: string) {
     telegram: `https://t.me/+${digits}`,
     whatsapp: `https://wa.me/${digits}`,
   }
+}
+
+const UZ_PHONE_PREFIX = '+998'
+
+/** Оставляет локальную часть без кода страны 998 */
+function phoneLocalPart(raw: string): string {
+  let digits = raw.replace(/\D/g, '')
+  if (digits.startsWith('998')) digits = digits.slice(3)
+  // форматируем группами: 99 999 99 99
+  const a = digits.slice(0, 2)
+  const b = digits.slice(2, 5)
+  const c = digits.slice(5, 7)
+  const d = digits.slice(7, 9)
+  return [a, b, c, d].filter(Boolean).join(' ')
+}
+
+function phoneFullFromLocal(local: string): string {
+  const digits = local.replace(/\D/g, '').slice(0, 9)
+  return digits ? `${UZ_PHONE_PREFIX}${digits}` : ''
 }
 
 const CHEVRON_SVG_GRAY =
@@ -134,8 +207,8 @@ const fieldInput: React.CSSProperties = {
   width: '100%',
   boxSizing: 'border-box',
   border: '1px solid #d1d9e6',
-  borderRadius: 8,
-  padding: '7px 10px',
+  borderRadius: 10,
+  padding: '10px 12px',
   fontSize: FS.input,
   outline: 'none',
   fontFamily: 'inherit',
@@ -145,8 +218,8 @@ const fieldInput: React.CSSProperties = {
 
 const sectionBox: React.CSSProperties = {
   border: '1px solid #d8dee9',
-  borderRadius: 10,
-  padding: 12,
+  borderRadius: 12,
+  padding: 16,
   background: '#fff',
   boxShadow: '0 1px 2px rgba(15,23,42,.03)',
 }
@@ -184,16 +257,355 @@ function DealSection({ title, children, muted }: { title: string; children: Reac
   )
 }
 
-function DealFieldBox({ label, children }: { label: string; children: React.ReactNode }) {
+function FloatingTip({
+  anchor,
+  text,
+  maxWidth = 260,
+}: {
+  anchor: HTMLElement | null
+  text: string
+  maxWidth?: number
+}) {
+  const [pos, setPos] = useState<{ top: number; left: number; place: 'above' | 'below' } | null>(null)
+
+  useEffect(() => {
+    if (!anchor) {
+      setPos(null)
+      return
+    }
+    function update() {
+      if (!anchor) return
+      const r = anchor.getBoundingClientRect()
+      const gap = 8
+      const preferAbove = r.top > 72
+      const top = preferAbove ? r.top - gap : r.bottom + gap
+      let left = r.left + r.width / 2
+      const pad = 12
+      const half = Math.min(maxWidth, 260) / 2
+      left = Math.max(pad + half, Math.min(left, window.innerWidth - pad - half))
+      setPos({
+        top,
+        left,
+        place: preferAbove ? 'above' : 'below',
+      })
+    }
+    update()
+    window.addEventListener('scroll', update, true)
+    window.addEventListener('resize', update)
+    return () => {
+      window.removeEventListener('scroll', update, true)
+      window.removeEventListener('resize', update)
+    }
+  }, [anchor, maxWidth, text])
+
+  if (!pos || typeof document === 'undefined') return null
+
+  return createPortal(
+    <span
+      role="tooltip"
+      style={{
+        position: 'fixed',
+        top: pos.top,
+        left: pos.left,
+        transform: pos.place === 'above' ? 'translate(-50%, -100%)' : 'translate(-50%, 0)',
+        zIndex: 10000,
+        width: 'max-content',
+        maxWidth,
+        padding: '8px 10px',
+        borderRadius: 8,
+        background: '#0f172a',
+        color: '#fff',
+        fontSize: 12,
+        fontWeight: 500,
+        lineHeight: 1.4,
+        boxShadow: '0 10px 28px rgba(15,23,42,.35)',
+        pointerEvents: 'none',
+        whiteSpace: 'normal',
+        textAlign: 'left',
+      }}
+    >
+      {text}
+    </span>,
+    document.body,
+  )
+}
+
+function CompactSelect({
+  value,
+  onChange,
+  options,
+  placeholder = '— не указан —',
+  error,
+  ariaLabel,
+}: {
+  value: string
+  onChange: (v: string) => void
+  options: { value: string; label: string }[]
+  placeholder?: string
+  error?: boolean
+  ariaLabel?: string
+}) {
+  const [open, setOpen] = useState(false)
+  const rootRef = useRef<HTMLDivElement | null>(null)
+  const btnRef = useRef<HTMLButtonElement | null>(null)
+  const menuRef = useRef<HTMLDivElement | null>(null)
+  const [menuPos, setMenuPos] = useState<{ top: number; left: number; width: number; openUp: boolean } | null>(null)
+
+  const current = options.find(o => o.value === value)
+  const label = current?.label || placeholder
+
+  useEffect(() => {
+    if (!open) return
+    function onDoc(e: MouseEvent) {
+      const t = e.target as Node
+      if (rootRef.current?.contains(t) || menuRef.current?.contains(t)) return
+      setOpen(false)
+    }
+    function onKey(e: KeyboardEvent) {
+      if (e.key === 'Escape') setOpen(false)
+    }
+    document.addEventListener('mousedown', onDoc)
+    document.addEventListener('keydown', onKey)
+    return () => {
+      document.removeEventListener('mousedown', onDoc)
+      document.removeEventListener('keydown', onKey)
+    }
+  }, [open])
+
+  useEffect(() => {
+    if (!open || !btnRef.current) {
+      setMenuPos(null)
+      return
+    }
+    function place() {
+      if (!btnRef.current) return
+      const r = btnRef.current.getBoundingClientRect()
+      // Compact menu: match trigger when narrow, never stretch full card width
+      const width = Math.min(Math.max(r.width, 168), 220)
+      let left = r.left
+      if (left + width > window.innerWidth - 12) left = window.innerWidth - width - 12
+      if (left < 12) left = 12
+      const below = r.bottom + 6
+      const spaceBelow = window.innerHeight - below
+      const openUp = spaceBelow < 220 && r.top > 220
+      setMenuPos({
+        top: openUp ? r.top - 6 : below,
+        left,
+        width,
+        openUp,
+      })
+    }
+    place()
+    window.addEventListener('scroll', place, true)
+    window.addEventListener('resize', place)
+    return () => {
+      window.removeEventListener('scroll', place, true)
+      window.removeEventListener('resize', place)
+    }
+  }, [open])
+
+  const menu = open && menuPos && typeof document !== 'undefined'
+    ? createPortal(
+      <div
+        ref={menuRef}
+        role="listbox"
+        style={{
+          position: 'fixed',
+          top: menuPos.top,
+          left: menuPos.left,
+          width: menuPos.width,
+          maxHeight: 260,
+          overflowY: 'auto',
+          zIndex: 10001,
+          background: '#fff',
+          border: '1px solid #e2e8f0',
+          borderRadius: 12,
+          boxShadow: '0 14px 36px rgba(15,23,42,.18)',
+          padding: 6,
+          transform: menuPos.openUp ? 'translateY(-100%)' : undefined,
+        }}
+      >
+        {options.map(o => {
+          const selected = o.value === value
+          return (
+            <button
+              key={o.value || '__empty'}
+              type="button"
+              role="option"
+              aria-selected={selected}
+              onClick={() => {
+                onChange(o.value)
+                setOpen(false)
+              }}
+              style={{
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'space-between',
+                gap: 10,
+                width: '100%',
+                textAlign: 'left',
+                border: 'none',
+                borderRadius: 8,
+                padding: '9px 10px',
+                cursor: 'pointer',
+                fontFamily: 'inherit',
+                fontSize: FS.input,
+                fontWeight: selected ? 700 : 500,
+                color: '#0f172a',
+                background: selected ? '#f1f5f9' : 'transparent',
+              }}
+            >
+              <span>{o.label}</span>
+              {selected ? <span style={{ color: '#16a34a', fontWeight: 800 }}>✓</span> : null}
+            </button>
+          )
+        })}
+      </div>,
+      document.body,
+    )
+    : null
+
+  return (
+    <div ref={rootRef} style={{ position: 'relative', width: '100%' }}>
+      <button
+        ref={btnRef}
+        type="button"
+        aria-label={ariaLabel}
+        aria-expanded={open}
+        onClick={() => setOpen(v => !v)}
+        style={{
+          ...fieldInput,
+          ...selectChevronStyle(CHEVRON_SVG_GRAY),
+          display: 'flex',
+          alignItems: 'center',
+          justifyContent: 'space-between',
+          textAlign: 'left',
+          cursor: 'pointer',
+          color: current ? '#0f172a' : '#94a3b8',
+          ...(error ? { borderColor: '#ef4444', background: '#fef2f2' } : {}),
+        }}
+      >
+        <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', paddingRight: 8 }}>
+          {label}
+        </span>
+      </button>
+      {menu}
+    </div>
+  )
+}
+
+function HintIcon({ text }: { text: string }) {
+  const [show, setShow] = useState(false)
+  const ref = useRef<HTMLSpanElement | null>(null)
+  return (
+    <span
+      ref={ref}
+      style={{ position: 'relative', display: 'inline-flex', alignItems: 'center', marginLeft: 5, verticalAlign: 'middle' }}
+      onMouseEnter={() => setShow(true)}
+      onMouseLeave={() => setShow(false)}
+      onFocus={() => setShow(true)}
+      onBlur={() => setShow(false)}
+    >
+      <span
+        tabIndex={0}
+        role="img"
+        aria-label={text}
+        style={{
+          width: 15,
+          height: 15,
+          borderRadius: 99,
+          border: '1px solid #94a3b8',
+          color: '#64748b',
+          fontSize: 10,
+          fontWeight: 800,
+          lineHeight: '13px',
+          textAlign: 'center',
+          cursor: 'help',
+          background: '#f8fafc',
+          fontFamily: 'inherit',
+          userSelect: 'none',
+        }}
+      >
+        i
+      </span>
+      {show ? <FloatingTip anchor={ref.current} text={text} /> : null}
+    </span>
+  )
+}
+
+function TipButton({
+  tip,
+  children,
+  ...props
+}: React.ButtonHTMLAttributes<HTMLButtonElement> & { tip: string }) {
+  const [show, setShow] = useState(false)
+  const ref = useRef<HTMLSpanElement | null>(null)
+  const { style, ...rest } = props
+  return (
+    <span
+      ref={ref}
+      style={{ position: 'relative', display: 'inline-flex' }}
+      onMouseEnter={() => setShow(true)}
+      onMouseLeave={() => setShow(false)}
+    >
+      <button
+        {...rest}
+        title={tip}
+        aria-label={tip}
+        style={style}
+      >
+        {children}
+      </button>
+      {show ? <FloatingTip anchor={ref.current} text={tip} maxWidth={220} /> : null}
+    </span>
+  )
+}
+
+function DealFieldBox({
+  label,
+  hint,
+  error,
+  children,
+}: {
+  label: string
+  hint?: string
+  error?: boolean
+  children: React.ReactNode
+}) {
   return (
     <div style={{
-      border: '1px solid #d1d9e6',
+      border: `1px solid ${error ? '#ef4444' : '#d1d9e6'}`,
       borderRadius: 8,
       padding: '8px 10px',
-      background: '#fff',
+      background: error ? '#fef2f2' : '#fff',
+      boxShadow: error ? '0 0 0 1px rgba(239,68,68,.25)' : undefined,
     }}>
-      <div style={{ fontSize: FS.label, color: '#64748b', marginBottom: 4, fontWeight: 600 }}>{label}</div>
+      <div style={{
+        fontSize: FS.label,
+        color: error ? '#b91c1c' : '#64748b',
+        marginBottom: 4,
+        fontWeight: 600,
+        display: 'flex',
+        alignItems: 'center',
+      }}>
+        <span>{label}</span>
+        {hint ? <HintIcon text={hint} /> : null}
+      </div>
       {children}
+      {error ? (
+        <div style={{ marginTop: 6, fontSize: 12, fontWeight: 700, color: '#dc2626' }}>
+          заполните данные
+        </div>
+      ) : null}
+    </div>
+  )
+}
+
+function FieldLabel({ children, hint, error }: { children: React.ReactNode; hint?: string; error?: boolean }) {
+  return (
+    <div style={{ ...fieldLabel, display: 'flex', alignItems: 'center', color: error ? '#b91c1c' : fieldLabel.color }}>
+      <span>{children}</span>
+      {hint ? <HintIcon text={hint} /> : null}
     </div>
   )
 }
@@ -227,6 +639,149 @@ function MonthPill({ label }: { label: string }) {
   )
 }
 
+function StagePicker({
+  stages,
+  value,
+  onChange,
+}: {
+  stages: Stage[]
+  value: number
+  onChange: (id: number) => void
+}) {
+  const [open, setOpen] = useState(false)
+  const rootRef = useRef<HTMLDivElement | null>(null)
+  const current = stages.find(s => s.id === value) ?? stages[0]
+  const accent = current ? stageColor(current) : '#64748b'
+  const text = contrastText(accent)
+
+  useEffect(() => {
+    if (!open) return
+    function onDoc(e: MouseEvent) {
+      if (!rootRef.current?.contains(e.target as Node)) setOpen(false)
+    }
+    function onKey(e: KeyboardEvent) {
+      if (e.key === 'Escape') setOpen(false)
+    }
+    document.addEventListener('mousedown', onDoc)
+    document.addEventListener('keydown', onKey)
+    return () => {
+      document.removeEventListener('mousedown', onDoc)
+      document.removeEventListener('keydown', onKey)
+    }
+  }, [open])
+
+  return (
+    <div ref={rootRef} style={{ position: 'relative', minWidth: 180, maxWidth: '100%' }}>
+      <button
+        type="button"
+        aria-label="Этап сделки"
+        aria-expanded={open}
+        onClick={() => setOpen(v => !v)}
+        style={{
+          width: '100%',
+          display: 'flex',
+          alignItems: 'center',
+          justifyContent: 'space-between',
+          gap: 10,
+          border: 'none',
+          borderRadius: 10,
+          padding: '8px 12px',
+          fontSize: FS.input,
+          fontWeight: 800,
+          letterSpacing: '0.02em',
+          textTransform: 'uppercase',
+          color: text,
+          background: accent,
+          fontFamily: 'inherit',
+          cursor: 'pointer',
+          boxShadow: '0 1px 2px rgba(15,23,42,.12)',
+        }}
+      >
+        <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+          {current?.name || 'Этап'}
+        </span>
+        <span style={{ opacity: 0.85, fontSize: 12 }}>{open ? '▴' : '▾'}</span>
+      </button>
+      {open && (
+        <div
+          role="listbox"
+          style={{
+            position: 'absolute',
+            top: 'calc(100% + 6px)',
+            left: 0,
+            zIndex: 40,
+            minWidth: '100%',
+            width: 'max-content',
+            maxWidth: 320,
+            maxHeight: 340,
+            overflowY: 'auto',
+            background: '#fff',
+            borderRadius: 12,
+            border: '1px solid #e2e8f0',
+            boxShadow: '0 12px 32px rgba(15,23,42,.16)',
+            padding: 6,
+          }}
+        >
+          {stages.map(s => {
+            const c = stageColor(s)
+            const selected = s.id === value
+            return (
+              <button
+                key={s.id}
+                type="button"
+                role="option"
+                aria-selected={selected}
+                onClick={() => {
+                  onChange(s.id)
+                  setOpen(false)
+                }}
+                style={{
+                  display: 'flex',
+                  alignItems: 'center',
+                  gap: 10,
+                  width: '100%',
+                  textAlign: 'left',
+                  border: 'none',
+                  borderRadius: 8,
+                  padding: '9px 10px',
+                  cursor: 'pointer',
+                  fontFamily: 'inherit',
+                  fontSize: FS.meta,
+                  fontWeight: selected ? 800 : 600,
+                  letterSpacing: '0.02em',
+                  textTransform: 'uppercase',
+                  color: selected ? contrastText(c) : '#0f172a',
+                  background: selected ? c : 'transparent',
+                }}
+                onMouseEnter={e => {
+                  if (!selected) e.currentTarget.style.background = `${c}22`
+                }}
+                onMouseLeave={e => {
+                  if (!selected) e.currentTarget.style.background = 'transparent'
+                }}
+              >
+                <span
+                  aria-hidden
+                  style={{
+                    width: 10,
+                    height: 10,
+                    borderRadius: 99,
+                    background: c,
+                    flexShrink: 0,
+                    boxShadow: selected ? `0 0 0 2px ${contrastText(c)}66` : 'none',
+                  }}
+                />
+                <span style={{ flex: 1, minWidth: 0 }}>{s.name}</span>
+                {selected ? <span aria-hidden>✓</span> : null}
+              </button>
+            )
+          })}
+        </div>
+      )}
+    </div>
+  )
+}
+
 function ChatFeedLine({ comment }: { comment: DealComment }) {
   const author = comment.created_by_user_name
     || (comment.kind === 'system' || comment.kind === 'stage_change' ? 'Система' : 'Пользователь')
@@ -249,13 +804,13 @@ function ChatFeedLine({ comment }: { comment: DealComment }) {
   }
 
   return (
-    <div style={{ padding: '6px 0', borderBottom: '1px solid #eef1f5' }}>
-      <div style={{ fontSize: FS.meta, color: '#475569', lineHeight: 1.45 }}>
+    <div style={{ padding: '8px 0', borderBottom: '1px solid #eef1f5' }}>
+      <div style={{ fontSize: FS.body, color: '#475569', lineHeight: 1.5 }}>
         <span style={{ color: '#94a3b8' }}>{time}</span>
         <span style={{ margin: '0 8px', color: '#cbd5e1' }}>{date}</span>
         <span style={{ fontWeight: 700, color: '#1e293b' }}>{author}</span>
         {tag && (
-          <span style={{ marginLeft: 8, fontSize: FS.hint, color: '#2563eb', fontWeight: 600 }}>{tag}</span>
+          <span style={{ marginLeft: 8, fontSize: FS.meta, color: '#2563eb', fontWeight: 600 }}>{tag}</span>
         )}
         <span style={{ marginLeft: 8 }}>{body}</span>
       </div>
@@ -275,32 +830,43 @@ function ContactMessengerButton({
   color: string
 }) {
   const disabled = !href
+  const [show, setShow] = useState(false)
+  const ref = useRef<HTMLSpanElement | null>(null)
+  const tip = disabled ? 'Сначала укажите телефон' : label
   return (
-    <a
-      href={href || undefined}
-      target="_blank"
-      rel="noopener noreferrer"
-      aria-label={label}
-      onClick={e => { if (disabled) e.preventDefault() }}
-      style={{
-        width: 34,
-        height: 34,
-        borderRadius: 8,
-        display: 'inline-flex',
-        alignItems: 'center',
-        justifyContent: 'center',
-        textDecoration: 'none',
-        background: disabled ? '#f1f5f9' : color,
-        color: '#fff',
-        fontWeight: 800,
-        fontSize: FS.icon,
-        cursor: disabled ? 'not-allowed' : 'pointer',
-        opacity: disabled ? 0.45 : 1,
-        flexShrink: 0,
-      }}
+    <span
+      ref={ref}
+      style={{ position: 'relative', display: 'inline-flex', flexShrink: 0 }}
+      onMouseEnter={() => setShow(true)}
+      onMouseLeave={() => setShow(false)}
     >
-      {children}
-    </a>
+      <a
+        href={href || undefined}
+        target="_blank"
+        rel="noopener noreferrer"
+        aria-label={label}
+        title={label}
+        onClick={e => { if (disabled) e.preventDefault() }}
+        style={{
+          width: 34,
+          height: 34,
+          borderRadius: 8,
+          display: 'inline-flex',
+          alignItems: 'center',
+          justifyContent: 'center',
+          textDecoration: 'none',
+          background: disabled ? '#f1f5f9' : color,
+          color: '#fff',
+          fontWeight: 800,
+          fontSize: FS.icon,
+          cursor: disabled ? 'not-allowed' : 'pointer',
+          opacity: disabled ? 0.45 : 1,
+        }}
+      >
+        {children}
+      </a>
+      {show ? <FloatingTip anchor={ref.current} text={tip} maxWidth={200} /> : null}
+    </span>
   )
 }
 
@@ -309,6 +875,7 @@ export function SaleDealCard({
   stages,
   pipelineId,
   users,
+  defaultAssignedUserId,
   onSave,
   onDelete,
   onClose,
@@ -317,6 +884,8 @@ export function SaleDealCard({
   stages: Stage[]
   pipelineId: number
   users: SalesUser[]
+  /** При создании сделки на доске конкретного МОПа — сразу назначить его */
+  defaultAssignedUserId?: number | null
   onSave: (d: DealData) => void
   onDelete?: (id: number) => void
   onClose: () => void
@@ -334,8 +903,11 @@ export function SaleDealCard({
   const [title, setTitle] = useState(deal?.title ?? '')
   const [contact, setContact] = useState(deal?.contact_name ?? '')
   const [company, setCompany] = useState(deal?.company_name ?? '')
-  const [phone, setPhone] = useState(deal?.phone ?? '')
+  const [phone, setPhone] = useState(() => phoneLocalPart(deal?.phone ?? ''))
   const [email, setEmail] = useState(deal?.email ?? '')
+  const [contactPosition, setContactPosition] = useState(deal?.contact_position ?? '')
+  const [contactRole, setContactRole] = useState(deal?.contact_role ?? '')
+  const [roleMode, setRoleMode] = useState(() => roleSelectValue(deal?.contact_role ?? ''))
   const [source, setSource] = useState(deal?.source ?? '')
   const [clientGeo, setClientGeo] = useState(deal?.client_geo ?? DEFAULT_CLIENT_GEO)
   const [serviceType, setServiceType] = useState(deal?.service_type ?? 'seo')
@@ -344,8 +916,13 @@ export function SaleDealCard({
   const [currency, setCurrency] = useState(deal?.currency ?? 'USD')
   const [stageId, setStageId] = useState<number>(deal?.stage_id ?? stages[0]?.id ?? 0)
   const [assignedId, setAssignedId] = useState<string>(
-    deal?.assigned_user_id?.toString() ?? user?.id?.toString() ?? ''
+    deal?.assigned_user_id?.toString()
+      ?? (defaultAssignedUserId != null ? String(defaultAssignedUserId) : null)
+      ?? user?.id?.toString()
+      ?? ''
   )
+  const [requiredFields, setRequiredFields] = useState<string[]>([])
+  const [showReqErrors, setShowReqErrors] = useState(false)
 
   const loadDetail = useCallback(async (id: number) => {
     setLoadingDetail(true)
@@ -357,8 +934,11 @@ export function SaleDealCard({
       setTitle(res.data.title)
       setContact(res.data.contact_name ?? '')
       setCompany(res.data.company_name ?? '')
-      setPhone(res.data.phone ?? '')
+      setPhone(phoneLocalPart(res.data.phone ?? ''))
       setEmail(res.data.email ?? '')
+      setContactPosition(res.data.contact_position ?? '')
+      setContactRole(res.data.contact_role ?? '')
+      setRoleMode(roleSelectValue(res.data.contact_role ?? ''))
       setSource(res.data.source ?? '')
       setClientGeo(res.data.client_geo ?? DEFAULT_CLIENT_GEO)
       setServiceType(res.data.service_type ?? 'seo')
@@ -384,7 +964,54 @@ export function SaleDealCard({
     }
   }, [isNew, user?.id, assignedId])
 
-  const canReassignDeal = isSalesRop(user)
+  const requirementsOwnerId = useMemo(() => {
+    const id = assignedId ? parseInt(assignedId, 10) : user?.id
+    return Number.isFinite(id) ? Number(id) : null
+  }, [assignedId, user?.id])
+
+  useEffect(() => {
+    if (!requirementsOwnerId) {
+      setRequiredFields([])
+      return
+    }
+    let cancelled = false
+    void (async () => {
+      try {
+        const r = await api.get<{ required_fields: string[] }>(
+          `sales/deal-field-requirements/${requirementsOwnerId}`,
+        )
+        if (!cancelled) setRequiredFields(r.data.required_fields || [])
+      } catch {
+        if (!cancelled) setRequiredFields([])
+      }
+    })()
+    return () => { cancelled = true }
+  }, [requirementsOwnerId])
+
+  const fieldValues = useMemo(() => ({
+    contact_name: contact.trim(),
+    phone: phoneFullFromLocal(phone).replace(/\D/g, '').length >= 12 ? phoneFullFromLocal(phone) : '',
+    contact_position: contactPosition.trim(),
+    company_name: company.trim(),
+    source: source.trim(),
+    client_geo: (clientGeo || '').trim(),
+    service_type: (serviceType || '').trim(),
+  }), [contact, phone, contactPosition, company, source, clientGeo, serviceType])
+
+  const missingRequired = useMemo(() => {
+    return requiredFields.filter((key) => {
+      const v = fieldValues[key as keyof typeof fieldValues]
+      return !v
+    })
+  }, [requiredFields, fieldValues])
+
+  const isFieldMissing = (key: string) => {
+    if (!requiredFields.includes(key)) return false
+    const v = fieldValues[key as keyof typeof fieldValues]
+    return !v
+  }
+
+  const canReassignDeal = user?.role === 'admin' || isSalesRop(user)
   const mopUsers = useMemo(() => users.filter(u => u.role === 'mop'), [users])
   const assignedDisplayName = useMemo(() => {
     const id = assignedId ? parseInt(assignedId, 10) : user?.id
@@ -398,7 +1025,8 @@ export function SaleDealCard({
   const stageDays = deal ? daysSince(deal.created_at) : 0
   const displayName = contact.trim() || company.trim() || title.trim() || 'Новая сделка'
   const serviceMeta = DEAL_SERVICES.find(s => s.key === serviceType)
-  const phoneLinks = normalizePhoneForLinks(phone)
+  const phoneFull = phoneFullFromLocal(phone)
+  const phoneLinks = normalizePhoneForLinks(phoneFull)
 
   const hasDealContent = Boolean(
     title.trim()
@@ -411,7 +1039,7 @@ export function SaleDealCard({
     || source.trim()
   )
 
-  const canSaveDeal = !saving && hasDealContent
+  const canSaveDeal = !saving && hasDealContent && missingRequired.length === 0
 
   function resolveTitle() {
     return title.trim() || company.trim() || contact.trim() || 'Новая сделка'
@@ -440,13 +1068,19 @@ export function SaleDealCard({
 
   async function saveDeal() {
     if (!hasDealContent) return
+    if (missingRequired.length > 0) {
+      setShowReqErrors(true)
+      return
+    }
     setSaving(true)
     const payload: Record<string, unknown> = {
       title: resolveTitle(),
       contact_name: contact.trim() || null,
       company_name: company.trim() || null,
-      phone: phone.trim() || null,
+      phone: phoneFull || null,
       email: email.trim() || null,
+      contact_position: contactPosition.trim() || null,
+      contact_role: contactRole.trim() || null,
       source: source.trim() || null,
       client_geo: clientGeo || DEFAULT_CLIENT_GEO,
       service_type: serviceType,
@@ -595,27 +1229,11 @@ export function SaleDealCard({
             </div>
 
             <div style={{ marginTop: 8, display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap' }}>
-              <select
+              <StagePicker
+                stages={stages}
                 value={stageId}
-                onChange={e => setStageId(Number(e.target.value))}
-                aria-label="Этап сделки"
-                style={{
-                  minWidth: 160,
-                  maxWidth: '100%',
-                  border: '1px solid #d1d9e6',
-                  borderRadius: 8,
-                  padding: '6px 10px',
-                  fontSize: FS.input,
-                  color: '#0f172a',
-                  background: '#fff',
-                  fontFamily: 'inherit',
-                  ...selectChevronStyle(CHEVRON_SVG_GRAY),
-                }}
-              >
-                {stages.map(s => (
-                  <option key={s.id} value={s.id}>{s.name}</option>
-                ))}
-              </select>
+                onChange={setStageId}
+              />
               {!isNew && (
                 <span style={{ fontSize: FS.meta, color: '#64748b' }}>
                   {stageDays} дн. на этапе
@@ -633,8 +1251,22 @@ export function SaleDealCard({
           {/* Контент */}
           <div style={{ flex: 1, overflowY: 'auto', padding: '10px 14px 14px', display: 'flex', flexDirection: 'column', gap: 10 }}>
             <DealSection title="Контакты">
+              {missingRequired.length > 0 && (
+                <div style={{
+                  marginBottom: 8,
+                  padding: '10px 12px',
+                  borderRadius: 10,
+                  background: '#fef2f2',
+                  border: '1px solid #fecaca',
+                  color: '#b91c1c',
+                  fontSize: 13,
+                  fontWeight: 700,
+                }}>
+                  Заполните данные — без обязательных полей сделку сохранить нельзя
+                </div>
+              )}
               <div style={{ display: 'grid', gridTemplateColumns: '1fr', gap: 6 }}>
-                <DealFieldBox label="Компания">
+                <DealFieldBox label="Компания" hint="Название компании клиента или бренда" error={isFieldMissing('company_name')}>
                   <input
                     value={company}
                     onChange={e => setCompany(e.target.value)}
@@ -642,7 +1274,7 @@ export function SaleDealCard({
                     style={inlineFieldInput}
                   />
                 </DealFieldBox>
-                <DealFieldBox label="ФИО">
+                <DealFieldBox label="ФИО" hint="Имя и фамилия контактного лица" error={isFieldMissing('contact_name')}>
                   <input
                     value={contact}
                     onChange={e => setContact(e.target.value)}
@@ -650,14 +1282,102 @@ export function SaleDealCard({
                     style={inlineFieldInput}
                   />
                 </DealFieldBox>
-                <DealFieldBox label="Телефон">
+                <DealFieldBox label="Должность" hint="Должность контакта в компании (например, маркетинг-директор)" error={isFieldMissing('contact_position')}>
+                  <input
+                    value={contactPosition}
+                    onChange={e => setContactPosition(e.target.value)}
+                    placeholder="Например: маркетинг-директор"
+                    style={inlineFieldInput}
+                  />
+                </DealFieldBox>
+                <DealFieldBox
+                  label="Роль"
+                  hint="ЛПР — лицо, принимающее решение; ЛВР — влияет на решение; Помощник — помогает в коммуникации. Можно указать свою роль."
+                >
+                  {roleMode === CONTACT_ROLE_CUSTOM ? (
+                    <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+                      <input
+                        autoFocus
+                        value={contactRole}
+                        onChange={e => setContactRole(e.target.value)}
+                        placeholder="Введите роль"
+                        style={inlineFieldInput}
+                      />
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setRoleMode('')
+                          setContactRole('')
+                        }}
+                        style={{
+                          alignSelf: 'flex-start',
+                          border: 'none',
+                          background: 'transparent',
+                          padding: 0,
+                          cursor: 'pointer',
+                          fontFamily: 'inherit',
+                          fontSize: 12,
+                          fontWeight: 600,
+                          color: '#64748b',
+                          textDecoration: 'underline',
+                          textUnderlineOffset: 2,
+                        }}
+                      >
+                        Выбрать из списка
+                      </button>
+                    </div>
+                  ) : (
+                    <select
+                      value={roleMode}
+                      onChange={e => {
+                        const v = e.target.value
+                        setRoleMode(v)
+                        if (v === '') {
+                          setContactRole('')
+                        } else if (v === CONTACT_ROLE_CUSTOM) {
+                          setContactRole('')
+                        } else {
+                          setContactRole(v)
+                        }
+                      }}
+                      style={{ ...inlineFieldInput, ...selectChevronStyle(CHEVRON_SVG_GRAY), cursor: 'pointer' }}
+                    >
+                      <option value="">— не указана —</option>
+                      {CONTACT_ROLE_PRESETS.map(r => (
+                        <option key={r} value={r}>{r}</option>
+                      ))}
+                      <option value={CONTACT_ROLE_CUSTOM}>Своя надпись…</option>
+                    </select>
+                  )}
+                </DealFieldBox>
+                <DealFieldBox label="Телефон" hint="Номер Узбекистана. Код +998 уже подставлен — введите остальную часть" error={isFieldMissing('phone')}>
                   <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-                    <input
-                      value={phone}
-                      onChange={e => setPhone(e.target.value)}
-                      placeholder="+998 99 999 9999"
-                      style={{ ...inlineFieldInput, flex: 1, minWidth: 0 }}
-                    />
+                    <div style={{
+                      flex: 1,
+                      minWidth: 0,
+                      display: 'flex',
+                      alignItems: 'center',
+                      gap: 6,
+                    }}>
+                      <span style={{
+                        flexShrink: 0,
+                        fontSize: FS.body,
+                        fontWeight: 700,
+                        color: '#334155',
+                        letterSpacing: '0.02em',
+                        userSelect: 'none',
+                      }}>
+                        {UZ_PHONE_PREFIX}
+                      </span>
+                      <input
+                        value={phone}
+                        onChange={e => setPhone(phoneLocalPart(e.target.value))}
+                        placeholder="99 999 99 99"
+                        inputMode="tel"
+                        autoComplete="tel-national"
+                        style={{ ...inlineFieldInput, flex: 1, minWidth: 0 }}
+                      />
+                    </div>
                     <ContactMessengerButton href={phoneLinks?.telegram} label="Открыть Telegram" color="#229ED9">
                       TG
                     </ContactMessengerButton>
@@ -666,7 +1386,7 @@ export function SaleDealCard({
                     </ContactMessengerButton>
                   </div>
                 </DealFieldBox>
-                <DealFieldBox label="E-mail">
+                <DealFieldBox label="E-mail" hint="Рабочая почта контакта для переписки">
                   <input
                     type="email"
                     value={email}
@@ -681,20 +1401,21 @@ export function SaleDealCard({
             <DealSection title="Параметры сделки">
               <div style={{ display: 'grid', gap: 8 }}>
                 <div>
-                  <div style={fieldLabel}>Услуга *</div>
-                  <select
+                  <FieldLabel hint="Тип услуги, которую продаём по этой сделке" error={isFieldMissing('service_type')}>Услуга *</FieldLabel>
+                  <CompactSelect
                     value={serviceType}
-                    onChange={e => setServiceType(e.target.value)}
-                    style={{ ...fieldInput, ...selectChevronStyle(CHEVRON_SVG_GRAY) }}
-                  >
-                    {DEAL_SERVICES.map(s => (
-                      <option key={s.key} value={s.key}>{s.label}</option>
-                    ))}
-                  </select>
+                    onChange={setServiceType}
+                    ariaLabel="Услуга"
+                    error={isFieldMissing('service_type')}
+                    options={DEAL_SERVICES.map(s => ({ value: s.key, label: s.label }))}
+                  />
+                  {isFieldMissing('service_type') ? (
+                    <div style={{ marginTop: 6, fontSize: 12, fontWeight: 700, color: '#dc2626' }}>заполните данные</div>
+                  ) : null}
                 </div>
                 {canReassignDeal ? (
                   <div>
-                    <div style={fieldLabel}>Ответственный</div>
+                    <FieldLabel hint="МОП, ответственный за ведение сделки">Ответственный</FieldLabel>
                     <select
                       value={assignedId}
                       onChange={e => setAssignedId(e.target.value)}
@@ -705,7 +1426,7 @@ export function SaleDealCard({
                   </div>
                 ) : null}
                 <div>
-                  <div style={fieldLabel}>Бюджет</div>
+                  <FieldLabel hint="Ориентировочный бюджет клиента по сделке">Бюджет</FieldLabel>
                   <div style={{ display: 'flex', gap: 8 }}>
                     <IntegerGroupedInput
                       value={budget}
@@ -724,28 +1445,41 @@ export function SaleDealCard({
                   </div>
                 </div>
                 <div>
-                  <div style={fieldLabel}>Источник лида</div>
-                  <select
+                  <FieldLabel hint="Откуда пришёл лид: сайт, рекомендация, холодный звонок и т.д." error={isFieldMissing('source')}>Источник лида</FieldLabel>
+                  <CompactSelect
                     value={source}
-                    onChange={e => setSource(e.target.value)}
-                    style={{ ...fieldInput, ...selectChevronStyle(CHEVRON_SVG_GRAY) }}
-                  >
-                    <option value="">— не указан —</option>
-                    {SOURCE_OPTIONS.map(s => <option key={s} value={s}>{s}</option>)}
-                  </select>
+                    onChange={setSource}
+                    ariaLabel="Источник лида"
+                    error={isFieldMissing('source')}
+                    options={[
+                      { value: '', label: '— не указан —' },
+                      ...SOURCE_OPTIONS.map(s => ({ value: s, label: s })),
+                    ]}
+                  />
+                  {isFieldMissing('source') ? (
+                    <div style={{ marginTop: 6, fontSize: 12, fontWeight: 700, color: '#dc2626' }}>заполните данные</div>
+                  ) : null}
                 </div>
                 <div>
-                  <div style={fieldLabel}>GEO клиента</div>
-                  <select
+                  <FieldLabel hint="Страна / регион клиента" error={isFieldMissing('client_geo')}>GEO клиента</FieldLabel>
+                  <CompactSelect
                     value={clientGeo}
-                    onChange={e => setClientGeo(e.target.value)}
-                    style={{ ...fieldInput, ...selectChevronStyle(CHEVRON_SVG_GRAY) }}
-                  >
-                    {CLIENT_GEO_OPTIONS.map(g => <option key={g.code} value={g.code}>{g.name}</option>)}
-                  </select>
+                    onChange={setClientGeo}
+                    ariaLabel="GEO клиента"
+                    error={isFieldMissing('client_geo')}
+                    options={[
+                      { value: '', label: '— не указан —' },
+                      ...CLIENT_GEO_OPTIONS.map(g => ({ value: g.code, label: g.name })),
+                    ]}
+                  />
+                  {isFieldMissing('client_geo') ? (
+                    <div style={{ marginTop: 6, fontSize: 12, fontWeight: 700, color: '#dc2626' }}>заполните данные</div>
+                  ) : null}
                 </div>
                 <div>
-                  <div style={fieldLabel}>Комментарий к сделке</div>
+                  <FieldLabel hint="Краткий контекст сделки: договорённости, нюансы, что обсуждали">
+                    Комментарий к сделке
+                  </FieldLabel>
                   <textarea
                     value={shortNote}
                     onChange={e => setShortNote(e.target.value)}
@@ -772,23 +1506,22 @@ export function SaleDealCard({
               confirmDelete ? (
                 <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
                   <span style={{ fontSize: FS.meta, color: '#64748b', fontWeight: 600 }}>Удалить?</span>
-                  <button type="button" title="Подтвердить удаление" onClick={doDelete} style={{ ...iconBtn, ...iconBtnDanger }} aria-label="Подтвердить удаление">✓</button>
-                  <button type="button" title="Отмена" onClick={() => setConfirmDelete(false)} style={{ ...iconBtn, ...iconBtnGhost }} aria-label="Отмена">×</button>
+                  <TipButton tip="Подтвердить удаление" type="button" onClick={doDelete} style={{ ...iconBtn, ...iconBtnDanger }}>✓</TipButton>
+                  <TipButton tip="Отмена" type="button" onClick={() => setConfirmDelete(false)} style={{ ...iconBtn, ...iconBtnGhost }}>×</TipButton>
                 </div>
               ) : (
-                <button type="button" title="Удалить" onClick={() => setConfirmDelete(true)} style={{ ...iconBtn, ...iconBtnGhostDanger }} aria-label="Удалить">🗑</button>
+                <TipButton tip="Удалить сделку" type="button" onClick={() => setConfirmDelete(true)} style={{ ...iconBtn, ...iconBtnGhostDanger }}>🗑</TipButton>
               )
             )}
             {!isNew && !detail?.payment_id && stages.some(s => s.is_closed_won) && (
-              <button
+              <TipButton
+                tip="Закрыть сделку как выигранную ($)"
                 type="button"
-                title="Закрыть сделку"
-                aria-label="Закрыть сделку"
                 onClick={() => setCloseWonOpen(true)}
                 style={{ ...iconBtn, ...iconBtnSuccess }}
               >
                 $
-              </button>
+              </TipButton>
             )}
             {!isNew && detail?.payment_id && (
               <div style={{
@@ -808,10 +1541,9 @@ export function SaleDealCard({
               </div>
             )}
             <div style={{ marginLeft: 'auto', display: 'flex', alignItems: 'center', gap: 6 }}>
-              <button
+              <TipButton
+                tip={isNew ? 'Создать сделку' : 'Сохранить изменения'}
                 type="button"
-                title={isNew ? 'Создать сделку' : 'Сохранить'}
-                aria-label={isNew ? 'Создать сделку' : 'Сохранить'}
                 onClick={() => void saveDeal()}
                 disabled={!canSaveDeal}
                 style={{
@@ -821,7 +1553,7 @@ export function SaleDealCard({
                 }}
               >
                 {saving ? '…' : '✓'}
-              </button>
+              </TipButton>
             </div>
           </div>
         </div>

@@ -34,6 +34,8 @@ type NavItem = {
   salesPipeline?: boolean
   /** Раздел «Продажи» — аналитика */
   salesAnalytics?: boolean
+  /** Раздел «Продажи» — план продаж */
+  salesPlan?: boolean
   /** Раздел «Продажи» — календарь встреч */
   salesCalendar?: boolean
   financeSectionKey?: 'ceo' | 'pl' | 'cashflow' | 'projects_cost' | 'received_payments' | 'expenses' | 'lending'
@@ -129,6 +131,13 @@ const NAV_SECTIONS: NavSection[] = [
         icon: '📈',
         salesAnalytics: true,
         activePathPrefix: '/sales/analytics',
+      },
+      {
+        href: '/sales/plan',
+        label: 'План продаж',
+        icon: '🎯',
+        salesPlan: true,
+        activePathPrefix: '/sales/plan',
       },
       {
         href: '/sales/calendar',
@@ -252,6 +261,7 @@ function filterVisibleNavItems(section: NavSection, user: { role: string; can_vi
     if (n.salesClientBase && user.role !== 'admin') return false
     if (n.salesPipeline) return hasCrmPipelineAccess(user)
     if (n.salesAnalytics) return hasCrmPipelineAccess(user)
+    if (n.salesPlan) return hasCrmPipelineAccess(user)
     if (n.salesCalendar) return hasCrmPipelineAccess(user)
     if (n.salesCompanies) return hasSalesCompaniesAccess(user)
     if (user.role === 'administration') {
@@ -313,13 +323,22 @@ export default function Layout({ children }: { children: ReactNode }) {
     router.pathname.startsWith('/sales/companies') ||
     router.pathname.startsWith('/sales/pipeline') ||
     router.pathname.startsWith('/sales/analytics') ||
+    router.pathname.startsWith('/sales/plan') ||
     router.pathname.startsWith('/sales/calendar')
 
-  // В разделе «Продажи» — сворачиваем в иконки; при уходе — разворачиваем обратно
+  // В «Продажах» режим узкого меню только по явному выбору пользователя (запоминаем).
+  // Не сворачиваем снова при каждом переходе между пунктами раздела.
   useEffect(() => {
+    if (typeof window === 'undefined') return
     if (isSalesRoute) {
-      setSidebarCollapsed(true)
-      setSidebarManualExpand(false)
+      const preferExpanded = window.localStorage.getItem('sales-sidebar-expanded') !== '0'
+      if (preferExpanded) {
+        setSidebarCollapsed(false)
+        setSidebarManualExpand(true)
+      } else {
+        setSidebarCollapsed(true)
+        setSidebarManualExpand(false)
+      }
     } else {
       setSidebarCollapsed(false)
       setSidebarManualExpand(false)
@@ -327,6 +346,11 @@ export default function Layout({ children }: { children: ReactNode }) {
   }, [isSalesRoute])
 
   const sidebarNarrow = isSalesRoute && sidebarCollapsed && !sidebarManualExpand
+
+  const persistSalesSidebarExpanded = (expanded: boolean) => {
+    if (typeof window === 'undefined') return
+    window.localStorage.setItem('sales-sidebar-expanded', expanded ? '1' : '0')
+  }
 
   useEffect(() => {
     if (loading || user) return
@@ -359,10 +383,10 @@ export default function Layout({ children }: { children: ReactNode }) {
   }, [loading, user, router.pathname, router])
 
   useEffect(() => {
-    const salesPaths = ['/sales/pipeline', '/sales/analytics', '/sales/calendar', '/sales/companies', '/sales/client-base']
+    const salesPaths = ['/sales/pipeline', '/sales/analytics', '/sales/calendar', '/sales/companies', '/sales/client-base', '/sales/plan']
     const onSales = salesPaths.some(p => router.pathname.startsWith(p))
     if (!loading && user && onSales && user.role !== 'admin' && user.role !== 'mop') {
-      const pipelinePages = ['/sales/pipeline', '/sales/analytics', '/sales/calendar', '/sales/client-base']
+      const pipelinePages = ['/sales/pipeline', '/sales/analytics', '/sales/calendar', '/sales/client-base', '/sales/plan']
       if (pipelinePages.some(p => router.pathname.startsWith(p)) && !hasCrmPipelineAccess(user)) {
         router.replace(hasSalesCompaniesAccess(user) ? '/sales/companies' : '/')
         return
@@ -571,6 +595,7 @@ export default function Layout({ children }: { children: ReactNode }) {
     const mopNav = [
       { href: '/sales/pipeline', label: 'Воронки', icon: '📊' },
       { href: '/sales/analytics', label: 'Аналитика', icon: '📈' },
+      { href: '/sales/plan', label: 'План продаж', icon: '🎯' },
       { href: '/sales/calendar', label: 'Календарь', icon: '📅' },
       { href: '/sales/companies', label: 'Мои компании', icon: '🏢' },
       { href: '/commissions', label: 'Комиссия', icon: '💰' },
@@ -581,9 +606,11 @@ export default function Layout({ children }: { children: ReactNode }) {
       if (sidebarManualExpand) {
         setSidebarManualExpand(false)
         setSidebarCollapsed(true)
+        persistSalesSidebarExpanded(false)
       } else {
         setSidebarManualExpand(true)
         setSidebarCollapsed(false)
+        persistSalesSidebarExpanded(true)
       }
     }
     return (
@@ -708,9 +735,11 @@ export default function Layout({ children }: { children: ReactNode }) {
     if (sidebarManualExpand) {
       setSidebarManualExpand(false)
       setSidebarCollapsed(true)
+      persistSalesSidebarExpanded(false)
     } else {
       setSidebarManualExpand(true)
       setSidebarCollapsed(false)
+      persistSalesSidebarExpanded(true)
     }
   }
 

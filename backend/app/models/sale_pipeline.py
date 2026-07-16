@@ -66,6 +66,8 @@ class SaleDeal(Base):
     short_note = Column(Text, nullable=True)
     phone = Column(String(80), nullable=True)
     email = Column(String(220), nullable=True)
+    contact_position = Column(String(200), nullable=True)  # должность
+    contact_role = Column(String(120), nullable=True)  # ЛПР / ЛВР / Помощник / своя
     source = Column(String(120), nullable=True)
     client_geo = Column(String(8), nullable=False, default="UZ")
     service_type = Column(String(40), nullable=False, default="seo")

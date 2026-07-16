@@ -34,6 +34,8 @@ from app.api.routes import commissions, subscription_items, access_entries, comp
 from app.api.routes import sale_pipelines
 from app.api.routes import sales_analytics
 from app.api.routes import sales_calendar
+from app.api.routes import sales_plan
+from app.api.routes import sales_automations
 import app.models.commission  # noqa: F401
 import app.models.pm_commission_log  # noqa: F401
 import app.models.sale_pipeline  # noqa: F401 — CRM воронки продаж
@@ -51,6 +53,8 @@ import app.models.lending_record  # noqa: F401 — кредитование
 import app.models.sales_company  # noqa: F401 — продажи / CRM-lite
 import app.models.sale_deal_task  # noqa: F401 — задачи по сделкам
 import app.models.sale_meeting  # noqa: F401 — календарь встреч
+import app.models.sales_plan  # noqa: F401 — план продаж
+import app.models.sale_deal_field_requirement  # noqa: F401 — обязательные поля сделки
 from app.core.config import settings
 from app.core.security import get_current_user, get_password_hash, normalize_email
 from app.models.user import User
@@ -226,6 +230,8 @@ app.include_router(sales_companies.router)
 app.include_router(sale_pipelines.router)
 app.include_router(sales_analytics.router)
 app.include_router(sales_calendar.router)
+app.include_router(sales_plan.router)
+app.include_router(sales_automations.router)
 app.include_router(commissions.router)
 app.include_router(pm_commissions.router)
 app.include_router(subscription_items.router)
@@ -841,6 +847,19 @@ def _migrate():
         "ALTER TABLE sale_deals ADD COLUMN IF NOT EXISTS source VARCHAR(120)",
         "ALTER TABLE sale_deals ADD COLUMN IF NOT EXISTS client_geo VARCHAR(8) NOT NULL DEFAULT 'UZ'",
         "ALTER TABLE sale_deals ADD COLUMN IF NOT EXISTS service_type VARCHAR(40) NOT NULL DEFAULT 'seo'",
+        "ALTER TABLE sale_deals ADD COLUMN IF NOT EXISTS contact_position VARCHAR(200)",
+        "ALTER TABLE sale_deals ADD COLUMN IF NOT EXISTS contact_role VARCHAR(120)",
+        """CREATE TABLE IF NOT EXISTS sale_deal_field_requirements (
+            id SERIAL PRIMARY KEY,
+            company_slug VARCHAR(32) NOT NULL,
+            manager_user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+            required_fields TEXT NOT NULL DEFAULT '[]',
+            created_at TIMESTAMP WITH TIME ZONE DEFAULT now(),
+            updated_at TIMESTAMP WITH TIME ZONE,
+            CONSTRAINT uq_sale_deal_field_req_company_manager UNIQUE (company_slug, manager_user_id)
+        )""",
+        "CREATE INDEX IF NOT EXISTS ix_sale_deal_field_requirements_company_slug ON sale_deal_field_requirements (company_slug)",
+        "CREATE INDEX IF NOT EXISTS ix_sale_deal_field_requirements_manager_user_id ON sale_deal_field_requirements (manager_user_id)",
         """CREATE TABLE IF NOT EXISTS sale_meetings (
             id SERIAL PRIMARY KEY,
             company_slug VARCHAR(32) NOT NULL,
@@ -903,6 +922,45 @@ def _migrate():
              AND p.trashed_at IS NULL
              AND p.is_archived = FALSE
              AND p.status NOT IN ('paid', 'archived', 'postponed')""",
+        """CREATE TABLE IF NOT EXISTS sales_plan_categories (
+            id SERIAL PRIMARY KEY,
+            company_slug VARCHAR(32) NOT NULL,
+            name VARCHAR(200) NOT NULL,
+            color VARCHAR(20) NOT NULL DEFAULT '#3b82f6',
+            avg_check BIGINT,
+            sort_order INTEGER NOT NULL DEFAULT 0,
+            is_archived BOOLEAN NOT NULL DEFAULT FALSE,
+            created_at TIMESTAMP WITH TIME ZONE DEFAULT now(),
+            updated_at TIMESTAMP WITH TIME ZONE
+        )""",
+        "CREATE INDEX IF NOT EXISTS ix_sales_plan_categories_company_slug ON sales_plan_categories (company_slug)",
+        """CREATE TABLE IF NOT EXISTS sales_plan_entries (
+            id SERIAL PRIMARY KEY,
+            company_slug VARCHAR(32) NOT NULL,
+            manager_user_id INTEGER REFERENCES users(id) ON DELETE CASCADE,
+            category_id INTEGER NOT NULL REFERENCES sales_plan_categories(id) ON DELETE CASCADE,
+            year INTEGER NOT NULL,
+            month INTEGER NOT NULL,
+            plan_amount BIGINT NOT NULL DEFAULT 0,
+            fact_amount BIGINT NOT NULL DEFAULT 0,
+            created_at TIMESTAMP WITH TIME ZONE DEFAULT now(),
+            updated_at TIMESTAMP WITH TIME ZONE,
+            CONSTRAINT uq_sales_plan_entry_mgr_cat_year_month UNIQUE (manager_user_id, category_id, year, month)
+        )""",
+        "CREATE INDEX IF NOT EXISTS ix_sales_plan_entries_company_slug ON sales_plan_entries (company_slug)",
+        "CREATE INDEX IF NOT EXISTS ix_sales_plan_entries_category_id ON sales_plan_entries (category_id)",
+        "ALTER TABLE sales_plan_entries ADD COLUMN IF NOT EXISTS manager_user_id INTEGER REFERENCES users(id) ON DELETE CASCADE",
+        "CREATE INDEX IF NOT EXISTS ix_sales_plan_entries_manager_user_id ON sales_plan_entries (manager_user_id)",
+        "ALTER TABLE sales_plan_entries DROP CONSTRAINT IF EXISTS uq_sales_plan_entry_cat_year_month",
+        """DO $$ BEGIN
+            IF NOT EXISTS (
+                SELECT 1 FROM pg_constraint WHERE conname = 'uq_sales_plan_entry_mgr_cat_year_month'
+            ) THEN
+                ALTER TABLE sales_plan_entries
+                    ADD CONSTRAINT uq_sales_plan_entry_mgr_cat_year_month
+                    UNIQUE (manager_user_id, category_id, year, month);
+            END IF;
+        END $$""",
     ]
     for sql in migrations:
         # Защита от случайного удаления данных (разрешены DROP CONSTRAINT / DROP INDEX для миграций схемы)
@@ -1086,6 +1144,11 @@ def _migrate():
             ("commission_id", "ALTER TABLE sale_deals ADD COLUMN commission_id INTEGER REFERENCES commissions(id) ON DELETE SET NULL"),
             ("client_geo", "ALTER TABLE sale_deals ADD COLUMN client_geo VARCHAR(8) NOT NULL DEFAULT 'UZ'"),
             ("service_type", "ALTER TABLE sale_deals ADD COLUMN service_type VARCHAR(40) NOT NULL DEFAULT 'seo'"),
+            ("contact_position", "ALTER TABLE sale_deals ADD COLUMN contact_position VARCHAR(200)"),
+            ("contact_role", "ALTER TABLE sale_deals ADD COLUMN contact_role VARCHAR(120)"),
+        ],
+        "sale_deal_field_requirements": [
+            ("required_fields", "ALTER TABLE sale_deal_field_requirements ADD COLUMN required_fields TEXT NOT NULL DEFAULT '[]'"),
         ],
         "users": [
             ("admin_stored_password", "ALTER TABLE users ADD COLUMN admin_stored_password TEXT"),

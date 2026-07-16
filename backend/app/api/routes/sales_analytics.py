@@ -6,7 +6,7 @@ from datetime import date, datetime, timedelta, timezone
 from decimal import Decimal
 from typing import Any, Dict, List, Optional
 
-from fastapi import APIRouter, Depends, Query
+from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel
 from sqlalchemy import func
 from sqlalchemy.orm import Session, joinedload
@@ -14,8 +14,8 @@ from sqlalchemy.orm import Session, joinedload
 from app.core.security import get_current_user
 from app.db.database import get_db, get_request_company
 from app.models.available_funds_manual import AvailableFundsManual
-from app.models.sale_pipeline import SaleDeal, SaleDealComment, SalePipelineStage
-from app.models.sales_company import SalesCompany, SalesCompanyGroup, SalesCompanyInteraction
+from app.models.sale_pipeline import SaleDeal, SaleDealComment
+from app.models.sales_company import SalesCompany, SalesCompanyInteraction
 from app.models.user import User
 
 router = APIRouter(prefix="/api/sales", tags=["sales-crm"])
@@ -189,12 +189,82 @@ SOURCE_COLORS = {
     "Выставка": "#c4b5fd",
     "Партнёр": "#67e8f9",
     "Другое": "#e2e8f0",
+    "Не указан": "#cbd5e1",
 }
 
 STAGE_FUNNEL_COLORS = [
     "#93c5fd", "#c4b5fd", "#fdba74", "#60a5fa", "#86efac",
     "#fca5a5", "#fb923c", "#f87171", "#ef4444", "#dc2626",
 ]
+
+
+def _build_funnel_from_deals(deals: List[SaleDeal], money_fn) -> List[Dict[str, Any]]:
+    """Воронка только по реальным карточкам сделок (агрегация по имени этапа)."""
+    by_name: Dict[str, Dict[str, Any]] = {}
+    for d in deals:
+        st = d.stage
+        if not st:
+            continue
+        key = (st.name or "").strip() or "Без этапа"
+        row = by_name.get(key)
+        if not row:
+            row = {
+                "name": key,
+                "count": 0,
+                "budget": 0.0,
+                "color": st.color,
+                "sort": int(st.sort_order or 0),
+                "is_won": bool(st.is_closed_won),
+                "is_lost": bool(st.is_closed_lost),
+            }
+            by_name[key] = row
+        row["count"] += 1
+        row["budget"] += float(money_fn(d) or 0)
+        row["sort"] = min(int(row["sort"]), int(st.sort_order or 0))
+        if st.color:
+            row["color"] = st.color
+        row["is_won"] = row["is_won"] or bool(st.is_closed_won)
+        row["is_lost"] = row["is_lost"] or bool(st.is_closed_lost)
+
+    open_rows = [r for r in by_name.values() if r["count"] > 0 and not r["is_won"] and not r["is_lost"]]
+    won_rows = [r for r in by_name.values() if r["count"] > 0 and r["is_won"]]
+    open_rows.sort(key=lambda x: (x["sort"], -x["count"], x["name"]))
+    won_rows.sort(key=lambda x: (-x["count"], x["name"]))
+
+    funnel: List[Dict[str, Any]] = []
+    for i, r in enumerate(open_rows + won_rows):
+        funnel.append({
+            "name": r["name"],
+            "count": int(r["count"]),
+            "budget": float(r["budget"]),
+            "color": r["color"] or STAGE_FUNNEL_COLORS[i % len(STAGE_FUNNEL_COLORS)],
+        })
+    if not funnel and deals:
+        funnel.append({
+            "name": "Сделки",
+            "count": len(deals),
+            "budget": sum(float(money_fn(d) or 0) for d in deals),
+            "color": "#93c5fd",
+        })
+    return funnel
+
+
+def _build_lead_sources_from_deals(deals: List[SaleDeal]) -> List[Dict[str, Any]]:
+    """Источники только из поля source карточек сделок."""
+    source_counts: Dict[str, int] = defaultdict(int)
+    for d in deals:
+        src = (d.source or "").strip() or "Не указан"
+        source_counts[src] += 1
+    total = sum(source_counts.values()) or 1
+    lead_sources: List[Dict[str, Any]] = []
+    for name, cnt in sorted(source_counts.items(), key=lambda x: (-x[1], x[0]))[:8]:
+        lead_sources.append({
+            "name": name,
+            "count": int(cnt),
+            "pct": round(cnt / total * 100),
+            "color": SOURCE_COLORS.get(name, STAGE_FUNNEL_COLORS[len(lead_sources) % 5]),
+        })
+    return lead_sources
 
 
 class AnalyticsOut(BaseModel):
@@ -219,6 +289,7 @@ def sales_analytics(
     date_to: Optional[date] = Query(None),
     display_currency: str = Query("UZS", pattern="^(UZS|USD)$"),
     revenue_period: str = Query("30d", pattern="^(7d|30d|3m|12m)$"),
+    assigned_user_id: Optional[int] = Query(None),
     db: Session = Depends(get_db),
     current_user: User = Depends(_require_sales),
 ):
@@ -250,17 +321,33 @@ def sales_analytics(
         SalesCompany.trashed_at.is_(None),
     )
 
+    mop_ids = get_mop_user_ids(db, slug)
     if current_user.role == "mop" and not is_sales_rop(current_user):
         deals_q = deals_q.filter(SaleDeal.assigned_user_id == current_user.id)
         companies_q = companies_q.filter(SalesCompany.assigned_manager_id == current_user.id)
     elif is_sales_rop(current_user):
-        mop_ids = get_mop_user_ids(db, slug)
         deals_q = deals_q.filter(
             (SaleDeal.assigned_user_id.in_(mop_ids)) | (SaleDeal.assigned_user_id == current_user.id)
+        )
+        companies_q = companies_q.filter(
+            (SalesCompany.assigned_manager_id.in_(mop_ids))
+            | (SalesCompany.assigned_manager_id == current_user.id)
         )
     elif current_user.role in ("manager", "administration"):
         deals_q = deals_q.filter(SaleDeal.assigned_user_id == current_user.id)
         companies_q = companies_q.filter(SalesCompany.assigned_manager_id == current_user.id)
+
+    # Админ / РОП: опциональный фильтр по менеджеру (null = вся видимая команда)
+    if assigned_user_id is not None:
+        if current_user.role == "admin":
+            pass
+        elif is_sales_rop(current_user):
+            if int(assigned_user_id) != int(current_user.id) and int(assigned_user_id) not in mop_ids:
+                raise HTTPException(status_code=403, detail="Нет доступа к аналитике этого менеджера")
+        elif int(assigned_user_id) != int(current_user.id):
+            raise HTTPException(status_code=403, detail="Нет доступа к аналитике этого менеджера")
+        deals_q = deals_q.filter(SaleDeal.assigned_user_id == assigned_user_id)
+        companies_q = companies_q.filter(SalesCompany.assigned_manager_id == assigned_user_id)
 
     deals = deals_q.options(joinedload(SaleDeal.stage), joinedload(SaleDeal.assigned_user)).all()
     companies_all = companies_q.options(
@@ -291,7 +378,7 @@ def sales_analytics(
     def _company_created(c: SalesCompany) -> Optional[datetime]:
         return _naive_dt(c.created_at)
 
-    # ── KPIs ──────────────────────────────────────────────────────────────
+    # ── KPIs (по карточкам сделок менеджера + клиентская база) ────────────
     total_revenue = sum(_deal_money(d) for d in deals)
     deals_this = [d for d in deals if (c := _deal_created(d)) and c >= this_month]
     deals_prev = [d for d in deals if (c := _deal_created(d)) and prev_month <= c < this_month]
@@ -312,99 +399,67 @@ def sales_analytics(
     kpis = {
         "total_revenue": total_revenue,
         "total_revenue_change_pct": _pct_change(rev_this, rev_prev),
-        "total_leads": len(companies),
-        "total_leads_change_pct": _pct_change(len(companies_this), len(companies_prev)),
+        # Лиды = карточки сделок в выбранном срезе менеджера / периода
+        "total_leads": len(deals),
+        "total_leads_change_pct": _pct_change(len(deals_this), len(deals_prev)),
         "new_customers": len(companies_this),
         "new_customers_change_pct": _pct_change(len(companies_this), len(companies_prev)),
         "conversion_rate": round(conv, 1),
         "conversion_rate_change_pct": round(conv * 0.1, 1),
         "active_deals": len(active),
-        "active_deals_change_pct": _pct_change(len([d for d in deals_this if d in active]), max(1, len(deals_prev))),
+        "active_deals_change_pct": _pct_change(
+            len([d for d in deals_this if d.stage and not d.stage.is_closed_won and not d.stage.is_closed_lost]),
+            max(1, len([d for d in deals_prev if d.stage and not d.stage.is_closed_won and not d.stage.is_closed_lost])),
+        ),
         "total_deals": len(deals),
         "customer_retention": round(retention, 1),
         "customer_retention_count": len(companies),
     }
 
-    # ── Revenue performance (by selected period) ──────────────────────────
+    # ── Revenue performance — тот же срез карточек, что и KPI (с датами) ──
     revenue_performance = _build_revenue_performance(
-        deals_all,
+        deals,
         now,
         revenue_period,
         _deal_money,
     )
 
-    # ── Funnel by pipeline stages ─────────────────────────────────────────
-    stages = (
-        db.query(SalePipelineStage)
-        .filter(SalePipelineStage.company_slug == slug)
-        .order_by(SalePipelineStage.sort_order)
-        .all()
-    )
-    stage_deal_counts: Dict[int, int] = defaultdict(int)
-    stage_deal_budget: Dict[int, float] = defaultdict(float)
-    for d in deals:
-        if d.stage_id:
-            stage_deal_counts[d.stage_id] += 1
-            stage_deal_budget[d.stage_id] += _deal_money(d)
-
-    funnel: List[Dict[str, Any]] = []
-    stage_rows: List[Dict[str, Any]] = []
-    for st in stages:
-        cnt = stage_deal_counts.get(st.id, 0)
-        if cnt > 0 or st.is_closed_won or st.is_closed_lost:
-            stage_rows.append({
-                "name": st.name,
-                "count": cnt,
-                "budget": stage_deal_budget.get(st.id, 0),
-                "color": st.color or STAGE_FUNNEL_COLORS[len(stage_rows) % len(STAGE_FUNNEL_COLORS)],
-                "sort": st.sort_order,
-            })
-    if not stage_rows and deals:
-        stage_rows.append({"name": "Сделки", "count": len(deals), "budget": total_revenue, "color": "#93c5fd", "sort": 0})
-    stage_rows.sort(key=lambda x: x["count"])
-    funnel = stage_rows
-    if len(companies) > 0:
-        funnel.append({
-            "name": "Лиды",
-            "count": len(companies),
-            "budget": 0,
-            "color": "#86efac",
-        })
-
-    # ── Lead sources (from deals + companies) ─────────────────────────────
-    source_counts: Dict[str, int] = defaultdict(int)
-    for d in deals:
-        src = (d.source or "").strip() or "Не указан"
-        source_counts[src] += 1
-    for c in companies:
-        if c.group and c.group.name:
-            source_counts[f"Ниша: {c.group.name}"] += 1
-    total_src = sum(source_counts.values()) or 1
-    lead_sources = []
-    for name, cnt in sorted(source_counts.items(), key=lambda x: -x[1])[:5]:
-        lead_sources.append({
-            "name": name,
-            "count": cnt,
-            "pct": round(cnt / total_src * 100),
-            "color": SOURCE_COLORS.get(name.split(":")[0].strip(), STAGE_FUNNEL_COLORS[len(lead_sources) % 5]),
-        })
+    # ── Funnel / sources — строго из карточек сделок менеджера ─────────────
+    funnel = _build_funnel_from_deals(deals, _deal_money)
+    lead_sources = _build_lead_sources_from_deals(deals)
 
     # ── Team activities (from comments + interactions) ────────────────────
-    comments_count = (
-        db.query(func.count(SaleDealComment.id))
-        .filter(SaleDealComment.company_slug == slug, SaleDealComment.kind == "comment")
-        .scalar()
-    ) or 0
-    interactions_count = (
-        db.query(func.count(SalesCompanyInteraction.id))
-        .filter(SalesCompanyInteraction.company_slug == slug)
-        .scalar()
-    ) or 0
-    stage_changes = (
-        db.query(func.count(SaleDealComment.id))
-        .filter(SaleDealComment.company_slug == slug, SaleDealComment.kind == "stage_change")
-        .scalar()
-    ) or 0
+    scoped_deal_ids = [int(d.id) for d in deals_all]
+    scoped_company_ids = [int(c.id) for c in companies_all]
+
+    comments_q = db.query(func.count(SaleDealComment.id)).filter(
+        SaleDealComment.company_slug == slug,
+        SaleDealComment.kind == "comment",
+    )
+    stage_q = db.query(func.count(SaleDealComment.id)).filter(
+        SaleDealComment.company_slug == slug,
+        SaleDealComment.kind == "stage_change",
+    )
+    interactions_q = db.query(func.count(SalesCompanyInteraction.id)).filter(
+        SalesCompanyInteraction.company_slug == slug,
+    )
+    if assigned_user_id is not None or current_user.role != "admin":
+        if scoped_deal_ids:
+            comments_q = comments_q.filter(SaleDealComment.deal_id.in_(scoped_deal_ids))
+            stage_q = stage_q.filter(SaleDealComment.deal_id.in_(scoped_deal_ids))
+        else:
+            comments_q = comments_q.filter(SaleDealComment.id == -1)
+            stage_q = stage_q.filter(SaleDealComment.id == -1)
+        if scoped_company_ids:
+            interactions_q = interactions_q.filter(
+                SalesCompanyInteraction.sales_company_id.in_(scoped_company_ids)
+            )
+        else:
+            interactions_q = interactions_q.filter(SalesCompanyInteraction.id == -1)
+
+    comments_count = comments_q.scalar() or 0
+    interactions_count = interactions_q.scalar() or 0
+    stage_changes = stage_q.scalar() or 0
     new_deals = len(deals)
     team_activities = [
         {"name": "Звонки / контакты", "count": interactions_count, "color": "#86efac"},
@@ -494,13 +549,18 @@ def sales_analytics(
     )[:3]
 
     # ── Recent activities ─────────────────────────────────────────────────
-    recent_comments = (
+    recent_comments_q = (
         db.query(SaleDealComment)
         .options(joinedload(SaleDealComment.created_by_user), joinedload(SaleDealComment.deal))
         .filter(SaleDealComment.company_slug == slug)
-        .order_by(SaleDealComment.created_at.desc())
-        .limit(8)
-        .all()
+    )
+    if assigned_user_id is not None or current_user.role != "admin":
+        if scoped_deal_ids:
+            recent_comments_q = recent_comments_q.filter(SaleDealComment.deal_id.in_(scoped_deal_ids))
+        else:
+            recent_comments_q = recent_comments_q.filter(SaleDealComment.id == -1)
+    recent_comments = (
+        recent_comments_q.order_by(SaleDealComment.created_at.desc()).limit(8).all()
     )
     recent_activities: List[Dict[str, Any]] = []
     for c in recent_comments:

@@ -1110,7 +1110,7 @@ export default function UsersPage() {
                 disabled={form.role !== 'mop' && form.can_view_crm !== 'true'}
               >
                 <option value="false">Нет — только свои сделки</option>
-                <option value="true">Да — видит сделки всех МОПов + свои отдельно</option>
+                <option value="true">Да — сделки всех МОПов, свои отдельно + настройка обязательных полей</option>
               </Select>
             </Field>
           </>

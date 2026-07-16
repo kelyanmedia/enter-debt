@@ -1,5 +1,6 @@
 """Проверка прав CRM: МОП, РОП, can_view_crm vs can_view_sales."""
 from types import SimpleNamespace
+from unittest.mock import MagicMock, patch
 
 from app.services.sales_access import (
     deal_visible_for_user,
@@ -55,3 +56,31 @@ def test_rop_scope_and_team_deals():
     assert deal_visible_for_user(team, rop, mop_ids, "team") is True
     assert deal_visible_for_user(other, rop, mop_ids, "team") is False
     assert deal_visible_for_user(own, rop, mop_ids, "mine") is True
+
+
+def test_automations_admin_and_rop_only():
+    from app.services.sales_access import can_edit_deal_field_automations
+
+    admin = _user(role="admin")
+    rop = _user(role="mop", is_sales_rop=True)
+    mop = _user(role="mop", is_sales_rop=False)
+    manager = _user(role="manager", can_view_crm=True, is_sales_rop=False)
+
+    assert can_edit_deal_field_automations(admin) is True
+    assert can_edit_deal_field_automations(rop) is True
+    assert can_edit_deal_field_automations(mop) is False
+    assert can_edit_deal_field_automations(manager) is False
+
+
+def test_rop_may_edit_plain_mop_not_peer_rop():
+    from app.api.routes import sales_automations as sa
+
+    rop = _user(id=1, role="mop", is_sales_rop=True)
+    plain = _user(id=2, role="mop", is_sales_rop=False)
+    peer = _user(id=3, role="mop", is_sales_rop=True)
+    db = MagicMock()
+
+    with patch.object(sa, "get_mop_user_ids", return_value={2, 3}):
+        assert sa._rop_may_edit_manager(db, "co", rop, plain) is True
+        assert sa._rop_may_edit_manager(db, "co", rop, peer) is False
+        assert sa._rop_may_edit_manager(db, "co", rop, rop) is True

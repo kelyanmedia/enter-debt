@@ -33,3 +33,8 @@ export function canManageCrmStructure(user: SalesAccessUser | null | undefined):
 export function canBrowseTeamManagers(user: SalesAccessUser | null | undefined): boolean {
   return user?.role === 'admin' || isSalesRop(user)
 }
+
+/** Админ или РОП — настройка обязательных полей сделки. Обычный МОП — нет. */
+export function canEditDealFieldAutomations(user: SalesAccessUser | null | undefined): boolean {
+  return user?.role === 'admin' || isSalesRop(user)
+}

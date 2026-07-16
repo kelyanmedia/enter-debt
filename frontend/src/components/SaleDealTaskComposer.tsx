@@ -120,7 +120,7 @@ export function SaleDealComposer({
           flexWrap: 'wrap',
           alignItems: 'center',
           gap: 8,
-          fontSize: 13,
+          fontSize: 15,
           color: '#475569',
         }}>
           <select
@@ -129,8 +129,8 @@ export function SaleDealComposer({
             style={{
               border: '1px solid #e2e8f0',
               borderRadius: 6,
-              padding: '5px 8px',
-              fontSize: 13,
+              padding: '6px 10px',
+              fontSize: 15,
               fontFamily: 'inherit',
               background: '#fff',
             }}
@@ -142,7 +142,7 @@ export function SaleDealComposer({
           <DateTimePicker
             value={dueAt}
             onChange={v => setDueAt(v)}
-            style={{ fontSize: 13 }}
+            style={{ fontSize: 15 }}
           />
           <select
             value={remindMin}
@@ -150,8 +150,8 @@ export function SaleDealComposer({
             style={{
               border: '1px solid #e2e8f0',
               borderRadius: 6,
-              padding: '5px 8px',
-              fontSize: 13,
+              padding: '6px 10px',
+              fontSize: 15,
               fontFamily: 'inherit',
               background: '#fff',
             }}
@@ -160,7 +160,7 @@ export function SaleDealComposer({
               <option key={m} value={m}>🔔 за {m} мин</option>
             ))}
           </select>
-          <span style={{ color: '#94a3b8', fontSize: 12 }}>{dealTitle}</span>
+          <span style={{ color: '#94a3b8', fontSize: 14 }}>{dealTitle}</span>
         </div>
       )}
 
@@ -174,7 +174,7 @@ export function SaleDealComposer({
               border: 'none',
               padding: 0,
               cursor: 'pointer',
-              fontSize: 13,
+              fontSize: 15,
               fontWeight: 700,
               color: '#2563eb',
               fontFamily: 'inherit',
@@ -195,7 +195,7 @@ export function SaleDealComposer({
               border: '1px solid #e2e8f0',
               borderRadius: 8,
               boxShadow: '0 6px 20px rgba(0,0,0,.1)',
-              minWidth: 140,
+              minWidth: 150,
               overflow: 'hidden',
             }}>
               {(['note', 'task'] as ComposeMode[]).map(m => (
@@ -207,11 +207,11 @@ export function SaleDealComposer({
                     display: 'block',
                     width: '100%',
                     textAlign: 'left',
-                    padding: '8px 12px',
+                    padding: '10px 14px',
                     border: 'none',
                     background: mode === m ? '#f1f5f9' : '#fff',
                     cursor: 'pointer',
-                    fontSize: 13,
+                    fontSize: 15,
                     fontFamily: 'inherit',
                     fontWeight: mode === m ? 700 : 400,
                   }}
@@ -225,7 +225,7 @@ export function SaleDealComposer({
 
         <div style={{
           border: '1px solid #dfe3ea',
-          borderRadius: 6,
+          borderRadius: 8,
           background: '#fafbfc',
           overflow: 'hidden',
         }}>
@@ -240,8 +240,8 @@ export function SaleDealComposer({
               boxSizing: 'border-box',
               border: 'none',
               outline: 'none',
-              padding: '10px 12px',
-              fontSize: 14,
+              padding: '12px 14px',
+              fontSize: 16,
               fontFamily: 'inherit',
               resize: 'none',
               color: '#0f172a',
@@ -258,15 +258,15 @@ export function SaleDealComposer({
         </div>
 
         {taskError && (
-          <div style={{ color: '#dc2626', fontSize: 12, marginTop: 6 }}>{taskError}</div>
+          <div style={{ color: '#dc2626', fontSize: 14, marginTop: 6 }}>{taskError}</div>
         )}
 
         <div style={{
           display: 'flex',
           justifyContent: 'space-between',
           alignItems: 'center',
-          marginTop: 6,
-          fontSize: 11,
+          marginTop: 8,
+          fontSize: 13,
           color: '#94a3b8',
         }}>
           <span>{mode === 'note' ? 'Ctrl+Enter — отправить' : `${fmtDateShort(dueDate)} · Ctrl+Enter`}</span>
@@ -278,7 +278,7 @@ export function SaleDealComposer({
               border: 'none',
               background: 'none',
               color: saving || (mode === 'note' && !text.trim()) ? '#cbd5e1' : '#2563eb',
-              fontSize: 13,
+              fontSize: 15,
               fontWeight: 700,
               cursor: saving || (mode === 'note' && !text.trim()) ? 'default' : 'pointer',
               fontFamily: 'inherit',

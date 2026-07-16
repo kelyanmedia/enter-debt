@@ -19,6 +19,11 @@ from app.models.user import User
 
 router = APIRouter(prefix="/api/sales", tags=["sales-crm"])
 
+from app.services.deal_field_requirements import (
+    get_required_fields_for_manager,
+    missing_field_labels,
+    missing_required_fields,
+)
 from app.services.sales_access import (
     assert_deal_access,
     assert_manager_filter,
@@ -105,6 +110,8 @@ class DealIn(BaseModel):
     company_name: Optional[str] = Field(None, max_length=300)
     phone: Optional[str] = Field(None, max_length=80)
     email: Optional[str] = Field(None, max_length=220)
+    contact_position: Optional[str] = Field(None, max_length=200)
+    contact_role: Optional[str] = Field(None, max_length=120)
     source: Optional[str] = Field(None, max_length=120)
     client_geo: Optional[str] = Field(default="UZ", max_length=8)
     service_type: Optional[str] = Field(default="seo", max_length=40)
@@ -124,6 +131,8 @@ class DealUpdate(BaseModel):
     company_name: Optional[str] = Field(None, max_length=300)
     phone: Optional[str] = Field(None, max_length=80)
     email: Optional[str] = Field(None, max_length=220)
+    contact_position: Optional[str] = Field(None, max_length=200)
+    contact_role: Optional[str] = Field(None, max_length=120)
     source: Optional[str] = Field(None, max_length=120)
     client_geo: Optional[str] = Field(None, max_length=8)
     service_type: Optional[str] = Field(None, max_length=40)
@@ -160,6 +169,8 @@ class DealOut(BaseModel):
     company_name: Optional[str]
     phone: Optional[str] = None
     email: Optional[str] = None
+    contact_position: Optional[str] = None
+    contact_role: Optional[str] = None
     source: Optional[str] = None
     client_geo: Optional[str] = None
     service_type: str = "seo"
@@ -348,6 +359,8 @@ def _deal_out(d: SaleDeal) -> DealOut:
         company_name=d.company_name,
         phone=d.phone,
         email=d.email,
+        contact_position=d.contact_position,
+        contact_role=d.contact_role,
         source=d.source,
         client_geo=d.client_geo or "UZ",
         service_type=normalize_service_type(d.service_type),
@@ -461,19 +474,20 @@ def create_pipeline(
     db.add(p)
     db.flush()
 
-    # Стандартные этапы — как в amoCRM-воронке (скрин референс)
+    # Стандартные этапы — цвета: воронка → ожидание → отказы → выигрыш
     default_stages = [
-        ("ПЕРВИЧНЫЙ КОНТАКТ", "#b8c0cc", False, False),
-        ("В РАБОТЕ", "#6ba3d6", False, False),
-        ("ОТПРАВКА КП", "#4a90d9", False, False),
-        ("ОЖИДАНИЕ", "#3a7bc8", False, False),
-        ("НЕДОСТУПЕН", "#e74c3c", False, True),
-        ("НЕ ИНТЕРЕСУЕТ", "#ff7f6e", False, True),
-        ("ВЫБРАЛИ ДРУГИХ", "#ff7f6e", False, True),
-        ("ВЫСОКАЯ ЦЕНА", "#ff7f6e", False, True),
-        ("НЕЦЕЛЕВОЙ", "#ff7f6e", False, True),
-        ("НЕ НАШ ПРОФИЛЬ РАБОТЫ", "#ff7f6e", False, True),
-        ("НЕ ВЫШЛИ НА ЛПР", "#ff7f6e", False, True),
+        ("ПЕРВИЧНЫЙ КОНТАКТ", "#94a3b8", False, False),
+        ("В РАБОТЕ", "#3b82f6", False, False),
+        ("ОТПРАВКА КП", "#8b5cf6", False, False),
+        ("ОЖИДАНИЕ", "#f59e0b", False, False),
+        ("НЕДОСТУПЕН", "#ef4444", False, True),
+        ("НЕ ИНТЕРЕСУЕТ", "#f97316", False, True),
+        ("ВЫБРАЛИ ДРУГИХ", "#fb7185", False, True),
+        ("ВЫСОКАЯ ЦЕНА", "#eab308", False, True),
+        ("НЕЦЕЛЕВОЙ", "#a855f7", False, True),
+        ("НЕ НАШ ПРОФИЛЬ РАБОТЫ", "#64748b", False, True),
+        ("НЕ ВЫШЛИ НА ЛПР", "#ec4899", False, True),
+        ("СДЕЛКА ВЫИГРАНА", "#22c55e", True, False),
     ]
     for i, (name, color, won, lost) in enumerate(default_stages):
         st = SalePipelineStage(
@@ -747,6 +761,8 @@ def create_deal(
         company_name=(body.company_name or "").strip() or None,
         phone=(body.phone or "").strip() or None,
         email=(body.email or "").strip() or None,
+        contact_position=(body.contact_position or "").strip() or None,
+        contact_role=(body.contact_role or "").strip() or None,
         source=(body.source or "").strip() or None,
         client_geo=normalize_client_geo(body.client_geo),
         service_type=normalize_service_type(body.service_type),
@@ -825,6 +841,21 @@ def update_deal(
     new_stage_name = old_stage_name
     if "stage_id" in dump:
         new_stage = dump["stage_id"]
+        if new_stage != d.stage_id:
+            # Автоматизации: нельзя двигать сделку с незаполненными обязательными полями (даже админу)
+            reqs = get_required_fields_for_manager(
+                db, get_request_company(), d.assigned_user_id
+            )
+            missing = missing_required_fields(d, reqs)
+            if missing:
+                labels = ", ".join(missing_field_labels(missing))
+                raise HTTPException(
+                    status_code=400,
+                    detail=(
+                        "Нельзя перенести сделку: заполните обязательные поля "
+                        f"({labels})"
+                    ),
+                )
         if new_stage is not None:
             st = (
                 db.query(SalePipelineStage)
@@ -861,6 +892,10 @@ def update_deal(
         d.phone = (dump["phone"] or "").strip() or None
     if "email" in dump:
         d.email = (dump["email"] or "").strip() or None
+    if "contact_position" in dump:
+        d.contact_position = (dump["contact_position"] or "").strip() or None
+    if "contact_role" in dump:
+        d.contact_role = (dump["contact_role"] or "").strip() or None
     if "source" in dump:
         d.source = (dump["source"] or "").strip() or None
     if "client_geo" in dump:
@@ -878,7 +913,7 @@ def update_deal(
     if "tags" in dump:
         d.tags = json.dumps(normalize_deal_tags(dump["tags"]))
     if "assigned_user_id" in dump:
-        if is_sales_rop(current_user):
+        if current_user.role == "admin" or is_sales_rop(current_user):
             d.assigned_user_id = dump["assigned_user_id"]
     if "sort_order" in dump:
         d.sort_order = dump["sort_order"]
