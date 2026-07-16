@@ -257,7 +257,7 @@ const inlineFieldInput: React.CSSProperties = {
   outline: 'none',
   background: 'transparent',
   fontSize: FS.body,
-  color: '#0f172a',
+  color: 'inherit',
   fontFamily: 'inherit',
   padding: 0,
   lineHeight: 1.3,
@@ -499,8 +499,7 @@ function CompactSelect({
           justifyContent: 'space-between',
           textAlign: 'left',
           cursor: 'pointer',
-          color: current ? '#0f172a' : '#94a3b8',
-          ...(error ? { borderColor: '#ef4444', background: '#fef2f2' } : {}),
+          color: error ? '#dc2626' : (current ? '#0f172a' : '#94a3b8'),
         }}
       >
         <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', paddingRight: 8 }}>
@@ -592,15 +591,14 @@ function DealFieldBox({
 }) {
   return (
     <div style={{
-      border: `1px solid ${error ? '#ef4444' : '#d1d9e6'}`,
+      border: '1px solid #d1d9e6',
       borderRadius: 7,
       padding: '6px 8px',
-      background: error ? '#fef2f2' : '#fff',
-      boxShadow: error ? '0 0 0 1px rgba(239,68,68,.25)' : undefined,
+      background: '#fff',
     }}>
       <div style={{
         fontSize: FS.label,
-        color: error ? '#b91c1c' : '#64748b',
+        color: error ? '#dc2626' : '#64748b',
         marginBottom: 4,
         fontWeight: 600,
         display: 'flex',
@@ -609,19 +607,16 @@ function DealFieldBox({
         <span>{label}</span>
         {hint ? <HintIcon text={hint} /> : null}
       </div>
-      {children}
-      {error ? (
-        <div style={{ marginTop: 6, fontSize: 12, fontWeight: 700, color: '#dc2626' }}>
-          заполните данные
-        </div>
-      ) : null}
+      <div style={{ color: error ? '#dc2626' : '#0f172a' }}>
+        {children}
+      </div>
     </div>
   )
 }
 
 function FieldLabel({ children, hint, error }: { children: React.ReactNode; hint?: string; error?: boolean }) {
   return (
-    <div style={{ ...fieldLabel, display: 'flex', alignItems: 'center', color: error ? '#b91c1c' : fieldLabel.color }}>
+    <div style={{ ...fieldLabel, display: 'flex', alignItems: 'center', color: error ? '#dc2626' : fieldLabel.color }}>
       <span>{children}</span>
       {hint ? <HintIcon text={hint} /> : null}
     </div>
@@ -1910,20 +1905,6 @@ export function SaleDealCard({
           {/* Контент */}
           <div style={{ flex: 1, overflowY: 'auto', padding: '8px 10px 12px', display: 'flex', flexDirection: 'column', gap: 8 }}>
             <DealSection title="Контакты">
-              {missingRequired.length > 0 && (
-                <div style={{
-                  marginBottom: 8,
-                  padding: '10px 12px',
-                  borderRadius: 10,
-                  background: '#fef2f2',
-                  border: '1px solid #fecaca',
-                  color: '#b91c1c',
-                  fontSize: 13,
-                  fontWeight: 700,
-                }}>
-                  Заполните данные — без обязательных полей сделку сохранить нельзя
-                </div>
-              )}
               <div style={{ display: 'grid', gridTemplateColumns: '1fr', gap: 6 }}>
                 <DealFieldBox label="Компания" hint="Название компании клиента или бренда" error={isFieldMissing('company_name')}>
                   <input
@@ -2068,9 +2049,6 @@ export function SaleDealCard({
                     error={isFieldMissing('service_type')}
                     options={DEAL_SERVICES.map(s => ({ value: s.key, label: s.label }))}
                   />
-                  {isFieldMissing('service_type') ? (
-                    <div style={{ marginTop: 6, fontSize: 12, fontWeight: 700, color: '#dc2626' }}>заполните данные</div>
-                  ) : null}
                 </div>
                 {canReassignDeal ? (
                   <div>
@@ -2115,9 +2093,6 @@ export function SaleDealCard({
                       ...SOURCE_OPTIONS.map(s => ({ value: s, label: s })),
                     ]}
                   />
-                  {isFieldMissing('source') ? (
-                    <div style={{ marginTop: 6, fontSize: 12, fontWeight: 700, color: '#dc2626' }}>заполните данные</div>
-                  ) : null}
                 </div>
                 <div>
                   <FieldLabel hint="Страна / регион клиента" error={isFieldMissing('client_geo')}>GEO клиента</FieldLabel>
@@ -2131,9 +2106,6 @@ export function SaleDealCard({
                       ...CLIENT_GEO_OPTIONS.map(g => ({ value: g.code, label: g.name })),
                     ]}
                   />
-                  {isFieldMissing('client_geo') ? (
-                    <div style={{ marginTop: 6, fontSize: 12, fontWeight: 700, color: '#dc2626' }}>заполните данные</div>
-                  ) : null}
                 </div>
                 <div>
                   <FieldLabel hint="Краткий контекст сделки: договорённости, нюансы, что обсуждали">

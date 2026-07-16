@@ -224,20 +224,17 @@ function DealCard({
   const metaLine = metaParts.join(', ')
   const dateStr = fmtDate(deal.updated_at || deal.created_at)
   const showRed = Boolean(blocked || flashRed)
-  const borderColor = showRed
-    ? '#ef4444'
-    : isDragging
-      ? accent + '66'
-      : hovered
-        ? accent
-        : '#dfe3ea'
-  const bg = showRed
-    ? '#fef2f2'
-    : isDragging
-      ? '#fafbfc'
-      : hovered
-        ? '#f8fafc'
-        : '#fff'
+  const borderColor = isDragging
+    ? accent + '66'
+    : hovered
+      ? accent
+      : '#dfe3ea'
+  const bg = isDragging
+    ? '#fafbfc'
+    : hovered
+      ? '#f8fafc'
+      : '#fff'
+  const textWarn = showRed ? '#dc2626' : undefined
 
   return (
     <div
@@ -258,13 +255,11 @@ function DealCard({
         marginBottom: 8,
         cursor: blocked ? 'not-allowed' : 'grab',
         opacity: isDragging ? 0.75 : 1,
-        boxShadow: showRed
-          ? '0 0 0 2px rgba(239,68,68,.35)'
-          : isDragging
-            ? '0 4px 16px rgba(15,23,42,.1)'
-            : hovered
-              ? `0 8px 20px rgba(15,23,42,.12), 0 0 0 1px ${accent}33`
-              : '0 1px 2px rgba(15,23,42,.04)',
+        boxShadow: isDragging
+          ? '0 4px 16px rgba(15,23,42,.1)'
+          : hovered
+            ? `0 8px 20px rgba(15,23,42,.12), 0 0 0 1px ${accent}33`
+            : '0 1px 2px rgba(15,23,42,.04)',
         border: `1px solid ${borderColor}`,
         userSelect: 'none',
         transform: hovered && !isDragging ? 'translateY(-2px)' : 'translateY(0)',
@@ -274,7 +269,7 @@ function DealCard({
       <div style={{ display: 'flex', justifyContent: 'space-between', gap: 10, alignItems: 'flex-start' }}>
         <div style={{
           fontSize: 12,
-          color: '#64748b',
+          color: textWarn || '#64748b',
           lineHeight: 1.35,
           minWidth: 0,
           flex: 1,
@@ -284,7 +279,7 @@ function DealCard({
         }}>
           {metaLine || '—'}
         </div>
-        <div style={{ fontSize: 12, color: '#94a3b8', flexShrink: 0, lineHeight: 1.35 }}>
+        <div style={{ fontSize: 12, color: textWarn || '#94a3b8', flexShrink: 0, lineHeight: 1.35 }}>
           {dateStr}
         </div>
       </div>
@@ -292,7 +287,7 @@ function DealCard({
       <div style={{
         fontSize: 13,
         fontWeight: 700,
-        color: '#2563eb',
+        color: textWarn || '#2563eb',
         marginTop: 5,
         lineHeight: 1.35,
         letterSpacing: '.015em',
@@ -306,7 +301,7 @@ function DealCard({
       {deal.notes?.trim() && (
         <div style={{
           fontSize: 12,
-          color: '#475569',
+          color: textWarn || '#475569',
           marginTop: 5,
           lineHeight: 1.4,
           overflow: 'hidden',
