@@ -217,6 +217,7 @@ function DealCard({
   onClick: () => void
   accent: string
 }) {
+  const [hovered, setHovered] = useState(false)
   const task = deal.next_task
   const taskOverdue = task ? isTaskOverdue(task.due_at) : false
   const metaParts = [deal.contact_name, deal.company_name].filter(Boolean)
@@ -225,8 +226,18 @@ function DealCard({
   const showRed = Boolean(blocked || flashRed)
   const borderColor = showRed
     ? '#ef4444'
-    : (isDragging ? accent + '66' : '#dfe3ea')
-  const bg = showRed ? '#fef2f2' : (isDragging ? '#fafbfc' : '#fff')
+    : isDragging
+      ? accent + '66'
+      : hovered
+        ? accent
+        : '#dfe3ea'
+  const bg = showRed
+    ? '#fef2f2'
+    : isDragging
+      ? '#fafbfc'
+      : hovered
+        ? '#f8fafc'
+        : '#fff'
 
   return (
     <div
@@ -237,6 +248,8 @@ function DealCard({
       onPointerDown={() => {
         if (blocked) onDragStart()
       }}
+      onMouseEnter={() => setHovered(true)}
+      onMouseLeave={() => setHovered(false)}
       title={blocked ? 'Заполните обязательные поля — перенос заблокирован автоматизацией' : undefined}
       style={{
         background: bg,
@@ -247,10 +260,15 @@ function DealCard({
         opacity: isDragging ? 0.75 : 1,
         boxShadow: showRed
           ? '0 0 0 2px rgba(239,68,68,.35)'
-          : (isDragging ? '0 4px 16px rgba(15,23,42,.1)' : 'none'),
+          : isDragging
+            ? '0 4px 16px rgba(15,23,42,.1)'
+            : hovered
+              ? `0 8px 20px rgba(15,23,42,.12), 0 0 0 1px ${accent}33`
+              : '0 1px 2px rgba(15,23,42,.04)',
         border: `1px solid ${borderColor}`,
         userSelect: 'none',
-        transition: 'border-color .15s, box-shadow .15s, opacity .15s, background .15s',
+        transform: hovered && !isDragging ? 'translateY(-2px)' : 'translateY(0)',
+        transition: 'border-color .15s, box-shadow .15s, opacity .15s, background .15s, transform .15s',
       }}
     >
       <div style={{ display: 'flex', justifyContent: 'space-between', gap: 10, alignItems: 'flex-start' }}>

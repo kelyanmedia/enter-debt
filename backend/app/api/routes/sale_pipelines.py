@@ -2,14 +2,18 @@
 from __future__ import annotations
 
 import json
+import re
+import uuid
 from datetime import datetime, timedelta, timezone, date
 from decimal import Decimal
+from pathlib import Path
 from typing import List, Optional
 
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, Depends, File, Form, HTTPException, Query, UploadFile
 from pydantic import BaseModel, Field
 from sqlalchemy import func
 from sqlalchemy.orm import Session, joinedload
+from starlette.responses import FileResponse
 
 from app.db.database import get_db, get_request_company
 from app.core.security import get_current_user
@@ -18,6 +22,12 @@ from app.models.sale_pipeline import SaleDeal, SaleDealComment, SalePipeline, Sa
 from app.models.user import User
 
 router = APIRouter(prefix="/api/sales", tags=["sales-crm"])
+
+COMMENT_UPLOAD_DIR = Path(__file__).resolve().parent.parent.parent.parent / "uploads" / "deal_comments"
+MAX_COMMENT_IMAGE_BYTES = 4 * 1024 * 1024
+MAX_COMMENT_IMAGES = 6
+_COMMENT_IMAGE_EXT = frozenset({".jpg", ".jpeg", ".png", ".webp", ".gif"})
+_SAFE_IMAGE_NAME = re.compile(r"^[a-f0-9]{32}\.(jpg|jpeg|png|webp|gif)$", re.I)
 
 from app.services.deal_field_requirements import (
     get_required_fields_for_manager,
@@ -154,9 +164,43 @@ class DealCommentOut(BaseModel):
     body: str
     kind: str
     meta_json: Optional[dict] = None
+    images: List[str] = []
     created_by_user_id: Optional[int]
     created_by_user_name: Optional[str]
     created_at: str
+
+
+def _ensure_comment_upload_dir() -> None:
+    COMMENT_UPLOAD_DIR.mkdir(parents=True, exist_ok=True)
+
+
+async def _save_comment_image(file: UploadFile) -> str:
+    raw = await file.read()
+    if len(raw) > MAX_COMMENT_IMAGE_BYTES:
+        raise HTTPException(status_code=400, detail="Изображение не больше 4 МБ")
+    name = (file.filename or "image.jpg").lower()
+    ext = Path(name).suffix
+    if ext not in _COMMENT_IMAGE_EXT:
+        raise HTTPException(status_code=400, detail="Допустимы JPG, PNG, WEBP, GIF")
+    if ext == ".jpeg":
+        ext = ".jpg"
+    safe = f"{uuid.uuid4().hex}{ext}"
+    _ensure_comment_upload_dir()
+    (COMMENT_UPLOAD_DIR / safe).write_bytes(raw)
+    return safe
+
+
+def _comment_image_urls(meta: Optional[dict]) -> List[str]:
+    if not meta or not isinstance(meta, dict):
+        return []
+    files = meta.get("images") or []
+    if not isinstance(files, list):
+        return []
+    out: List[str] = []
+    for name in files:
+        if isinstance(name, str) and _SAFE_IMAGE_NAME.match(name):
+            out.append(f"/api/sales/deal-comment-images/{name}")
+    return out
 
 
 class DealOut(BaseModel):
@@ -318,6 +362,7 @@ def _comment_out(c: SaleDealComment) -> DealCommentOut:
         body=c.body,
         kind=c.kind or "comment",
         meta_json=meta,
+        images=_comment_image_urls(meta if isinstance(meta, dict) else None),
         created_by_user_id=c.created_by_user_id,
         created_by_user_name=author,
         created_at=_fmt_dt(c.created_at) or "",
@@ -1050,9 +1095,10 @@ def get_deal(
 
 
 @router.post("/deals/{deal_id}/comments", response_model=DealCommentOut)
-def add_deal_comment(
+async def add_deal_comment(
     deal_id: int,
-    body: DealCommentIn,
+    body: str = Form(""),
+    images: Optional[List[UploadFile]] = File(None),
     db: Session = Depends(get_db),
     current_user: User = Depends(_require_crm),
 ):
@@ -1067,11 +1113,25 @@ def add_deal_comment(
     if not d:
         raise HTTPException(status_code=404, detail="Сделка не найдена")
     assert_deal_access(db, current_user, d)
+
+    text = (body or "").strip()
+    files = [f for f in (images or []) if f is not None and getattr(f, "filename", None)]
+    if len(files) > MAX_COMMENT_IMAGES:
+        raise HTTPException(status_code=400, detail=f"Не больше {MAX_COMMENT_IMAGES} изображений")
+    if not text and not files:
+        raise HTTPException(status_code=400, detail="Введите текст или прикрепите изображение")
+
+    saved_names: List[str] = []
+    for f in files:
+        saved_names.append(await _save_comment_image(f))
+
+    meta = {"images": saved_names} if saved_names else None
     c = SaleDealComment(
         company_slug=get_request_company(),
         deal_id=deal_id,
-        body=body.body.strip(),
+        body=text or ("Фото" if saved_names else ""),
         kind="comment",
+        meta_json=json.dumps(meta, ensure_ascii=False) if meta else None,
         created_by_user_id=current_user.id,
     )
     db.add(c)
@@ -1083,6 +1143,27 @@ def add_deal_comment(
         .first()
     )
     return _comment_out(c)
+
+
+@router.get("/deal-comment-images/{filename}")
+def get_deal_comment_image(
+    filename: str,
+    current_user: User = Depends(_require_crm),
+):
+    _ = current_user
+    if not _SAFE_IMAGE_NAME.match(filename):
+        raise HTTPException(status_code=404, detail="Файл не найден")
+    path = COMMENT_UPLOAD_DIR / filename
+    if not path.is_file():
+        raise HTTPException(status_code=404, detail="Файл не найден")
+    media = {
+        ".jpg": "image/jpeg",
+        ".jpeg": "image/jpeg",
+        ".png": "image/png",
+        ".webp": "image/webp",
+        ".gif": "image/gif",
+    }.get(path.suffix.lower(), "application/octet-stream")
+    return FileResponse(path, media_type=media)
 
 
 @router.post("/deals/{deal_id}/tasks", response_model=DealTaskOut, status_code=201)

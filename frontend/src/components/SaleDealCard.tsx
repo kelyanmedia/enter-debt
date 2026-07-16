@@ -13,7 +13,16 @@ export interface DealComment {
   id: number
   body: string
   kind: string
-  meta_json?: { from?: string; to?: string; due_at?: string; remind_minutes_before?: number; task_id?: number; task_type?: string } | null
+  meta_json?: {
+    from?: string
+    to?: string
+    due_at?: string
+    remind_minutes_before?: number
+    task_id?: number
+    task_type?: string
+    images?: string[]
+  } | null
+  images?: string[]
   created_by_user_id?: number | null
   created_by_user_name?: string | null
   created_at: string
@@ -684,17 +693,26 @@ function StagePicker({
           justifyContent: 'space-between',
           gap: 10,
           border: 'none',
-          borderRadius: 10,
-          padding: '8px 12px',
-          fontSize: FS.input,
+          borderRadius: 12,
+          padding: '10px 14px',
+          fontSize: 13,
           fontWeight: 800,
-          letterSpacing: '0.02em',
+          letterSpacing: '0.04em',
           textTransform: 'uppercase',
           color: text,
           background: accent,
           fontFamily: 'inherit',
           cursor: 'pointer',
-          boxShadow: '0 1px 2px rgba(15,23,42,.12)',
+          boxShadow: `0 6px 16px ${accent}40, 0 1px 2px rgba(15,23,42,.08)`,
+          transition: 'transform .12s ease, box-shadow .12s ease',
+        }}
+        onMouseEnter={e => {
+          e.currentTarget.style.transform = 'translateY(-1px)'
+          e.currentTarget.style.boxShadow = `0 10px 22px ${accent}50, 0 2px 4px rgba(15,23,42,.1)`
+        }}
+        onMouseLeave={e => {
+          e.currentTarget.style.transform = 'translateY(0)'
+          e.currentTarget.style.boxShadow = `0 6px 16px ${accent}40, 0 1px 2px rgba(15,23,42,.08)`
         }}
       >
         <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
@@ -782,11 +800,109 @@ function StagePicker({
   )
 }
 
+function CommentAuthImage({ src }: { src: string }) {
+  const [url, setUrl] = useState<string | null>(null)
+  const [open, setOpen] = useState(false)
+
+  useEffect(() => {
+    let revoked: string | null = null
+    let cancelled = false
+    void (async () => {
+      try {
+        const path = src.replace(/^\/api\//, '')
+        const r = await api.get(path, { responseType: 'blob' })
+        if (cancelled) return
+        revoked = URL.createObjectURL(r.data)
+        setUrl(revoked)
+      } catch {
+        if (!cancelled) setUrl(null)
+      }
+    })()
+    return () => {
+      cancelled = true
+      if (revoked) URL.revokeObjectURL(revoked)
+    }
+  }, [src])
+
+  if (!url) {
+    return (
+      <div style={{
+        width: 88,
+        height: 88,
+        borderRadius: 8,
+        background: '#f1f5f9',
+        border: '1px solid #e2e8f0',
+      }} />
+    )
+  }
+
+  return (
+    <>
+      <button
+        type="button"
+        onClick={() => setOpen(true)}
+        style={{
+          padding: 0,
+          border: '1px solid #e2e8f0',
+          borderRadius: 8,
+          overflow: 'hidden',
+          cursor: 'zoom-in',
+          background: '#fff',
+          width: 88,
+          height: 88,
+        }}
+      >
+        {/* eslint-disable-next-line @next/next/no-img-element */}
+        <img src={url} alt="" style={{ width: '100%', height: '100%', objectFit: 'cover', display: 'block' }} />
+      </button>
+      {open && typeof document !== 'undefined'
+        ? createPortal(
+          <div
+            onClick={() => setOpen(false)}
+            style={{
+              position: 'fixed',
+              inset: 0,
+              zIndex: 10050,
+              background: 'rgba(15,23,42,.72)',
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'center',
+              padding: 24,
+              cursor: 'zoom-out',
+            }}
+          >
+            {/* eslint-disable-next-line @next/next/no-img-element */}
+            <img
+              src={url}
+              alt=""
+              onClick={e => e.stopPropagation()}
+              style={{
+                maxWidth: 'min(920px, 94vw)',
+                maxHeight: '90vh',
+                borderRadius: 12,
+                boxShadow: '0 20px 50px rgba(0,0,0,.35)',
+                objectFit: 'contain',
+                background: '#0f172a',
+              }}
+            />
+          </div>,
+          document.body,
+        )
+        : null}
+    </>
+  )
+}
+
 function ChatFeedLine({ comment }: { comment: DealComment }) {
   const author = comment.created_by_user_name
     || (comment.kind === 'system' || comment.kind === 'stage_change' ? 'Система' : 'Пользователь')
   const time = fmtChatTime(comment.created_at)
   const date = fmtChatDate(comment.created_at)
+  const imageUrls = comment.images?.length
+    ? comment.images
+    : (comment.meta_json?.images || []).map(name =>
+      name.startsWith('/api/') ? name : `/api/sales/deal-comment-images/${name}`,
+    )
 
   let body = comment.body
   let tag: string | null = null
@@ -803,17 +919,28 @@ function ChatFeedLine({ comment }: { comment: DealComment }) {
     tag = null
   }
 
+  const hideBody = body === 'Фото' && imageUrls.length > 0
+
   return (
     <div style={{ padding: '8px 0', borderBottom: '1px solid #eef1f5' }}>
-      <div style={{ fontSize: FS.body, color: '#475569', lineHeight: 1.5 }}>
-        <span style={{ color: '#94a3b8' }}>{time}</span>
-        <span style={{ margin: '0 8px', color: '#cbd5e1' }}>{date}</span>
+      <div style={{ fontSize: FS.body, color: '#334155', lineHeight: 1.5 }}>
+        <span style={{ color: '#475569', fontWeight: 600 }}>{time}</span>
+        <span style={{ margin: '0 8px', color: '#64748b', fontWeight: 500 }}>{date}</span>
         <span style={{ fontWeight: 700, color: '#1e293b' }}>{author}</span>
         {tag && (
           <span style={{ marginLeft: 8, fontSize: FS.meta, color: '#2563eb', fontWeight: 600 }}>{tag}</span>
         )}
-        <span style={{ marginLeft: 8 }}>{body}</span>
+        {!hideBody && body ? (
+          <span style={{ marginLeft: 8 }}>{body}</span>
+        ) : null}
       </div>
+      {imageUrls.length > 0 && (
+        <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8, marginTop: 8, marginLeft: 2 }}>
+          {imageUrls.map((src) => (
+            <CommentAuthImage key={src} src={src} />
+          ))}
+        </div>
+      )}
     </div>
   )
 }
@@ -1172,8 +1299,13 @@ export function SaleDealCard({
           borderRight: '1px solid #c5ced9',
         }}>
           {/* Шапка */}
-          <div style={{ padding: '12px 14px 10px', borderBottom: '1px solid #d8dee9', flexShrink: 0, background: '#fff' }}>
-            <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', gap: 10 }}>
+          <div style={{
+            padding: '16px 16px 14px',
+            borderBottom: '1px solid #e2e8f0',
+            flexShrink: 0,
+            background: 'linear-gradient(180deg, #ffffff 0%, #f8fafc 100%)',
+          }}>
+            <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', gap: 12 }}>
               <div style={{ minWidth: 0, flex: 1 }}>
                 <input
                   value={title}
@@ -1184,67 +1316,175 @@ export function SaleDealCard({
                     border: 'none',
                     outline: 'none',
                     background: 'transparent',
-                    fontSize: FS.title,
-                    fontWeight: 700,
-                    color: '#1a1d23',
+                    fontSize: 24,
+                    fontWeight: 800,
+                    color: '#0f172a',
                     fontFamily: 'inherit',
-                    lineHeight: 1.15,
+                    lineHeight: 1.2,
+                    letterSpacing: '-0.02em',
                     padding: 0,
                   }}
                 />
-                <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginTop: 4, flexWrap: 'wrap' }}>
-                  <span style={{ fontSize: FS.meta, fontWeight: 800, color: '#1e3a5f' }}>
-                    Услуга: {serviceMeta?.label || '—'}
+                <div style={{
+                  display: 'flex',
+                  alignItems: 'center',
+                  gap: 6,
+                  marginTop: 10,
+                  flexWrap: 'wrap',
+                }}>
+                  <span style={{
+                    display: 'inline-flex',
+                    alignItems: 'center',
+                    gap: 6,
+                    padding: '4px 10px',
+                    borderRadius: 999,
+                    background: '#eff6ff',
+                    border: '1px solid #bfdbfe',
+                    fontSize: 12,
+                    fontWeight: 700,
+                    color: '#1d4ed8',
+                    letterSpacing: '0.01em',
+                  }}>
+                    {serviceMeta?.label || 'Услуга не указана'}
                   </span>
-                  <span style={{ fontSize: FS.meta, color: '#94a3b8' }}>·</span>
-                  <span style={{ fontSize: FS.meta, color: '#475569' }}>
-                    Компания: {company.trim() || '—'}
+                  <span style={{
+                    display: 'inline-flex',
+                    alignItems: 'center',
+                    maxWidth: '100%',
+                    padding: '4px 10px',
+                    borderRadius: 999,
+                    background: '#f8fafc',
+                    border: '1px solid #e2e8f0',
+                    fontSize: 12,
+                    fontWeight: 600,
+                    color: '#475569',
+                    overflow: 'hidden',
+                    textOverflow: 'ellipsis',
+                    whiteSpace: 'nowrap',
+                  }}>
+                    {company.trim() || 'Компания не указана'}
                   </span>
                   {detail?.id ? (
-                    <>
-                      <span style={{ fontSize: FS.meta, color: '#94a3b8' }}>·</span>
-                      <span style={{ fontSize: FS.meta, color: '#475569' }}>#{detail.id}</span>
-                    </>
+                    <span style={{
+                      padding: '4px 8px',
+                      borderRadius: 999,
+                      background: '#f1f5f9',
+                      fontSize: 11,
+                      fontWeight: 700,
+                      color: '#64748b',
+                      fontVariantNumeric: 'tabular-nums',
+                    }}>
+                      #{detail.id}
+                    </span>
                   ) : null}
                 </div>
               </div>
               <button
                 type="button"
                 onClick={onClose}
+                aria-label="Закрыть"
                 style={{
-                  width: 32,
-                  height: 32,
-                  border: '1px solid #e8e9ef',
-                  borderRadius: 8,
+                  width: 34,
+                  height: 34,
+                  border: '1px solid #e2e8f0',
+                  borderRadius: 10,
                   background: '#fff',
-                  color: '#94a3b8',
+                  color: '#64748b',
                   cursor: 'pointer',
-                  fontSize: FS.icon,
+                  fontSize: 20,
                   lineHeight: 1,
                   flexShrink: 0,
+                  boxShadow: '0 1px 2px rgba(15,23,42,.04)',
+                  transition: 'background .15s, color .15s, border-color .15s',
+                }}
+                onMouseEnter={e => {
+                  e.currentTarget.style.background = '#f8fafc'
+                  e.currentTarget.style.color = '#0f172a'
+                  e.currentTarget.style.borderColor = '#cbd5e1'
+                }}
+                onMouseLeave={e => {
+                  e.currentTarget.style.background = '#fff'
+                  e.currentTarget.style.color = '#64748b'
+                  e.currentTarget.style.borderColor = '#e2e8f0'
                 }}
               >
                 ×
               </button>
             </div>
 
-            <div style={{ marginTop: 8, display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap' }}>
+            <div style={{
+              marginTop: 14,
+              display: 'flex',
+              flexDirection: 'column',
+              gap: 10,
+            }}>
               <StagePicker
                 stages={stages}
                 value={stageId}
                 onChange={setStageId}
               />
-              {!isNew && (
-                <span style={{ fontSize: FS.meta, color: '#64748b' }}>
-                  {stageDays} дн. на этапе
+              <div style={{
+                display: 'flex',
+                alignItems: 'center',
+                gap: 8,
+                flexWrap: 'wrap',
+              }}>
+                {!isNew && (
+                  <span style={{
+                    display: 'inline-flex',
+                    alignItems: 'center',
+                    gap: 6,
+                    padding: '5px 10px',
+                    borderRadius: 8,
+                    background: '#fff',
+                    border: '1px solid #e8edf3',
+                    fontSize: 12,
+                    fontWeight: 600,
+                    color: '#64748b',
+                  }}>
+                    <span style={{
+                      width: 6,
+                      height: 6,
+                      borderRadius: 99,
+                      background: '#94a3b8',
+                      flexShrink: 0,
+                    }} />
+                    {stageDays} дн. на этапе
+                  </span>
+                )}
+                <span style={{
+                  display: 'inline-flex',
+                  alignItems: 'center',
+                  gap: 6,
+                  padding: '5px 10px',
+                  borderRadius: 8,
+                  background: '#fff',
+                  border: '1px solid #e8edf3',
+                  fontSize: 12,
+                  fontWeight: 600,
+                  color: '#475569',
+                }}>
+                  <span style={{ color: '#94a3b8', fontWeight: 700 }}>МОП</span>
+                  {assignedDisplayName}
                 </span>
-              )}
-              <span style={{ fontSize: FS.meta, color: '#64748b' }}>
-                Менеджер: {assignedDisplayName}
-              </span>
-              {source.trim() ? (
-                <span style={{ fontSize: FS.meta, color: '#64748b' }}>Источник: {source}</span>
-              ) : null}
+                {source.trim() ? (
+                  <span style={{
+                    display: 'inline-flex',
+                    alignItems: 'center',
+                    gap: 6,
+                    padding: '5px 10px',
+                    borderRadius: 8,
+                    background: '#fff',
+                    border: '1px solid #e8edf3',
+                    fontSize: 12,
+                    fontWeight: 600,
+                    color: '#475569',
+                  }}>
+                    <span style={{ color: '#94a3b8', fontWeight: 700 }}>Источник</span>
+                    {source}
+                  </span>
+                ) : null}
+              </div>
             </div>
           </div>
 
