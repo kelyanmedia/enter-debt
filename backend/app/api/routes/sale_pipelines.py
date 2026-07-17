@@ -9,17 +9,25 @@ from decimal import Decimal
 from pathlib import Path
 from typing import List, Optional
 
-from fastapi import APIRouter, Depends, File, Form, HTTPException, Query, UploadFile
+from fastapi import APIRouter, Depends, File, Form, Header, HTTPException, Query, UploadFile
 from pydantic import BaseModel, Field
 from sqlalchemy import func
 from sqlalchemy.orm import Session, joinedload
 from starlette.responses import FileResponse
 
+from app.core.config import settings
 from app.db.database import get_db, get_request_company
 from app.core.security import get_current_user
 from app.models.sale_deal_task import SaleDealTask
 from app.models.sale_pipeline import SaleDeal, SaleDealComment, SalePipeline, SalePipelineStage
 from app.models.user import User
+from app.services.sale_deal_tasks_telegram import (
+    complete_task as complete_task_svc,
+    load_task,
+    notify_assignee_telegram,
+    postpone_delta,
+    reschedule_task as reschedule_task_svc,
+)
 
 router = APIRouter(prefix="/api/sales", tags=["sales-crm"])
 
@@ -258,6 +266,7 @@ class DealTaskOut(BaseModel):
     task_type: str
     task_type_label: str
     notes: Optional[str] = None
+    result: Optional[str] = None
     due_at: str
     remind_minutes_before: int
     status: str
@@ -265,6 +274,24 @@ class DealTaskOut(BaseModel):
     assigned_user_name: Optional[str] = None
     created_by_user_name: Optional[str] = None
     created_at: str
+    completed_at: Optional[str] = None
+
+
+class DealTaskCompleteIn(BaseModel):
+    result: Optional[str] = None
+
+
+class DealTaskUpdateIn(BaseModel):
+    due_at: Optional[str] = None
+    task_type: Optional[str] = Field(None, max_length=40)
+    notes: Optional[str] = None
+    remind_minutes_before: Optional[int] = Field(None, ge=0, le=10080)
+
+
+class DealTaskInternalActionIn(BaseModel):
+    chat_id: int
+    result: Optional[str] = None
+    postpone: Optional[str] = None  # tmr | wk | mo
 
 
 class DealNextTaskOut(BaseModel):
@@ -334,6 +361,7 @@ def _task_out(t: SaleDealTask) -> DealTaskOut:
         task_type=t.task_type,
         task_type_label=TASK_TYPE_LABELS.get(t.task_type, "Задача"),
         notes=t.notes,
+        result=getattr(t, "result", None),
         due_at=_fmt_dt(t.due_at) or "",
         remind_minutes_before=t.remind_minutes_before or 15,
         status=t.status,
@@ -341,7 +369,16 @@ def _task_out(t: SaleDealTask) -> DealTaskOut:
         assigned_user_name=t.assigned_user.name if t.assigned_user else None,
         created_by_user_name=t.created_by_user.name if t.created_by_user else None,
         created_at=_fmt_dt(t.created_at) or "",
+        completed_at=_fmt_dt(t.completed_at),
     )
+
+
+def _verify_internal_secret(
+    x_internal_secret: Optional[str] = Header(None, alias="X-Internal-Secret"),
+) -> bool:
+    if not settings.INTERNAL_API_SECRET or x_internal_secret != settings.INTERNAL_API_SECRET:
+        raise HTTPException(status_code=401, detail="Unauthorized")
+    return True
 
 
 def _fmt_dt(dt: datetime | None) -> Optional[str]:
@@ -433,7 +470,7 @@ def _deal_out(d: SaleDeal) -> DealOut:
 def _deal_detail_out(d: SaleDeal) -> DealDetailOut:
     base = _deal_out(d)
     comments = [_comment_out(c) for c in (d.comments or [])]
-    tasks = [_task_out(t) for t in (d.tasks or []) if t.status == "pending"]
+    tasks = [_task_out(t) for t in (d.tasks or []) if t.status != "cancelled"]
     return DealDetailOut(**base.model_dump(), comments=comments, tasks=tasks)
 
 
@@ -1215,6 +1252,21 @@ def create_deal_task(
         raise HTTPException(status_code=400, detail="Дедлайн должен быть в будущем")
 
     assignee = body.assigned_user_id or d.assigned_user_id or current_user.id
+    assignee_user = (
+        db.query(User)
+        .filter(
+            User.id == assignee,
+            User.company_slug == get_request_company(),
+            User.is_active == True,
+            User.role.in_(["admin", "mop", "manager"]),
+        )
+        .first()
+    )
+    if not assignee_user:
+        raise HTTPException(status_code=400, detail="Ответственный сотрудник не найден")
+    if assignee != current_user.id and assignee != d.assigned_user_id:
+        if current_user.role != "admin" and not getattr(current_user, "is_sales_rop", False):
+            raise HTTPException(status_code=403, detail="Нельзя назначить задачу другому сотруднику")
     label = TASK_TYPE_LABELS[body.task_type]
     due_fmt = due_at.astimezone(timezone.utc).strftime("%d.%m.%Y %H:%M")
 
@@ -1250,22 +1302,28 @@ def create_deal_task(
     db.commit()
     task = (
         db.query(SaleDealTask)
-        .options(joinedload(SaleDealTask.assigned_user), joinedload(SaleDealTask.created_by_user))
+        .options(joinedload(SaleDealTask.assigned_user), joinedload(SaleDealTask.created_by_user), joinedload(SaleDealTask.deal))
         .filter(SaleDealTask.id == task.id)
         .first()
     )
+    try:
+        notify_assignee_telegram(db, task, kind="new")
+    except Exception:
+        pass
     return _task_out(task)
 
 
-@router.patch("/deals/{deal_id}/tasks/{task_id}/complete")
-def complete_deal_task(
+@router.patch("/deals/{deal_id}/tasks/{task_id}", response_model=DealTaskOut)
+def update_deal_task(
     deal_id: int,
     task_id: int,
+    body: DealTaskUpdateIn,
     db: Session = Depends(get_db),
     current_user: User = Depends(_require_crm),
 ):
     task = (
         db.query(SaleDealTask)
+        .options(joinedload(SaleDealTask.assigned_user), joinedload(SaleDealTask.created_by_user))
         .filter(
             SaleDealTask.id == task_id,
             SaleDealTask.deal_id == deal_id,
@@ -1275,10 +1333,126 @@ def complete_deal_task(
     )
     if not task:
         raise HTTPException(status_code=404, detail="Задача не найдена")
-    task.status = "done"
-    task.completed_at = datetime.now(timezone.utc)
+    d = db.query(SaleDeal).filter(SaleDeal.id == deal_id, SaleDeal.company_slug == get_request_company()).first()
+    if not d:
+        raise HTTPException(status_code=404, detail="Сделка не найдена")
+    assert_deal_access(db, current_user, d)
+
+    if body.task_type is not None:
+        if body.task_type not in TASK_TYPE_LABELS:
+            raise HTTPException(status_code=400, detail="Неизвестный тип задачи")
+        task.task_type = body.task_type
+    if body.notes is not None:
+        task.notes = body.notes.strip() or None
+    if body.remind_minutes_before is not None:
+        task.remind_minutes_before = body.remind_minutes_before
+        task.reminder_sent_at = None
+    if body.due_at is not None:
+        due_at = _parse_dt(body.due_at)
+        if due_at <= datetime.now(timezone.utc):
+            raise HTTPException(status_code=400, detail="Дедлайн должен быть в будущем")
+        reschedule_task_svc(db, task, due_at=due_at, user_id=current_user.id)
     db.commit()
-    return {"ok": True}
+    task = (
+        db.query(SaleDealTask)
+        .options(joinedload(SaleDealTask.assigned_user), joinedload(SaleDealTask.created_by_user))
+        .filter(SaleDealTask.id == task.id)
+        .first()
+    )
+    if body.due_at is not None and task.status == "pending":
+        try:
+            notify_assignee_telegram(db, task, kind="updated")
+        except Exception:
+            pass
+    return _task_out(task)
+
+
+@router.patch("/deals/{deal_id}/tasks/{task_id}/complete", response_model=DealTaskOut)
+def complete_deal_task(
+    deal_id: int,
+    task_id: int,
+    body: Optional[DealTaskCompleteIn] = None,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(_require_crm),
+):
+    task = (
+        db.query(SaleDealTask)
+        .options(joinedload(SaleDealTask.assigned_user), joinedload(SaleDealTask.created_by_user))
+        .filter(
+            SaleDealTask.id == task_id,
+            SaleDealTask.deal_id == deal_id,
+            SaleDealTask.company_slug == get_request_company(),
+        )
+        .first()
+    )
+    if not task:
+        raise HTTPException(status_code=404, detail="Задача не найдена")
+    d = db.query(SaleDeal).filter(SaleDeal.id == deal_id, SaleDeal.company_slug == get_request_company()).first()
+    if d:
+        assert_deal_access(db, current_user, d)
+    complete_task_svc(
+        db,
+        task,
+        user_id=current_user.id,
+        result=(body.result if body else None),
+    )
+    db.commit()
+    task = (
+        db.query(SaleDealTask)
+        .options(joinedload(SaleDealTask.assigned_user), joinedload(SaleDealTask.created_by_user))
+        .filter(SaleDealTask.id == task.id)
+        .first()
+    )
+    return _task_out(task)
+
+
+@router.post("/internal/tasks/{task_id}/action")
+def internal_deal_task_action(
+    task_id: int,
+    body: DealTaskInternalActionIn,
+    db: Session = Depends(get_db),
+    _auth: bool = Depends(_verify_internal_secret),
+):
+    """Действия из Telegram-бота: выполнить / перенести."""
+    user = (
+        db.query(User)
+        .filter(
+            User.telegram_chat_id == body.chat_id,
+            User.is_active == True,
+            User.company_slug == get_request_company(),
+        )
+        .first()
+    )
+    if not user:
+        raise HTTPException(status_code=404, detail="User not found")
+
+    task = load_task(db, task_id, get_request_company())
+    if not task:
+        raise HTTPException(status_code=404, detail="Задача не найдена")
+
+    # МОП может закрывать свои; админ/РОП — любые своей компании
+    if task.assigned_user_id and task.assigned_user_id != user.id:
+        if user.role not in ("admin",) and not getattr(user, "is_sales_rop", False):
+            raise HTTPException(status_code=403, detail="Это не ваша задача")
+
+    if body.postpone:
+        delta = postpone_delta(body.postpone)
+        if not delta:
+            raise HTTPException(status_code=400, detail="Неизвестный перенос")
+        base = task.due_at or datetime.now(timezone.utc)
+        if base.tzinfo is None:
+            base = base.replace(tzinfo=timezone.utc)
+        # если срок уже прошёл — от «сейчас»
+        now = datetime.now(timezone.utc)
+        if base < now:
+            base = now
+        reschedule_task_svc(db, task, due_at=base + delta, user_id=user.id)
+        db.commit()
+        return {"ok": True, "action": "reschedule", "due_at": task.due_at.isoformat() if task.due_at else None}
+
+    complete_task_svc(db, task, user_id=user.id, result=body.result)
+    db.commit()
+    return {"ok": True, "action": "complete"}
 
 
 @router.delete("/deals/{deal_id}/tasks/{task_id}")
@@ -1299,6 +1473,17 @@ def delete_deal_task(
     )
     if not task:
         raise HTTPException(status_code=404, detail="Задача не найдена")
+    d = (
+        db.query(SaleDeal)
+        .filter(
+            SaleDeal.id == deal_id,
+            SaleDeal.company_slug == get_request_company(),
+        )
+        .first()
+    )
+    if not d:
+        raise HTTPException(status_code=404, detail="Сделка не найдена")
+    assert_deal_access(db, current_user, d)
     task.status = "cancelled"
     db.commit()
     return {"ok": True}

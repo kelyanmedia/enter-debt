@@ -17,6 +17,7 @@ class SaleDealTask(Base):
     task_type = Column(String(40), nullable=False, default="call")  # call | meeting | email | other
     title = Column(String(300), nullable=True)
     notes = Column(Text, nullable=True)
+    result = Column(Text, nullable=True)
     due_at = Column(DateTime(timezone=True), nullable=False, index=True)
     remind_minutes_before = Column(Integer, nullable=False, default=15)
     reminder_sent_at = Column(DateTime(timezone=True), nullable=True)

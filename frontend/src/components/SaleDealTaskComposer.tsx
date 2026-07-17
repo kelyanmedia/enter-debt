@@ -1,5 +1,6 @@
 import { useMemo, useRef, useState } from 'react'
 import DateTimePicker from '@/components/DateTimePicker'
+import { SaleDealTaskList } from '@/components/SaleDealTaskList'
 import api from '@/lib/api'
 import { compressImageFile } from '@/lib/compressImage'
 
@@ -8,10 +9,14 @@ export type DealTask = {
   task_type: string
   task_type_label: string
   notes: string | null
+  result?: string | null
   due_at: string
   remind_minutes_before: number
   status: string
   assigned_user_name: string | null
+  created_by_user_name?: string | null
+  created_at?: string
+  completed_at?: string | null
 }
 
 const TASK_TYPES = [
@@ -47,9 +52,10 @@ type PendingImage = {
 export function SaleDealComposer({
   dealId,
   dealTitle,
-  tasks: _tasks,
+  tasks,
   onNoteAdded,
   onTaskCreated,
+  onTaskChanged,
 }: {
   dealId: number
   dealTitle: string
@@ -64,6 +70,7 @@ export function SaleDealComposer({
     created_at: string
   }) => void
   onTaskCreated: (task: DealTask) => void
+  onTaskChanged: (task: DealTask | null, taskId: number) => void
 }) {
   const [mode, setMode] = useState<ComposeMode>('note')
   const [modeOpen, setModeOpen] = useState(false)
@@ -192,6 +199,12 @@ export function SaleDealComposer({
 
   return (
     <div style={{ background: '#fff', borderTop: '1px solid #dfe3ea', flexShrink: 0 }}>
+      <SaleDealTaskList
+        dealId={dealId}
+        dealTitle={dealTitle}
+        tasks={tasks}
+        onTaskChanged={onTaskChanged}
+      />
       {mode === 'task' && taskExpanded && (
         <div style={{
           padding: '8px 12px',

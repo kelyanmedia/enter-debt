@@ -1,4 +1,4 @@
-"""Напоминания по задачам сделок — push в ленту уведомлений."""
+"""Напоминания по задачам сделок — лента + Telegram push МОПу."""
 from __future__ import annotations
 
 import logging
@@ -10,15 +10,12 @@ from app.db.database import iter_company_sessionmakers, set_company_context, res
 from app.models.feed_notification import FeedNotification
 from app.models.sale_deal_task import SaleDealTask
 from app.models.user import User
+from app.services.sale_deal_tasks_telegram import (
+    TASK_TYPE_LABELS,
+    notify_assignee_telegram,
+)
 
 log = logging.getLogger(__name__)
-
-TASK_TYPE_LABELS = {
-    "call": "Связаться",
-    "meeting": "Встреча",
-    "email": "Email",
-    "other": "Задача",
-}
 
 
 def _remind_at(task: SaleDealTask) -> datetime:
@@ -34,7 +31,7 @@ def process_sale_deal_task_reminders() -> None:
         try:
             pending = (
                 db.query(SaleDealTask)
-                .options(joinedload(SaleDealTask.deal))
+                .options(joinedload(SaleDealTask.deal), joinedload(SaleDealTask.assigned_user))
                 .filter(
                     SaleDealTask.company_slug == slug,
                     SaleDealTask.status == "pending",
@@ -58,11 +55,9 @@ def process_sale_deal_task_reminders() -> None:
                 deal_title = deal.title if deal else f"Сделка #{task.deal_id}"
                 label = TASK_TYPE_LABELS.get(task.task_type or "call", "Задача")
                 due_fmt = due.strftime("%d.%m.%Y %H:%M")
-                assignee = (
-                    db.query(User).filter(User.id == task.assigned_user_id).first()
-                    if task.assigned_user_id
-                    else None
-                )
+                assignee = task.assigned_user
+                if assignee is None and task.assigned_user_id:
+                    assignee = db.query(User).filter(User.id == task.assigned_user_id).first()
                 assignee_name = assignee.name if assignee else "—"
 
                 db.add(
@@ -76,6 +71,7 @@ def process_sale_deal_task_reminders() -> None:
                         partner_id=None,
                     )
                 )
+                notify_assignee_telegram(db, task, kind="remind")
                 task.reminder_sent_at = now
             db.commit()
         except Exception as exc:

@@ -1656,6 +1656,14 @@ export function SaleDealCard({
     if (dealId) void loadDetail(dealId)
   }
 
+  function handleTaskChanged(task: DealTask | null, taskId: number) {
+    setTasks(prev => task
+      ? [...prev.filter(t => t.id !== taskId), task]
+      : prev.filter(t => t.id !== taskId))
+    const dealId = deal?.id ?? detail?.id
+    if (dealId) void loadDetail(dealId)
+  }
+
   async function doDelete() {
     if (!deal) return
     try {
@@ -2248,6 +2256,7 @@ export function SaleDealCard({
               tasks={tasks}
               onNoteAdded={handleNoteAdded}
               onTaskCreated={handleTaskCreated}
+              onTaskChanged={handleTaskChanged}
             />
           )}
         </div>

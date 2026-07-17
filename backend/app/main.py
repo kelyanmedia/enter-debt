@@ -901,6 +901,7 @@ def _migrate():
         )""",
         "CREATE INDEX IF NOT EXISTS ix_sale_deal_tasks_deal_id ON sale_deal_tasks (deal_id)",
         "CREATE INDEX IF NOT EXISTS ix_sale_deal_tasks_due_at ON sale_deal_tasks (due_at)",
+        "ALTER TABLE sale_deal_tasks ADD COLUMN IF NOT EXISTS result TEXT",
         """UPDATE payments p
            SET status = 'paid',
                paid_at = agg.max_paid_at,

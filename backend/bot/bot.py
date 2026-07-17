@@ -809,6 +809,98 @@ async def expense_cost_category_callback(query: types.CallbackQuery, state: FSMC
     await _submit_team_expense(query, state, int(payment_id), slug)
 
 
+@dp.callback_query(F.data.startswith("sdt:"))
+async def sale_deal_task_callback(query: types.CallbackQuery):
+    """Выполнить / перенести задачу сделки из напоминания в Telegram."""
+    parts = (query.data or "").split(":")
+    if len(parts) not in (3, 4) or parts[0] != "sdt":
+        return
+    action, raw_id = parts[1], parts[2]
+    if action not in ("done", "tmr", "wk", "mo"):
+        await query.answer("Неизвестное действие", show_alert=True)
+        return
+    try:
+        task_id = int(raw_id)
+    except ValueError:
+        await query.answer("Некорректная задача", show_alert=True)
+        return
+
+    chat_id = query.from_user.id
+    company_slug = parts[3] if len(parts) == 4 else None
+    if company_slug not in {slug for slug, _ in COMPANY_OPTIONS}:
+        _user, company_slug = await _fetch_user_by_chat(chat_id)
+    if not company_slug:
+        await query.answer("Аккаунт не привязан к компании.", show_alert=True)
+        return
+    secret = _internal_secret()
+    payload: dict = {"chat_id": chat_id}
+    if action == "done":
+        payload["result"] = None
+    else:
+        payload["postpone"] = action
+
+    try:
+        async with httpx.AsyncClient(timeout=15) as client:
+            r = await client.post(
+                f"{API_URL}/api/sales/internal/tasks/{task_id}/action",
+                headers=_api_headers({"X-Internal-Secret": secret}, company_slug),
+                json=payload,
+            )
+            if r.status_code == 404:
+                await query.answer("Задача не найдена или аккаунт не привязан.", show_alert=True)
+                return
+            if r.status_code == 403:
+                await query.answer("Это не ваша задача.", show_alert=True)
+                return
+            if r.status_code >= 400:
+                detail = (r.json() or {}).get("detail") if r.headers.get("content-type", "").startswith("application/json") else None
+                await query.answer(str(detail) if detail else "Ошибка сервера", show_alert=True)
+                return
+            data = r.json()
+    except Exception:
+        await query.answer("Не удалось связаться с сервером.", show_alert=True)
+        return
+
+    if data.get("action") == "complete":
+        await query.answer("Выполнено ✓")
+        try:
+            await query.message.edit_text(
+                (query.message.html_text or query.message.text or "") + "\n\n✅ <b>Выполнено</b>",
+                parse_mode="HTML",
+                reply_markup=None,
+            )
+        except Exception:
+            try:
+                await query.message.edit_reply_markup(reply_markup=None)
+            except Exception:
+                pass
+        return
+
+    due_at = data.get("due_at")
+    label = {"tmr": "на завтра", "wk": "на неделю", "mo": "на месяц"}.get(action, "")
+    due_txt = ""
+    if due_at:
+        try:
+            dt = datetime.fromisoformat(str(due_at).replace("Z", "+00:00"))
+            due_txt = dt.astimezone(TASK_REMINDER_TZ).strftime("%d.%m.%Y %H:%M")
+        except Exception:
+            due_txt = str(due_at)
+    await query.answer(f"Перенесено {label}")
+    try:
+        await query.message.edit_text(
+            (query.message.html_text or query.message.text or "")
+            + f"\n\n↪️ Перенесено {label}"
+            + (f" · {due_txt}" if due_txt else ""),
+            parse_mode="HTML",
+            reply_markup=None,
+        )
+    except Exception:
+        try:
+            await query.message.edit_reply_markup(reply_markup=None)
+        except Exception:
+            pass
+
+
 @dp.callback_query(F.data.startswith("edtk:"))
 async def employee_tasks_reminder_callback(query: types.CallbackQuery):
     """Ответы на напоминание «внесли все задачи?» (рассылка с бэкенда по cron)."""
