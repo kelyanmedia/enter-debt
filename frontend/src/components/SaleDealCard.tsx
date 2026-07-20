@@ -186,7 +186,12 @@ const UZ_PHONE_PREFIX = '+998'
 /** Оставляет локальную часть без кода страны 998 */
 function phoneLocalPart(raw: string): string {
   let digits = raw.replace(/\D/g, '')
-  if (digits.startsWith('998')) digits = digits.slice(3)
+  // Срезаем 998 только у полного/вставленного международного номера.
+  // Иначе при наборе локального 99… + цифра 8 получается «998» и поле очищается.
+  if (digits.startsWith('998') && digits.length > 9) {
+    digits = digits.slice(3)
+  }
+  digits = digits.slice(0, 9)
   // форматируем группами: 99 999 99 99
   const a = digits.slice(0, 2)
   const b = digits.slice(2, 5)
