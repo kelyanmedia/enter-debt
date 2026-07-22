@@ -49,14 +49,19 @@ interface Payment {
 
 /** Для списка: дедлайн по графику или по договору (редактирование всегда по deadline_date из API). */
 function listDueDateStr(p: Payment): string | null | undefined {
+  if (p.status === 'paid' || p.status === 'archived') return null
   return p.next_payment_due_date || p.deadline_date || undefined
 }
 function listDueDayOfMonth(p: Payment): number | null | undefined {
+  if (p.status === 'paid' || p.status === 'archived') return null
   return p.next_payment_due_date ? undefined : p.day_of_month
 }
 
-/** Дни до срока: приоритет у поля с бэкенда (совпадает с дебиторкой), иначе расчёт по дате. */
+/** Дни до срока: у оплаченных/архивных не показываем просрочку по старому deadline. */
 function paymentRemainingDisplay(p: Payment): { label: string; color: string } {
+  if (p.status === 'paid' || p.status === 'archived') {
+    return { label: '—', color: '#8a8fa8' }
+  }
   if (p.days_until_due != null && Number.isFinite(p.days_until_due)) {
     const diff = p.days_until_due
     if (diff < 0) return { label: `−${Math.abs(diff)} дн.`, color: '#e84040' }
@@ -67,6 +72,7 @@ function paymentRemainingDisplay(p: Payment): { label: string; color: string } {
 }
 
 function paymentSortKeyDueDays(p: Payment): number | null {
+  if (p.status === 'paid' || p.status === 'archived') return null
   if (p.days_until_due != null && Number.isFinite(p.days_until_due)) return p.days_until_due
   return daysLeftSortKey(listDueDateStr(p), listDueDayOfMonth(p))
 }
@@ -1178,7 +1184,9 @@ export default function PaymentsPage() {
                       <span style={{ fontWeight: 700 }}>{formatMoneyNumber(p.amount)}</span>
                     </Td>
                     <Td>
-                      {p.next_payment_due_date ? (
+                      {p.status === 'paid' || p.status === 'archived' ? (
+                        <span style={{ color: '#8a8fa8' }}>—</span>
+                      ) : p.next_payment_due_date ? (
                         <div>
                           <div>{formatDate(p.next_payment_due_date)}</div>
                           {p.next_payment_month && (

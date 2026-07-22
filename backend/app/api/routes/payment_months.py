@@ -501,29 +501,76 @@ async def confirm_month(
 
     payment = _require_payment_not_trashed(load_payment(db, payment_id))
 
-    if not already_paid and not _skip_payment_confirmed_telegram(current_user):
-        amount_val = pm.amount or payment.amount
+    if not already_paid:
+        amount_val = int(pm.amount or payment.amount or 0)
         month_label = _month_label(pm.month)
         desc = pm.description or f"{payment.description} {month_label}"
         partner_name = payment.partner.name if payment.partner else "—"
         contract_line = f"\n📄 Договор: {payment.contract_url}" if payment.contract_url else ""
+        months = list(payment.months or [])
+        paid_total = 0
+        project_total = 0
+        for m in months:
+            row_amt = int(m.amount if m.amount is not None else (payment.amount or 0))
+            project_total += row_amt
+            if m.status == "paid":
+                paid_total += row_amt
+        if not months:
+            project_total = int(payment.amount or 0)
+            paid_total = amount_val
+        totals_line = (
+            f"\n💵 Зачислено сейчас: <b>{amount_val:,} UZS</b>"
+            f"\n📊 По проекту оплачено: <b>{paid_total:,}</b> / {project_total:,} UZS"
+        )
+        method_map = {"transfer": "перевод", "card": "карта", "cash": "наличные"}
+        method_label = method_map.get((pm.received_payment_method or "").lower(), pm.received_payment_method or "—")
 
-        mgr = payment.partner.manager if payment.partner else None
-        if mgr:
+        if not _skip_payment_confirmed_telegram(current_user):
+            mgr = payment.partner.manager if payment.partner else None
             text = (
-                f"✅ <b>Оплата прошла</b>\n\n"
+                f"✅ <b>Оплата прошла — деньги зачислены</b>\n\n"
                 f"🏢 Компания: <b>{partner_name}</b>\n"
                 f"📋 Описание: <b>{desc}</b>\n"
                 f"📅 Месяц: <b>{month_label}</b>\n"
-                f"💰 Сумма: <b>{int(amount_val):,} UZS</b>\n"
-                f"👤 Менеджер: {mgr.name}{contract_line}"
+                f"💳 Способ: <b>{method_label}</b>"
+                f"{totals_line}"
+                f"{contract_line}"
             )
-            if mgr.telegram_chat_id:
-                await _send_tg(str(mgr.telegram_chat_id), text)
-            # Копии админам и «Администрации» по настройкам видимости менеджера (без бухгалтерии)
-            await _send_telegram_cc(db, mgr.id, text)
+            if mgr:
+                text += f"\n👤 Менеджер: {mgr.name}"
+                if mgr.telegram_chat_id:
+                    await _send_tg(str(mgr.telegram_chat_id), text)
+                await _send_telegram_cc(db, mgr.id, text)
+            else:
+                await _send_telegram_cc(db, current_user.id if current_user.role == "manager" else None, text)
 
-        # «Оплата прошла» бухгалтерам в Telegram не отправляем — только менеджер (если есть чат) и CC админ/администрация.
+        # Бухгалтерии — сумма зачисления (даже если отметил админ)
+        if payment.notify_accounting:
+            route_uid = _accounting_telegram_route_user_id(current_user, payment.partner)
+            panel = _payments_panel_url()
+            reply_markup = {
+                "inline_keyboard": [[{"text": "АКТ/СФ", "url": panel}]],
+            }
+            footer = _accounting_reply_footer(route_uid)
+            accountants = db.query(User).filter(
+                User.role == "accountant",
+                User.is_active == True,
+                User.telegram_chat_id.isnot(None),
+                User.company_slug == get_request_company(),
+            ).all()
+            acc_text = (
+                f"💰 <b>Зачисление оплаты</b>\n\n"
+                f"🏢 Компания: <b>{partner_name}</b>\n"
+                f"📋 Описание: <b>{desc}</b>\n"
+                f"📅 Месяц: <b>{month_label}</b>"
+                f"{totals_line}\n"
+                f"👤 Отметил: <b>{current_user.name}</b>\n\n"
+                f"Если нужны документы — нажмите «АКТ/СФ»."
+                f"{footer}"
+            )
+            for acc in accountants:
+                await _send_tg(str(acc.telegram_chat_id), acc_text, reply_markup=reply_markup)
+            await _send_telegram_cc(db, route_uid, acc_text, reply_markup=reply_markup)
 
     return pm
 

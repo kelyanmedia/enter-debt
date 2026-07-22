@@ -145,6 +145,17 @@ def _sale_deal_task_reminders_job():
         log.exception("Sale deal task reminders failed")
 
 
+def _paid_without_act_auto_archive_job():
+    from app.services.paid_without_act_auto_archive import process_paid_without_act_auto_archive
+
+    try:
+        r = process_paid_without_act_auto_archive()
+        if r.get("archived"):
+            log.info("Paid without act auto-archive: %s", r)
+    except Exception:
+        log.exception("Paid without act auto-archive failed")
+
+
 def _trash_purge_job():
     from app.services.trash_purge import purge_expired_trash
 
@@ -302,6 +313,13 @@ def startup():
             replace_existing=True,
         )
         _scheduler.add_job(
+            _paid_without_act_auto_archive_job,
+            "interval",
+            minutes=1,
+            id="paid_without_act_auto_archive",
+            replace_existing=True,
+        )
+        _scheduler.add_job(
             _trash_purge_job,
             "cron",
             hour=3,
@@ -312,7 +330,8 @@ def startup():
         _scheduler.start()
         log.info(
             "APScheduler: weekly cash report — пт 18:00; subscription reminders — ежедневно 09:00; "
-            "employee task reminders — 26,28,30 в 09:00 Asia/Tashkent; trash purge — ежедневно 03:30"
+            "employee task reminders — 26,28,30 в 09:00 Asia/Tashkent; "
+            "sale deal task reminders / paid-without-act archive — каждую минуту; trash purge — ежедневно 03:30"
         )
     except Exception as e:
         log.warning("APScheduler not started: %s", e)
