@@ -321,6 +321,8 @@ def duplicate_month_to_next_month(
             confirmed_by=None,
         )
         db.add(new_pm)
+        db.flush()
+        sync_payment_status_from_months(p)
         db.commit()
         db.refresh(new_pm)
         return new_pm

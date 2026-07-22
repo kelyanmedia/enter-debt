@@ -24,6 +24,7 @@ interface Payment {
   payment_type: string
   deadline_date?: string
   day_of_month?: number
+  days_until_due?: number | null
   created_at: string
   source_payment_month_id?: number | null
   partner: { name: string; manager?: { name: string } }
@@ -280,7 +281,15 @@ export default function Dashboard() {
               </thead>
               <tbody>
                 {payments.map(p => {
-                  const dl = daysLeft(p.deadline_date, p.day_of_month)
+                  const dl = p.status === 'paid' || p.status === 'archived'
+                    ? { label: '—', color: '#8a8fa8' }
+                    : p.days_until_due != null && Number.isFinite(p.days_until_due)
+                      ? (p.days_until_due < 0
+                        ? { label: `−${Math.abs(p.days_until_due)} дн.`, color: '#e84040' }
+                        : p.days_until_due <= 3
+                          ? { label: `${p.days_until_due} дн.`, color: '#f0900a' }
+                          : { label: `${p.days_until_due} дн.`, color: '#2d9b5a' })
+                      : daysLeft(p.deadline_date, p.day_of_month)
                   const rowKey =
                     p.source_payment_month_id != null ? `${p.id}-m-${p.source_payment_month_id}` : p.id
                   return (

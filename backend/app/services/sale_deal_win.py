@@ -18,6 +18,7 @@ from app.models.sale_pipeline import SaleDeal, SaleDealComment, SalePipelineStag
 from app.models.sales_company import SalesCompany
 from app.models.user import User
 from app.api.routes.payment_months import resolve_payment_month_due_date
+from app.api.routes.payments import sync_payment_status_from_months
 
 _CATEGORY_TO_COMMISSION_TYPE = {
     "seo": "seo",
@@ -225,10 +226,7 @@ def close_deal_won(
         first_month_row.paid_at = datetime.now(timezone.utc)
         first_month_row.confirmed_by = actor.id
         first_month_row.received_payment_method = received_payment_method or "transfer"
-        pay.status = "paid"
-        pay.paid_at = datetime.now(timezone.utc)
-        pay.confirmed_by = actor.id
-        pay.received_payment_method = received_payment_method or "transfer"
+        sync_payment_status_from_months(pay)
 
     comm_type = commission_type_for_category(pay.project_category, project_type)
     project_name = description.strip() or deal.title
