@@ -9,7 +9,7 @@ from typing import Dict, List, Optional, Tuple
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy import and_, or_
-from sqlalchemy.exc import OperationalError, ProgrammingError
+from sqlalchemy.exc import IntegrityError, OperationalError, ProgrammingError
 from sqlalchemy.orm import Session, joinedload
 
 from app.core.access import filter_payments_query
@@ -25,6 +25,7 @@ from app.models.user import User
 from app.models.pl_manual_line import PlManualLine, PlManualMonthCell
 from app.models.employee_task import EmployeeTask
 from app.models.lending_record import LendingRecord
+from app.models.company_ui import CompanyFounderIncomeSettings
 from app.finance.cash_flow_catalog import expense_pl_bucket
 from app.services.lending_lifecycle import active_lending_by_payment_id
 from app.finance.projects_cost_categories import pc_cost_column_bucket
@@ -37,6 +38,9 @@ from app.schemas.schemas import (
     PLManualLineOut,
     PLManualCellPut,
     ProjectCostBreakdownPut,
+    FounderIncomeSettingsOut,
+    FounderIncomeSettingsPut,
+    ProjectFounderIncomePercentPut,
     ProjectCostProfitPut,
     ProjectCostLendingItemOut,
     ProjectCostRowOut,
@@ -431,12 +435,46 @@ def _lending_items_for_payment(
     return lend_total, items
 
 
+def _founder_income_settings(db: Session) -> CompanyFounderIncomeSettings:
+    """Возвращает единственное правило компании, создавая безопасный нулевой дефолт при первом открытии режима."""
+    slug = get_request_company()
+    settings = (
+        db.query(CompanyFounderIncomeSettings)
+        .filter(CompanyFounderIncomeSettings.company_slug == slug)
+        .first()
+    )
+    if settings is None:
+        settings = CompanyFounderIncomeSettings(company_slug=slug, default_percent=Decimal("0"))
+        db.add(settings)
+        try:
+            db.commit()
+            db.refresh(settings)
+        except IntegrityError:
+            # Отчёт и настройки UI могут впервые открыть режим одновременно.
+            # Уникальность по компании оставляет одну запись.
+            db.rollback()
+            settings = (
+                db.query(CompanyFounderIncomeSettings)
+                .filter(CompanyFounderIncomeSettings.company_slug == slug)
+                .one()
+            )
+    return settings
+
+
+def _founder_income_amount(profit_after_manager: Decimal, percent: Decimal) -> Decimal:
+    """Дивиденды считаются только из положительной зафиксированной чистой прибыли проекта."""
+    base = max(Decimal("0"), Decimal(str(profit_after_manager)))
+    rate = max(Decimal("0"), Decimal(str(percent)))
+    return (base * rate / Decimal("100")).quantize(Decimal("0.01"))
+
+
 def _payment_to_project_cost_row(
     p: Payment,
     manager_commission_percent: Optional[Decimal] = None,
     task_alloc: Optional[Dict[str, Decimal]] = None,
     lending_active_uzs: Optional[Decimal] = None,
     lending_items: Optional[List[ProjectCostLendingItemOut]] = None,
+    founder_default_percent: Decimal = Decimal("0"),
 ) -> ProjectCostRowOut:
     """Одна строка отчёта Projects Cost из загруженного Payment (partner + months)."""
     months_sorted = _sort_payment_month_lines(p.months)
@@ -526,6 +564,16 @@ def _payment_to_project_cost_row(
         else:
             reserved = Decimal("0")
 
+    founder_override_raw = getattr(p, "founder_income_percent", None)
+    founder_override = (
+        Decimal(str(founder_override_raw)).quantize(Decimal("0.01"))
+        if founder_override_raw is not None
+        else None
+    )
+    founder_percent = founder_override if founder_override is not None else Decimal(str(founder_default_percent))
+    founder_percent = min(Decimal("100"), max(Decimal("0"), founder_percent)).quantize(Decimal("0.01"))
+    founder_income = _founder_income_amount(profit_after, founder_percent)
+
     return ProjectCostRowOut(
         payment_id=p.id,
         partner_id=p.partner_id,
@@ -559,6 +607,9 @@ def _payment_to_project_cost_row(
         manager_commission_percent=mcp,
         manager_commission_reserved_uzs=reserved,
         profit_after_manager_uzs=profit_after,
+        founder_income_percent=founder_percent,
+        founder_income_percent_override=founder_override,
+        founder_income_uzs=founder_income,
         lending_active_uzs=(lending_active_uzs or Decimal("0")).quantize(Decimal("0.01")),
         lending_items=lending_items or [],
     )
@@ -608,6 +659,7 @@ def projects_cost_report(
         payments_sorted = [p for p in payments_sorted if _payment_overlaps_month_window(p, mf, mt)]
     pct_map = _commission_percent_by_payment_id(db)
     task_amap = _task_allocated_cost_uzs_by_payment(db)
+    founder_default_percent = Decimal(str(_founder_income_settings(db).default_percent or 0))
     out_rows: List[ProjectCostRowOut] = []
     for p in payments_sorted:
         lend_total, lend_items = _lending_items_for_payment(db, p.id)
@@ -618,9 +670,83 @@ def projects_cost_report(
                 task_amap.get(p.id),
                 lend_total,
                 lend_items,
+                founder_default_percent,
             )
         )
     return out_rows
+
+
+@router.get("/projects-cost/founder-income-settings", response_model=FounderIncomeSettingsOut)
+def get_founder_income_settings(
+    db: Session = Depends(get_db),
+    _current_user: User = Depends(require_projects_cost_access),
+):
+    settings = _founder_income_settings(db)
+    return FounderIncomeSettingsOut(default_percent=Decimal(str(settings.default_percent or 0)))
+
+
+@router.put("/projects-cost/founder-income-settings", response_model=FounderIncomeSettingsOut)
+def put_founder_income_settings(
+    body: FounderIncomeSettingsPut,
+    db: Session = Depends(get_db),
+    _current_user: User = Depends(require_projects_cost_access),
+):
+    settings = _founder_income_settings(db)
+    settings.default_percent = body.default_percent.quantize(Decimal("0.01"))
+    db.commit()
+    return FounderIncomeSettingsOut(default_percent=Decimal(str(settings.default_percent)))
+
+
+@router.put("/projects-cost/{payment_id}/founder-income-percent", response_model=ProjectCostRowOut)
+def put_project_founder_income_percent(
+    payment_id: int,
+    body: ProjectFounderIncomePercentPut,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(require_projects_cost_access),
+):
+    """Индивидуальный процент учредителей; null возвращает процент по умолчанию компании."""
+    q = (
+        db.query(Payment)
+        .options(
+            joinedload(Payment.partner).joinedload(Partner.manager),
+            joinedload(Payment.months),
+        )
+        .filter(
+            Payment.id == payment_id,
+            Payment.is_archived == False,
+            Payment.trashed_at.is_(None),
+        )
+    )
+    q = filter_payments_query(q, db, current_user)
+    p = q.first()
+    if not p:
+        raise HTTPException(status_code=404, detail="Проект не найден")
+
+    p.founder_income_percent = (
+        body.percent.quantize(Decimal("0.01")) if body.percent is not None else None
+    )
+    db.commit()
+    p = (
+        db.query(Payment)
+        .options(
+            joinedload(Payment.partner).joinedload(Partner.manager),
+            joinedload(Payment.months),
+        )
+        .filter(Payment.id == payment_id, Payment.company_slug == get_request_company())
+        .first()
+    )
+    pct_map = _commission_percent_by_payment_id(db)
+    task_amap = _task_allocated_cost_uzs_by_payment(db)
+    lend_total, lend_items = _lending_items_for_payment(db, p.id)
+    founder_default_percent = Decimal(str(_founder_income_settings(db).default_percent or 0))
+    return _payment_to_project_cost_row(
+        p,
+        pct_map.get(p.id),
+        task_amap.get(p.id),
+        lend_total,
+        lend_items,
+        founder_default_percent,
+    )
 
 
 @router.put("/projects-cost/{payment_id}/cost-breakdown", response_model=ProjectCostRowOut)
@@ -667,7 +793,8 @@ def put_projects_cost_breakdown(
     pct_map = _commission_percent_by_payment_id(db)
     task_amap = _task_allocated_cost_uzs_by_payment(db)
     lend_total, lend_items = _lending_items_for_payment(db, p.id)
-    return _payment_to_project_cost_row(p, pct_map.get(p.id), task_amap.get(p.id), lend_total, lend_items)
+    founder_default_percent = Decimal(str(_founder_income_settings(db).default_percent or 0))
+    return _payment_to_project_cost_row(p, pct_map.get(p.id), task_amap.get(p.id), lend_total, lend_items, founder_default_percent)
 
 
 def _sum_paid_for_payment(p: Payment) -> Decimal:
@@ -751,7 +878,8 @@ def put_projects_cost_profit(
     )
     pct_map = _commission_percent_by_payment_id(db)
     lend_total, lend_items = _lending_items_for_payment(db, p.id)
-    return _payment_to_project_cost_row(p, pct_map.get(p.id), task_amap.get(p.id), lend_total, lend_items)
+    founder_default_percent = Decimal(str(_founder_income_settings(db).default_percent or 0))
+    return _payment_to_project_cost_row(p, pct_map.get(p.id), task_amap.get(p.id), lend_total, lend_items, founder_default_percent)
 
 
 _REV_CATEGORY_LABELS: Dict[str, str] = {

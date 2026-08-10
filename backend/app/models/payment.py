@@ -45,6 +45,8 @@ class Payment(Base):
     projects_cost_dev_uzs = Column(Numeric(15, 2), nullable=False, default=0)
     projects_cost_other_uzs = Column(Numeric(15, 2), nullable=False, default=0)
     projects_cost_seo_uzs = Column(Numeric(15, 2), nullable=False, default=0)
+    # Founder Income: NULL = брать процент по умолчанию из настроек компании.
+    founder_income_percent = Column(Numeric(5, 2), nullable=True)
     # Комиссия проектного менеджера (ПМ)
     planned_deadline = Column(Date, nullable=True)
     effective_planned_deadline = Column(Date, nullable=True)

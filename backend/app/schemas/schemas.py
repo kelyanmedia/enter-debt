@@ -977,6 +977,22 @@ class ProjectCostProfitPut(BaseModel):
     profit_uzs: Decimal = Field(ge=Decimal("0"))
 
 
+class FounderIncomeSettingsOut(BaseModel):
+    """Процент дивидендов учредителей по умолчанию для одной компании."""
+
+    default_percent: Decimal = Decimal("0")
+
+
+class FounderIncomeSettingsPut(BaseModel):
+    default_percent: Decimal = Field(ge=Decimal("0"), le=Decimal("100"))
+
+
+class ProjectFounderIncomePercentPut(BaseModel):
+    """NULL сбрасывает индивидуальную ставку и возвращает правило компании."""
+
+    percent: Optional[Decimal] = Field(default=None, ge=Decimal("0"), le=Decimal("100"))
+
+
 class ProjectCostLendingItemOut(BaseModel):
     id: int
     lending_category: Literal["external", "internal"]
@@ -1029,6 +1045,9 @@ class ProjectCostRowOut(BaseModel):
     manager_commission_percent: Optional[Decimal] = None  # % из привязанной записи «Комиссия»
     manager_commission_reserved_uzs: Optional[Decimal] = None  # маржа × % / 100
     profit_after_manager_uzs: Decimal  # маржа − резерв комиссии (если % нет — как profit_actual)
+    founder_income_percent: Decimal = Decimal("0")  # эффективный %: индивидуальный либо по умолчанию
+    founder_income_percent_override: Optional[Decimal] = None
+    founder_income_uzs: Decimal = Decimal("0")  # доступно к выводу учредителям из чистой прибыли проекта
     lending_active_uzs: Decimal = Decimal("0")  # активное кредитование по проекту (не в P&L)
     lending_items: List[ProjectCostLendingItemOut] = []
 

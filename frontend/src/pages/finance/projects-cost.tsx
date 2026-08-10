@@ -29,6 +29,10 @@ interface ProjectsCostUi {
   fields: ProjectsCostFieldUiRow[]
 }
 
+interface FounderIncomeSettings {
+  default_percent: string
+}
+
 interface ProjectCostRow {
   payment_id: number
   partner_id: number
@@ -64,6 +68,12 @@ interface ProjectCostRow {
   manager_commission_percent?: string | null
   manager_commission_reserved_uzs?: string | null
   profit_after_manager_uzs: string
+  /** Эффективный % учредителей: индивидуальный или настройка компании. */
+  founder_income_percent?: string
+  /** null означает «по умолчанию компании». */
+  founder_income_percent_override?: string | null
+  /** Часть положительной чистой прибыли, доступная к выводу учредителям. */
+  founder_income_uzs?: string
   lending_active_uzs?: string
   lending_items?: ProjectCostLendingItem[]
 }
@@ -147,7 +157,7 @@ function shiftYM(ym: string, delta: number) {
 type PeriodPreset = 'this' | 'last' | 'all' | 'custom'
 
 /** Раздел таблицы: услуги = всё, кроме хостинга/домена; хостинг отдельно. */
-type ProjectsCostSegment = 'services' | 'hosting'
+type ProjectsCostSegment = 'services' | 'hosting' | 'founder_income'
 
 function formatStart(iso: string) {
   const d = new Date(iso.includes('T') ? iso : `${iso}T12:00:00`)
@@ -249,6 +259,13 @@ export default function FinanceProjectsCostPage() {
   const [profitSaving, setProfitSaving] = useState(false)
   const profitDraftRef = useRef('')
   const [segmentTab, setSegmentTab] = useState<ProjectsCostSegment>('services')
+  const [founderDefaultPercent, setFounderDefaultPercent] = useState('0')
+  const [founderSettingsOpen, setFounderSettingsOpen] = useState(false)
+  const [founderDefaultDraft, setFounderDefaultDraft] = useState('0')
+  const [founderSaving, setFounderSaving] = useState(false)
+  const [founderPercentEdit, setFounderPercentEdit] = useState<number | null>(null)
+  const [founderPercentDraft, setFounderPercentDraft] = useState('')
+  const founderPercentDraftRef = useRef('')
   const [tableSearch, setTableSearch] = useState('')
   const [costFieldLabels, setCostFieldLabels] = useState<Record<CostFieldApi, string>>(DEFAULT_COST_FIELD_LABELS)
   const [labelEditField, setLabelEditField] = useState<CostFieldApi | null>(null)
@@ -333,13 +350,26 @@ export default function FinanceProjectsCostPage() {
     }
   }, [])
 
+  const loadFounderIncomeSettings = useCallback(async () => {
+    try {
+      const r = await api.get<FounderIncomeSettings>('finance/projects-cost/founder-income-settings')
+      const next = moneyCellString(r.data.default_percent)
+      setFounderDefaultPercent(next)
+      setFounderDefaultDraft(next)
+    } catch {
+      setFounderDefaultPercent('0')
+    }
+  }, [])
+
   useEffect(() => {
     if (!loading && user && canAccessFinanceSection(user, 'projects_cost')) {
       void loadCostFieldUi()
+      void loadFounderIncomeSettings()
     }
-  }, [loadCostFieldUi, loading, user])
+  }, [loadCostFieldUi, loadFounderIncomeSettings, loading, user])
 
   const segmentRows = useMemo(() => {
+    if (segmentTab === 'founder_income') return rows
     if (segmentTab === 'hosting') {
       return rows.filter((r) => r.project_category === 'hosting_domain')
     }
@@ -539,6 +569,80 @@ export default function FinanceProjectsCostPage() {
     },
     [profitSaving, cancelProfitEdit],
   )
+
+  const startFounderPercentEdit = useCallback((row: ProjectCostRow) => {
+    const value = moneyCellString(row.founder_income_percent ?? founderDefaultPercent)
+    setFounderPercentEdit(row.payment_id)
+    setFounderPercentDraft(value)
+    founderPercentDraftRef.current = value
+  }, [founderDefaultPercent])
+
+  const cancelFounderPercentEdit = useCallback(() => {
+    setFounderPercentEdit(null)
+    setFounderPercentDraft('')
+    founderPercentDraftRef.current = ''
+  }, [])
+
+  const commitFounderPercent = useCallback(async (row: ProjectCostRow) => {
+    if (founderSaving) return
+    const value = parseMoneyInput(founderPercentDraftRef.current)
+    if (value < 0 || value > 100) {
+      alert('Процент учредителей должен быть от 0 до 100')
+      return
+    }
+    setFounderSaving(true)
+    try {
+      const res = await api.put<ProjectCostRow>(`finance/projects-cost/${row.payment_id}/founder-income-percent`, {
+        percent: String(value),
+      })
+      setRows((prev) => prev.map((x) => (x.payment_id === row.payment_id ? res.data : x)))
+      cancelFounderPercentEdit()
+    } catch (e) {
+      alert(formatApiError(e))
+    } finally {
+      setFounderSaving(false)
+    }
+  }, [cancelFounderPercentEdit, founderSaving])
+
+  const resetFounderPercent = useCallback(async (row: ProjectCostRow) => {
+    if (founderSaving) return
+    setFounderSaving(true)
+    try {
+      const res = await api.put<ProjectCostRow>(`finance/projects-cost/${row.payment_id}/founder-income-percent`, {
+        percent: null,
+      })
+      setRows((prev) => prev.map((x) => (x.payment_id === row.payment_id ? res.data : x)))
+      cancelFounderPercentEdit()
+    } catch (e) {
+      alert(formatApiError(e))
+    } finally {
+      setFounderSaving(false)
+    }
+  }, [cancelFounderPercentEdit, founderSaving])
+
+  const saveFounderSettings = useCallback(async () => {
+    if (founderSaving) return
+    const value = parseMoneyInput(founderDefaultDraft)
+    if (value < 0 || value > 100) {
+      alert('Процент по умолчанию должен быть от 0 до 100')
+      return
+    }
+    setFounderSaving(true)
+    try {
+      const r = await api.put<FounderIncomeSettings>('finance/projects-cost/founder-income-settings', {
+        default_percent: String(value),
+      })
+      const next = moneyCellString(r.data.default_percent)
+      setFounderDefaultPercent(next)
+      setFounderDefaultDraft(next)
+      setFounderSettingsOpen(false)
+      await load()
+    } catch (e) {
+      alert(formatApiError(e))
+    } finally {
+      setFounderSaving(false)
+    }
+  }, [founderDefaultDraft, founderSaving, load])
 
   const commitCostEdit = useCallback(
     async (row: ProjectCostRow, field: CostFieldApi) => {
@@ -790,6 +894,7 @@ export default function FinanceProjectsCostPage() {
     let other = 0
     let seo = 0
     let lending = 0
+    let founderIncome = 0
     for (const r of tableRows) {
       cost += Number(r.billing_unit_amount) || 0
       internal += Number(r.internal_cost_sum) || 0
@@ -800,8 +905,9 @@ export default function FinanceProjectsCostPage() {
       other += Number(r.cost_other_uzs) || 0
       seo += Number(r.cost_seo_uzs) || 0
       lending += Number(r.lending_active_uzs) || 0
+      founderIncome += Number(r.founder_income_uzs) || 0
     }
-    return { cost, internal, profit, paid, design, dev, other, seo, lending }
+    return { cost, internal, profit, paid, design, dev, other, seo, lending, founderIncome }
   }, [tableRows])
 
   if (loading || !user || !canAccessFinanceSection(user, 'projects_cost')) return null
@@ -810,7 +916,7 @@ export default function FinanceProjectsCostPage() {
     <Layout>
       <PageHeader
         title="Projects Cost"
-        subtitle="Проекты из «Проекты» и график оплат. Можно ввести маржу в колонке «Прибыль» — тогда «Себест.» и первая статья расходника (дизайн) посчитаются как стоимость минус маржа. Либо вручную правьте статьи себестоимости в «Показать всё». Для разового договора база — сумма договора; для рекуррента — оплаты по графику. Из маржи вычитается резерв % менеджера из «Комиссия», если строка привязана."
+        subtitle="Проекты из «Проекты» и график оплат. Можно ввести маржу в колонке «Прибыль» — тогда «Себест.» и первая статья расходника (дизайн) посчитаются как стоимость минус маржа. Либо вручную правьте статьи себестоимости в «Показать всё». Для разового договора база — сумма договора; для рекуррента — оплаты по графику. Из маржи вычитается резерв % менеджера из «Комиссия», если строка привязана. Режим Founder Income считает доступные дивиденды из зафиксированной чистой прибыли проекта."
       />
       <div style={{ padding: '22px 24px', display: 'flex', flexDirection: 'column', gap: 14, minHeight: 0 }}>
         <div style={{ display: 'flex', flexWrap: 'wrap', alignItems: 'center', gap: 10 }}>
@@ -822,10 +928,11 @@ export default function FinanceProjectsCostPage() {
           </BtnOutline>
           <span style={{ width: 1, height: 20, background: '#e2e8f0', margin: '0 4px' }} aria-hidden />
           <span style={{ fontSize: 11, fontWeight: 700, color: '#64748b', marginRight: 2 }}>РАЗДЕЛ</span>
-          {(['services', 'hosting'] as const).map((key) => {
+          {(['services', 'hosting', 'founder_income'] as const).map((key) => {
             const labels: Record<typeof key, string> = {
               services: 'Услуги',
               hosting: 'Хостинг / домен',
+              founder_income: 'Founder Income',
             }
             const active = segmentTab === key
             return (
@@ -848,6 +955,18 @@ export default function FinanceProjectsCostPage() {
               </BtnOutline>
             )
           })}
+          {segmentTab === 'founder_income' && (
+            <BtnOutline
+              type="button"
+              onClick={() => {
+                setFounderDefaultDraft(founderDefaultPercent)
+                setFounderSettingsOpen(true)
+              }}
+              style={{ fontSize: 12, padding: '6px 12px' }}
+            >
+              Настройки режима · {formatMoneyNumber(Number(founderDefaultPercent))} %
+            </BtnOutline>
+          )}
           {fetching && <span style={{ fontSize: 12, color: '#94a3b8' }}>Загрузка…</span>}
         </div>
         <div
@@ -966,13 +1085,120 @@ export default function FinanceProjectsCostPage() {
                 text={
                   segmentTab === 'services'
                     ? 'В разделе «Услуги» нет строк: все проекты в периоде относятся к «Хостинг/домен». Переключитесь на соответствующий раздел.'
-                    : 'В разделе «Хостинг/домен» нет проектов за выбранный период. Переключитесь на «Услуги» или смените период.'
+                    : segmentTab === 'hosting'
+                      ? 'В разделе «Хостинг/домен» нет проектов за выбранный период. Переключитесь на «Услуги» или смените период.'
+                      : 'Нет проектов для расчёта Founder Income за выбранный период.'
                 }
               />
             </div>
           ) : rows.length > 0 && !fetching && tableRows.length === 0 ? (
             <div style={{ padding: 40 }}>
               <Empty text="Ничего не найдено по поиску. Измените запрос или нажмите «Сбросить»." />
+            </div>
+          ) : segmentTab === 'founder_income' ? (
+            <div
+              role="region"
+              aria-label="Founder Income по проектам"
+              tabIndex={0}
+              style={{ maxHeight: 'min(72vh, calc(100vh - 200px))', overflow: 'auto', paddingBottom: 52, outline: 'none' }}
+            >
+              <table style={{ width: '100%', borderCollapse: 'collapse', minWidth: 920 }}>
+                <thead style={{ position: 'sticky', top: 0, zIndex: 3, boxShadow: '0 1px 0 #e2e8f0' }}>
+                  <tr style={{ background: '#f8fafc' }}>
+                    <Th style={{ width: 36 }}>№</Th>
+                    <Th>Проект</Th>
+                    <Th>Партнёр</Th>
+                    <Th>Категория</Th>
+                    <Th style={{ minWidth: 130 }} title="Зафиксированная прибыль после резерва комиссии ПМ">Чистая прибыль</Th>
+                    <Th style={{ minWidth: 150 }} title="Нажмите, чтобы задать индивидуальный процент для проекта">% учредителей</Th>
+                    <Th style={{ minWidth: 180 }} title="Чистая прибыль × процент учредителей">К выводу учредителям</Th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {tableRows.map((r, idx) => {
+                    const cat = r.project_category || ''
+                    const editing = founderPercentEdit === r.payment_id
+                    const overridden = r.founder_income_percent_override != null && r.founder_income_percent_override !== ''
+                    return (
+                      <tr key={r.payment_id} style={{ borderBottom: '1px solid #eef2f7', background: CAT_BG[cat] || '#fff' }}>
+                        <Td style={{ fontWeight: 600 }}>{idx + 1}</Td>
+                        <Td style={{ fontWeight: 600, maxWidth: 260 }}>
+                          <Link href="/payments" style={{ color: '#1a1d23', textDecoration: 'none' }} title="Открыть проект">
+                            {r.project_name || '—'}
+                          </Link>
+                        </Td>
+                        <Td style={{ color: '#475569', fontSize: 13 }}>{r.partner_name}</Td>
+                        <Td>
+                          <span style={{ fontWeight: 700, fontSize: 12 }}>{categoryLabel(cat)}</span>
+                          <div style={{ fontSize: 10, color: '#64748b', marginTop: 2 }}>{paymentTypeRu(r.payment_type)}</div>
+                        </Td>
+                        <Td style={{ fontWeight: 700, color: '#1e3a5f', whiteSpace: 'nowrap' }}>
+                          {formatMoneyNumber(Number(r.profit_after_manager_uzs ?? r.profit_actual))}
+                        </Td>
+                        <Td style={{ verticalAlign: 'middle', minWidth: 150 }}>
+                          {editing ? (
+                            <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                              <MoneyInput
+                                value={founderPercentDraft}
+                                onChange={(v) => {
+                                  setFounderPercentDraft(v)
+                                  founderPercentDraftRef.current = v
+                                }}
+                                autoFocus
+                                disabled={founderSaving}
+                                onKeyDown={(e) => {
+                                  if (e.key === 'Enter') {
+                                    e.preventDefault()
+                                    void commitFounderPercent(r)
+                                  }
+                                  if (e.key === 'Escape') {
+                                    e.preventDefault()
+                                    cancelFounderPercentEdit()
+                                  }
+                                }}
+                                style={{ width: 74, minWidth: 74, fontSize: 12, padding: '4px 6px' }}
+                              />
+                              <span style={{ color: '#64748b', fontSize: 12 }}>%</span>
+                              <button type="button" onClick={() => void commitFounderPercent(r)} disabled={founderSaving} style={{ border: 'none', background: '#1a6b3c', color: '#fff', borderRadius: 6, padding: '5px 7px', cursor: 'pointer', fontWeight: 700 }} title="Сохранить">✓</button>
+                              <button type="button" onClick={cancelFounderPercentEdit} disabled={founderSaving} style={{ border: 'none', background: '#eef2f7', color: '#64748b', borderRadius: 6, padding: '5px 7px', cursor: 'pointer' }} title="Отмена">✕</button>
+                            </div>
+                          ) : (
+                            <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
+                              <button
+                                type="button"
+                                onClick={() => startFounderPercentEdit(r)}
+                                disabled={founderSaving}
+                                style={{ border: 'none', background: 'transparent', padding: 0, color: '#1e3a5f', fontWeight: 700, cursor: founderSaving ? 'wait' : 'pointer', textDecoration: 'underline dotted', textUnderlineOffset: 3 }}
+                                title="Изменить процент учредителей для этого проекта"
+                              >
+                                {formatMoneyNumber(Number(r.founder_income_percent ?? founderDefaultPercent))} %
+                              </button>
+                              {overridden ? (
+                                <button type="button" onClick={() => void resetFounderPercent(r)} disabled={founderSaving} style={{ border: 'none', background: '#fff', borderRadius: 6, padding: '3px 6px', color: '#64748b', cursor: 'pointer', fontSize: 11 }} title={`Вернуть общий процент ${formatMoneyNumber(Number(founderDefaultPercent))} %`}>
+                                  По умолчанию
+                                </button>
+                              ) : (
+                                <span style={{ fontSize: 10, color: '#64748b' }}>общий</span>
+                              )}
+                            </div>
+                          )}
+                        </Td>
+                        <Td style={{ fontWeight: 800, color: '#166534', whiteSpace: 'nowrap' }}>
+                          {formatMoneyNumber(Number(r.founder_income_uzs))}
+                        </Td>
+                      </tr>
+                    )
+                  })}
+                </tbody>
+                <tfoot style={{ position: 'sticky', bottom: 0, zIndex: 2 }}>
+                  <tr style={{ background: '#e2e8f0', fontWeight: 700, boxShadow: '0 -1px 0 #cbd5e1' }}>
+                    <Td colSpan={4} style={{ ...footerMoneyTd, color: '#334155' }}>Итого{tableSearch.trim() ? ' (по фильтру)' : ''}</Td>
+                    <Td style={{ ...footerMoneyTd, color: '#1e3a5f' }}>{formatMoneyNumber(totals.profit)}</Td>
+                    <Td style={{ borderTop: '2px solid #94a3b8', color: '#64748b', padding: '10px 12px' }}>—</Td>
+                    <Td style={{ ...footerMoneyTd, color: '#166534' }}>{formatMoneyNumber(totals.founderIncome)}</Td>
+                  </tr>
+                </tfoot>
+              </table>
             </div>
           ) : (
             <div
@@ -1337,14 +1563,25 @@ export default function FinanceProjectsCostPage() {
         </Card>
 
         <div style={{ fontSize: 12, color: '#64748b', lineHeight: 1.55, maxWidth: 900 }}>
-          Себестоимость по проекту = сумма четырёх колонок (ручной ввод + задачи «Команда»). Клик по «Прибыль» задаёт маржу:
-          себестоимость = стоимость − маржа, сумма уходит в первую статью (дизайн). Редактирование ячеек статей меняет только
-          ручную часть. Для USD-задач в сводку попадают суммы по курсу месяца даты задачи из «Доступные средства».
-          Строка «Итого» относится
-          только к текущему разделу («Услуги» или «Хостинг/домен»); при поиске суммируются видимые строки. В свёрнутой строке
-          колонки статей скрыты; «Показать всё» раскрывает их и график. Фиксация «оплата прошла» по периоду здесь совпадает с
-          действием в карточке проекта; отдельный учёт выплат сотрудникам по задачам — в «Команда» и связанных отчётах.
-          Колонка «Кредитование» — учёт замороженных средств до оплаты клиентом (не в P&L); при оплате запись закрывается автоматически.
+          {segmentTab === 'founder_income' ? (
+            <>
+              Founder Income берёт только положительную чистую прибыль проекта: это зафиксированная маржа после резерва
+              комиссии ПМ. «К выводу учредителям» = чистая прибыль × процент учредителей. В настройках режима задаётся общий
+              процент для текущей компании; по клику на процент в строке можно установить индивидуальное правило или вернуть
+              наследование общего процента. Изменение процента не меняет себестоимость, P&L и факт оплаты.
+            </>
+          ) : (
+            <>
+              Себестоимость по проекту = сумма четырёх колонок (ручной ввод + задачи «Команда»). Клик по «Прибыль» задаёт маржу:
+              себестоимость = стоимость − маржа, сумма уходит в первую статью (дизайн). Редактирование ячеек статей меняет только
+              ручную часть. Для USD-задач в сводку попадают суммы по курсу месяца даты задачи из «Доступные средства».
+              Строка «Итого» относится только к текущему разделу («Услуги» или «Хостинг/домен»); при поиске суммируются видимые
+              строки. В свёрнутой строке колонки статей скрыты; «Показать всё» раскрывает их и график. Фиксация «оплата прошла»
+              по периоду здесь совпадает с действием в карточке проекта; отдельный учёт выплат сотрудникам по задачам — в
+              «Команда» и связанных отчётах. Колонка «Кредитование» — учёт замороженных средств до оплаты клиентом (не в P&L);
+              при оплате запись закрывается автоматически.
+            </>
+          )}
         </div>
       </div>
       <Modal
@@ -1476,6 +1713,49 @@ export default function FinanceProjectsCostPage() {
             autoFocus
           />
         </Field>
+      </Modal>
+      <Modal
+        open={founderSettingsOpen}
+        onClose={() => {
+          if (founderSaving) return
+          setFounderSettingsOpen(false)
+          setFounderDefaultDraft(founderDefaultPercent)
+        }}
+        title="Founder Income · настройки"
+        width={480}
+        footer={
+          <>
+            <BtnOutline
+              type="button"
+              onClick={() => {
+                setFounderSettingsOpen(false)
+                setFounderDefaultDraft(founderDefaultPercent)
+              }}
+              disabled={founderSaving}
+            >
+              Отмена
+            </BtnOutline>
+            <BtnPrimary type="button" onClick={() => void saveFounderSettings()} disabled={founderSaving}>
+              {founderSaving ? 'Сохранение…' : 'Сохранить'}
+            </BtnPrimary>
+          </>
+        }
+      >
+        <div style={{ fontSize: 13, color: '#64748b', lineHeight: 1.5, marginBottom: 14 }}>
+          Общий процент применяется к новым и не переопределённым проектам текущей компании. Индивидуальный процент в строке
+          проекта всегда имеет приоритет.
+        </div>
+        <Field label="Процент учредителей по умолчанию">
+          <MoneyInput
+            value={founderDefaultDraft}
+            onChange={setFounderDefaultDraft}
+            placeholder="Например: 20"
+            autoFocus
+          />
+        </Field>
+        <div style={{ fontSize: 12, color: '#64748b', marginTop: -6 }}>
+          Допустимое значение — от 0 до 100 %. Дивиденды рассчитываются только из положительной чистой прибыли.
+        </div>
       </Modal>
     </Layout>
   )

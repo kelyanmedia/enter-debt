@@ -1,6 +1,6 @@
 """Подписи разделов «Проекты» и линий категорий — на компанию (company_slug)."""
 
-from sqlalchemy import Boolean, Column, Integer, String, UniqueConstraint
+from sqlalchemy import Boolean, Column, Integer, Numeric, String, UniqueConstraint
 
 from app.db.database import Base
 
@@ -43,3 +43,14 @@ class CompanyProjectsCostField(Base):
     company_slug = Column(String(32), nullable=False, index=True)
     field_key = Column(String(32), nullable=False)
     label = Column(String(120), nullable=False)
+
+
+class CompanyFounderIncomeSettings(Base):
+    """Правило расчёта дивидендов учредителей в Projects Cost, отдельно по компании."""
+
+    __tablename__ = "company_founder_income_settings"
+    __table_args__ = (UniqueConstraint("company_slug", name="uq_company_founder_income_settings_slug"),)
+
+    id = Column(Integer, primary_key=True, index=True)
+    company_slug = Column(String(32), nullable=False, index=True)
+    default_percent = Column(Numeric(5, 2), nullable=False, default=0)

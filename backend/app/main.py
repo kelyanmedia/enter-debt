@@ -562,6 +562,7 @@ def _migrate():
         "ALTER TABLE payments ADD COLUMN IF NOT EXISTS projects_cost_dev_uzs NUMERIC(15,2) NOT NULL DEFAULT 0",
         "ALTER TABLE payments ADD COLUMN IF NOT EXISTS projects_cost_other_uzs NUMERIC(15,2) NOT NULL DEFAULT 0",
         "ALTER TABLE payments ADD COLUMN IF NOT EXISTS projects_cost_seo_uzs NUMERIC(15,2) NOT NULL DEFAULT 0",
+        "ALTER TABLE payments ADD COLUMN IF NOT EXISTS founder_income_percent NUMERIC(5,2)",
         "UPDATE payments SET projects_cost_other_uzs = COALESCE(projects_cost_other_uzs, 0) + COALESCE(projects_cost_prime_uzs, 0) WHERE projects_cost_prime_uzs IS NOT NULL",
         "UPDATE payments SET projects_cost_prime_uzs = NULL",
         """CREATE TABLE IF NOT EXISTS available_funds_manual (
@@ -744,6 +745,13 @@ def _migrate():
         )""",
         "CREATE UNIQUE INDEX IF NOT EXISTS uq_company_project_line ON company_project_lines (company_slug, category_slug)",
         "CREATE INDEX IF NOT EXISTS ix_company_project_lines_slug ON company_project_lines (company_slug)",
+        """CREATE TABLE IF NOT EXISTS company_founder_income_settings (
+            id SERIAL PRIMARY KEY,
+            company_slug VARCHAR(32) NOT NULL,
+            default_percent NUMERIC(5,2) NOT NULL DEFAULT 0
+        )""",
+        "CREATE UNIQUE INDEX IF NOT EXISTS uq_company_founder_income_settings_slug ON company_founder_income_settings (company_slug)",
+        "CREATE INDEX IF NOT EXISTS ix_company_founder_income_settings_slug ON company_founder_income_settings (company_slug)",
         """CREATE TABLE IF NOT EXISTS ceo_dashboard_blocks (
             id SERIAL PRIMARY KEY,
             company_slug VARCHAR(32) NOT NULL,
@@ -1021,6 +1029,25 @@ def _migrate():
         except Exception as e:
             log.warning(
                 "Migration skipped [%s] (pl_manual_lines.link_to_net_profit): %s",
+                _slug,
+                e,
+            )
+
+    # Founder Income: процент проекта хранится в payments и может отсутствовать в старой SQLite БД.
+    for _slug, eng in iter_company_engines():
+        try:
+            cols = {c["name"] for c in inspect(eng).get_columns("payments")}
+        except Exception:
+            continue
+        if "founder_income_percent" in cols:
+            continue
+        try:
+            with eng.connect() as conn:
+                conn.execute(text("ALTER TABLE payments ADD COLUMN founder_income_percent NUMERIC(5,2)"))
+                conn.commit()
+        except Exception as e:
+            log.warning(
+                "Migration skipped [%s] (payments.founder_income_percent): %s",
                 _slug,
                 e,
             )
