@@ -375,6 +375,15 @@ class CompanyAssetOut(BaseModel):
     serial_number: Optional[str] = None
     seller_contacts: Optional[str] = None
     notes: Optional[str] = None
+    assigned_to_user_id: Optional[int] = None
+    assigned_to_user_name: Optional[str] = None
+    issued_on: Optional[date] = None
+    issued_items: Optional[str] = None
+    storage_location: Optional[str] = None
+    icloud_login: Optional[str] = None
+    # Пароль выдаётся только администратору, всем остальным возвращается None.
+    icloud_password: Optional[str] = None
+    has_icloud_password: bool = False
     has_photo: bool = False
     created_at: Optional[datetime] = None
     updated_at: Optional[datetime] = None

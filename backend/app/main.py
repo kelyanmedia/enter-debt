@@ -521,6 +521,13 @@ def _migrate():
             updated_at TIMESTAMP WITH TIME ZONE
         )""",
         "CREATE INDEX IF NOT EXISTS ix_company_assets_company_slug ON company_assets (company_slug)",
+        "ALTER TABLE company_assets ADD COLUMN IF NOT EXISTS assigned_to_user_id INTEGER REFERENCES users(id) ON DELETE SET NULL",
+        "ALTER TABLE company_assets ADD COLUMN IF NOT EXISTS issued_on DATE",
+        "ALTER TABLE company_assets ADD COLUMN IF NOT EXISTS issued_items TEXT",
+        "ALTER TABLE company_assets ADD COLUMN IF NOT EXISTS storage_location VARCHAR(320)",
+        "ALTER TABLE company_assets ADD COLUMN IF NOT EXISTS icloud_login VARCHAR(320)",
+        "ALTER TABLE company_assets ADD COLUMN IF NOT EXISTS icloud_password TEXT",
+        "CREATE INDEX IF NOT EXISTS ix_company_assets_assigned_to_user_id ON company_assets (assigned_to_user_id)",
         """CREATE TABLE IF NOT EXISTS cash_flow_template_lines (
             id SERIAL PRIMARY KEY,
             template_group VARCHAR(40) NOT NULL,
@@ -1051,6 +1058,31 @@ def _migrate():
                 _slug,
                 e,
             )
+
+    # Карточки имущества существовали до выдачи сотруднику и учёта iCloud.
+    # SQLite требует проверять каждую добавляемую колонку отдельно.
+    _asset_columns = {
+        "assigned_to_user_id": "INTEGER",
+        "issued_on": "DATE",
+        "issued_items": "TEXT",
+        "storage_location": "VARCHAR(320)",
+        "icloud_login": "VARCHAR(320)",
+        "icloud_password": "TEXT",
+    }
+    for _slug, eng in iter_company_engines():
+        try:
+            cols = {c["name"] for c in inspect(eng).get_columns("company_assets")}
+        except Exception:
+            continue
+        for column, column_type in _asset_columns.items():
+            if column in cols:
+                continue
+            try:
+                with eng.connect() as conn:
+                    conn.execute(text(f"ALTER TABLE company_assets ADD COLUMN {column} {column_type}"))
+                    conn.commit()
+            except Exception as e:
+                log.warning("Migration skipped [%s] (company_assets.%s): %s", _slug, column, e)
 
     # Такой же добор для ДДС: старые строки не должны внезапно начать конвертироваться
     # по курсу, поэтому по умолчанию флаг автоконвертации = FALSE.

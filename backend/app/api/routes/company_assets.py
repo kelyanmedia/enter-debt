@@ -2,15 +2,19 @@
 from __future__ import annotations
 
 import uuid
+from base64 import urlsafe_b64encode
 from datetime import date
+from hashlib import sha256
 from pathlib import Path
 from typing import List, Optional
 
 from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile
-from sqlalchemy.orm import Session
+from cryptography.fernet import Fernet, InvalidToken
+from sqlalchemy.orm import Session, joinedload
 from starlette.responses import FileResponse, Response
 
 from app.core.security import get_current_user, require_admin
+from app.core.config import settings
 from app.db.database import get_db, get_request_company
 from app.models.company_asset import CompanyAsset
 from app.models.user import User
@@ -21,6 +25,33 @@ router = APIRouter(prefix="/api/company-assets", tags=["company-assets"])
 UPLOAD_DIR = Path(__file__).resolve().parent.parent.parent.parent / "uploads" / "company_assets"
 MAX_PHOTO_BYTES = 10 * 1024 * 1024
 _ALLOWED_EXT = frozenset({".jpg", ".jpeg", ".png", ".webp", ".gif"})
+_ICLOUD_SECRET_PREFIX = "v1:"
+
+
+def _icloud_cipher() -> Fernet:
+    """Ключ получается из server SECRET_KEY: в БД не лежит отдельный ключ или открытый пароль."""
+    key = urlsafe_b64encode(sha256(settings.SECRET_KEY.encode("utf-8")).digest())
+    return Fernet(key)
+
+
+def _encrypt_icloud_password(value: Optional[str]) -> Optional[str]:
+    raw = (value or "").strip()
+    if not raw:
+        return None
+    return _ICLOUD_SECRET_PREFIX + _icloud_cipher().encrypt(raw.encode("utf-8")).decode("ascii")
+
+
+def _decrypt_icloud_password(value: Optional[str]) -> Optional[str]:
+    raw = (value or "").strip()
+    if not raw:
+        return None
+    # Совместимость с ранними тестовыми/ручными записями, если такие уже появились.
+    if not raw.startswith(_ICLOUD_SECRET_PREFIX):
+        return raw
+    try:
+        return _icloud_cipher().decrypt(raw[len(_ICLOUD_SECRET_PREFIX):].encode("ascii")).decode("utf-8")
+    except (InvalidToken, UnicodeDecodeError):
+        return None
 
 
 def _ensure_access(user: User) -> None:
@@ -66,7 +97,7 @@ def _delete_photo_file(path: Optional[str]) -> None:
         pass
 
 
-def _to_out(row: CompanyAsset) -> CompanyAssetOut:
+def _to_out(row: CompanyAsset, *, include_icloud_password: bool = False) -> CompanyAssetOut:
     return CompanyAssetOut(
         id=int(row.id),
         name=row.name,
@@ -74,6 +105,14 @@ def _to_out(row: CompanyAsset) -> CompanyAssetOut:
         serial_number=row.serial_number,
         seller_contacts=row.seller_contacts,
         notes=row.notes,
+        assigned_to_user_id=row.assigned_to_user_id,
+        assigned_to_user_name=(row.assigned_to_user.name if row.assigned_to_user else None),
+        issued_on=row.issued_on,
+        issued_items=row.issued_items,
+        storage_location=row.storage_location,
+        icloud_login=row.icloud_login,
+        icloud_password=(_decrypt_icloud_password(row.icloud_password) if include_icloud_password else None),
+        has_icloud_password=bool(row.icloud_password),
         has_photo=bool(row.photo_path),
         created_at=row.created_at,
         updated_at=row.updated_at,
@@ -88,11 +127,25 @@ def list_company_assets(
     _ensure_access(current_user)
     rows = (
         db.query(CompanyAsset)
+        .options(joinedload(CompanyAsset.assigned_to_user))
         .filter(CompanyAsset.company_slug == get_request_company())
         .order_by(CompanyAsset.purchased_on.desc().nullslast(), CompanyAsset.id.desc())
         .all()
     )
-    return [_to_out(r) for r in rows]
+    return [_to_out(r, include_icloud_password=current_user.role == "admin") for r in rows]
+
+
+def _validate_assigned_user(db: Session, user_id: Optional[int]) -> Optional[int]:
+    if user_id is None:
+        return None
+    user = (
+        db.query(User)
+        .filter(User.id == user_id, User.company_slug == get_request_company())
+        .first()
+    )
+    if not user:
+        raise HTTPException(status_code=400, detail="Сотрудник не найден в текущей организации")
+    return int(user.id)
 
 
 @router.post("", response_model=CompanyAssetOut)
@@ -102,6 +155,12 @@ async def create_company_asset(
     serial_number: Optional[str] = Form(None),
     seller_contacts: Optional[str] = Form(None),
     notes: Optional[str] = Form(None),
+    assigned_to_user_id: Optional[int] = Form(None),
+    issued_on: Optional[date] = Form(None),
+    issued_items: Optional[str] = Form(None),
+    storage_location: Optional[str] = Form(None),
+    icloud_login: Optional[str] = Form(None),
+    icloud_password: Optional[str] = Form(None),
     photo: Optional[UploadFile] = File(None),
     db: Session = Depends(get_db),
     _: User = Depends(require_admin),
@@ -117,12 +176,18 @@ async def create_company_asset(
         serial_number=(serial_number or "").strip() or None,
         seller_contacts=(seller_contacts or "").strip() or None,
         notes=(notes or "").strip() or None,
+        assigned_to_user_id=_validate_assigned_user(db, assigned_to_user_id),
+        issued_on=issued_on,
+        issued_items=(issued_items or "").strip() or None,
+        storage_location=(storage_location or "").strip() or None,
+        icloud_login=(icloud_login or "").strip() or None,
+        icloud_password=_encrypt_icloud_password(icloud_password),
         photo_path=photo_path,
     )
     db.add(row)
     db.commit()
     db.refresh(row)
-    return _to_out(row)
+    return _to_out(row, include_icloud_password=True)
 
 
 @router.patch("/{asset_id}", response_model=CompanyAssetOut)
@@ -133,6 +198,14 @@ async def update_company_asset(
     serial_number: Optional[str] = Form(None),
     seller_contacts: Optional[str] = Form(None),
     notes: Optional[str] = Form(None),
+    assigned_to_user_id: Optional[int] = Form(None),
+    clear_assigned_to_user: bool = Form(False),
+    issued_on: Optional[date] = Form(None),
+    issued_items: Optional[str] = Form(None),
+    storage_location: Optional[str] = Form(None),
+    icloud_login: Optional[str] = Form(None),
+    icloud_password: Optional[str] = Form(None),
+    clear_icloud_password: bool = Form(False),
     photo: Optional[UploadFile] = File(None),
     remove_photo: bool = Form(False),
     db: Session = Depends(get_db),
@@ -158,6 +231,22 @@ async def update_company_asset(
         row.seller_contacts = seller_contacts.strip() or None
     if notes is not None:
         row.notes = notes.strip() or None
+    if assigned_to_user_id is not None:
+        row.assigned_to_user_id = _validate_assigned_user(db, assigned_to_user_id)
+    elif clear_assigned_to_user:
+        row.assigned_to_user_id = None
+    if issued_on is not None:
+        row.issued_on = issued_on
+    if issued_items is not None:
+        row.issued_items = issued_items.strip() or None
+    if storage_location is not None:
+        row.storage_location = storage_location.strip() or None
+    if icloud_login is not None:
+        row.icloud_login = icloud_login.strip() or None
+    if icloud_password is not None:
+        row.icloud_password = _encrypt_icloud_password(icloud_password)
+    elif clear_icloud_password:
+        row.icloud_password = None
     if remove_photo:
         _delete_photo_file(row.photo_path)
         row.photo_path = None
@@ -166,7 +255,7 @@ async def update_company_asset(
         row.photo_path = await _save_photo(photo)
     db.commit()
     db.refresh(row)
-    return _to_out(row)
+    return _to_out(row, include_icloud_password=True)
 
 
 @router.delete("/{asset_id}", status_code=204)
@@ -177,6 +266,7 @@ def delete_company_asset(
 ):
     row = (
         db.query(CompanyAsset)
+        .options(joinedload(CompanyAsset.assigned_to_user))
         .filter(CompanyAsset.id == asset_id, CompanyAsset.company_slug == get_request_company())
         .first()
     )
