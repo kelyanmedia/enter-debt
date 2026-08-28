@@ -1,4 +1,5 @@
-import { useCallback, useEffect, useMemo, useState, type CSSProperties, type ReactNode } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties, type ReactNode } from 'react'
+import { createPortal } from 'react-dom'
 import DatePicker from '@/components/DatePicker'
 import { useRouter } from 'next/router'
 import { useAuth } from '@/context/AuthContext'
@@ -148,8 +149,44 @@ function StaffActionWithTip({
   children: ReactNode
 }) {
   const open = tipRowId === rowId && tipKeyActive === tipKey
+  const anchorRef = useRef<HTMLDivElement>(null)
+  const tipRef = useRef<HTMLDivElement>(null)
+  const [tipPosition, setTipPosition] = useState({ top: 0, left: 0, below: false })
+
+  const updateTipPosition = useCallback(() => {
+    const anchor = anchorRef.current
+    if (!anchor) return
+    const rect = anchor.getBoundingClientRect()
+    const tipWidth = tipRef.current?.offsetWidth || 272
+    const tipHeight = tipRef.current?.offsetHeight || 210
+    const gutter = 8
+    const gap = 10
+    const below = rect.top - gutter < tipHeight + gap && window.innerHeight - rect.bottom - gutter >= tipHeight + gap
+    const left = Math.min(
+      Math.max(gutter, rect.left + rect.width / 2 - tipWidth / 2),
+      Math.max(gutter, window.innerWidth - tipWidth - gutter),
+    )
+    const top = below
+      ? Math.min(rect.bottom + gap, Math.max(gutter, window.innerHeight - tipHeight - gutter))
+      : Math.max(gutter, rect.top - tipHeight - gap)
+    setTipPosition({ top, left, below })
+  }, [])
+
+  useEffect(() => {
+    if (!open) return
+    const frame = requestAnimationFrame(updateTipPosition)
+    window.addEventListener('resize', updateTipPosition)
+    window.addEventListener('scroll', updateTipPosition, true)
+    return () => {
+      cancelAnimationFrame(frame)
+      window.removeEventListener('resize', updateTipPosition)
+      window.removeEventListener('scroll', updateTipPosition, true)
+    }
+  }, [open, updateTipPosition])
+
   return (
     <div
+      ref={anchorRef}
       style={{
         position: 'relative',
         display: 'inline-flex',
@@ -160,14 +197,15 @@ function StaffActionWithTip({
       onMouseEnter={() => onTipKey(tipKey)}
       onMouseLeave={() => onTipKey(null)}
     >
-      {open && (
+      {open && typeof document !== 'undefined' && createPortal(
         <div
+          ref={tipRef}
           role="tooltip"
           style={{
-            position: 'absolute',
-            bottom: '100%',
-            left: '50%',
-            transform: 'translate(-50%, -10px)',
+            position: 'fixed',
+            top: tipPosition.top,
+            left: tipPosition.left,
+            zIndex: 13000,
             padding: '10px 12px',
             background: '#0f172a',
             color: '#f1f5f9',
@@ -187,18 +225,18 @@ function StaffActionWithTip({
             aria-hidden
             style={{
               position: 'absolute',
-              top: '100%',
+              [tipPosition.below ? 'bottom' : 'top']: '100%',
               left: '50%',
               marginLeft: -8,
               width: 0,
               height: 0,
-              borderLeft: '8px solid transparent',
-              borderRight: '8px solid transparent',
-              borderTop: '9px solid #0f172a',
+              ...(tipPosition.below
+                ? { borderLeft: '8px solid transparent', borderRight: '8px solid transparent', borderBottom: '9px solid #0f172a' }
+                : { borderLeft: '8px solid transparent', borderRight: '8px solid transparent', borderTop: '9px solid #0f172a' }),
             }}
           />
         </div>
-      )}
+      , document.body)}
       {children}
     </div>
   )

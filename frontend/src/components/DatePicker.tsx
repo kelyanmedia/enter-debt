@@ -2,7 +2,8 @@
  * DatePicker — красивый кастомный выбор даты.
  * value/onChange: строка формата "YYYY-MM-DD"
  */
-import { CSSProperties, useEffect, useRef, useState } from 'react'
+import { CSSProperties, useCallback, useEffect, useRef, useState } from 'react'
+import { createPortal } from 'react-dom'
 
 const DAYS = ['Пн', 'Вт', 'Ср', 'Чт', 'Пт', 'Сб', 'Вс']
 const MONTHS = [
@@ -13,6 +14,10 @@ const MONTHS_GEN = [
   'января', 'февраля', 'марта', 'апреля', 'мая', 'июня',
   'июля', 'августа', 'сентября', 'октября', 'ноября', 'декабря',
 ]
+
+const POPUP_WIDTH = 320
+const POPUP_GAP = 6
+const VIEWPORT_GUTTER = 8
 
 function parseYMD(s: string): Date | null {
   if (!s) return null
@@ -71,7 +76,28 @@ export default function DatePicker({
     m: parsed?.getMonth() ?? today.getMonth(),
   })
   const [pending, setPending] = useState<string>(value)
+  const [popupPosition, setPopupPosition] = useState({ top: 0, left: 0 })
   const ref = useRef<HTMLDivElement>(null)
+  const popupRef = useRef<HTMLDivElement>(null)
+
+  const updatePopupPosition = useCallback(() => {
+    const trigger = ref.current
+    if (!trigger) return
+    const rect = trigger.getBoundingClientRect()
+    const maxLeft = Math.max(VIEWPORT_GUTTER, window.innerWidth - POPUP_WIDTH - VIEWPORT_GUTTER)
+    const left = Math.min(
+      Math.max(VIEWPORT_GUTTER, rect.left),
+      maxLeft,
+    )
+    const popupHeight = popupRef.current?.offsetHeight || 360
+    const maxTop = Math.max(VIEWPORT_GUTTER, window.innerHeight - popupHeight - VIEWPORT_GUTTER)
+    const spaceBelow = window.innerHeight - rect.bottom - VIEWPORT_GUTTER
+    const spaceAbove = rect.top - VIEWPORT_GUTTER
+    const top = spaceBelow >= popupHeight || spaceBelow >= spaceAbove
+      ? Math.min(rect.bottom + POPUP_GAP, maxTop)
+      : Math.max(VIEWPORT_GUTTER, rect.top - popupHeight - POPUP_GAP)
+    setPopupPosition({ top, left })
+  }, [])
 
   // sync view when value changes from outside
   useEffect(() => {
@@ -84,11 +110,26 @@ export default function DatePicker({
   useEffect(() => {
     if (!open) return
     const handler = (e: MouseEvent) => {
-      if (ref.current && !ref.current.contains(e.target as Node)) setOpen(false)
+      const target = e.target as Node
+      if (!ref.current?.contains(target) && !popupRef.current?.contains(target)) setOpen(false)
     }
     document.addEventListener('mousedown', handler)
     return () => document.removeEventListener('mousedown', handler)
   }, [open])
+
+  // Календарь рендерится через portal и не обрезается overflow у модальных окон.
+  // При прокрутке или изменении размера экрана он остаётся рядом с полем.
+  useEffect(() => {
+    if (!open) return
+    const frame = requestAnimationFrame(updatePopupPosition)
+    window.addEventListener('resize', updatePopupPosition)
+    window.addEventListener('scroll', updatePopupPosition, true)
+    return () => {
+      cancelAnimationFrame(frame)
+      window.removeEventListener('resize', updatePopupPosition)
+      window.removeEventListener('scroll', updatePopupPosition, true)
+    }
+  }, [open, updatePopupPosition])
 
   function prevMonth() {
     setView(v => v.m === 0 ? { y: v.y - 1, m: 11 } : { y: v.y, m: v.m - 1 })
@@ -150,13 +191,18 @@ export default function DatePicker({
       </div>
 
       {/* Popup */}
-      {open && (
-        <div style={{
-          position: 'absolute', top: 'calc(100% + 6px)', left: 0, zIndex: 9999,
-          background: '#fff', borderRadius: 14,
-          boxShadow: '0 8px 32px rgba(0,0,0,.14)', border: '1px solid #e8edf3',
-          width: 320, padding: '14px 14px 12px',
-        }}>
+      {open && typeof document !== 'undefined' && createPortal(
+        <div
+          ref={popupRef}
+          style={{
+            position: 'fixed', top: popupPosition.top, left: popupPosition.left, zIndex: 13000,
+            background: '#fff', borderRadius: 14,
+            boxShadow: '0 8px 32px rgba(0,0,0,.14)', border: '1px solid #e8edf3',
+            width: POPUP_WIDTH, maxWidth: `calc(100vw - ${VIEWPORT_GUTTER * 2}px)`,
+            maxHeight: `calc(100vh - ${VIEWPORT_GUTTER * 2}px)`, overflowY: 'auto',
+            padding: '14px 14px 12px',
+          }}
+        >
           {/* Selected date display */}
           {pending && (
             <div style={{
@@ -257,7 +303,7 @@ export default function DatePicker({
             >Готово</button>
           </div>
         </div>
-      )}
+      , document.body)}
     </div>
   )
 }
