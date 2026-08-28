@@ -151,25 +151,28 @@ function StaffActionWithTip({
   const open = tipRowId === rowId && tipKeyActive === tipKey
   const anchorRef = useRef<HTMLDivElement>(null)
   const tipRef = useRef<HTMLDivElement>(null)
-  const [tipPosition, setTipPosition] = useState({ top: 0, left: 0, below: false })
+  const [tipPosition, setTipPosition] = useState({ top: 0, left: 0, below: false, maxHeight: 0 })
 
   const updateTipPosition = useCallback(() => {
     const anchor = anchorRef.current
     if (!anchor) return
     const rect = anchor.getBoundingClientRect()
     const tipWidth = tipRef.current?.offsetWidth || 272
-    const tipHeight = tipRef.current?.offsetHeight || 210
+    const tipHeight = tipRef.current?.scrollHeight || 210
     const gutter = 8
     const gap = 10
-    const below = rect.top - gutter < tipHeight + gap && window.innerHeight - rect.bottom - gutter >= tipHeight + gap
+    const spaceAbove = Math.max(0, rect.top - gutter - gap)
+    const spaceBelow = Math.max(0, window.innerHeight - rect.bottom - gutter - gap)
+    const below = spaceBelow >= spaceAbove
+    const maxHeight = below ? spaceBelow : spaceAbove
     const left = Math.min(
       Math.max(gutter, rect.left + rect.width / 2 - tipWidth / 2),
       Math.max(gutter, window.innerWidth - tipWidth - gutter),
     )
     const top = below
-      ? Math.min(rect.bottom + gap, Math.max(gutter, window.innerHeight - tipHeight - gutter))
-      : Math.max(gutter, rect.top - tipHeight - gap)
-    setTipPosition({ top, left, below })
+      ? rect.bottom + gap
+      : rect.top - gap - Math.min(tipHeight, maxHeight)
+    setTipPosition({ top, left, below, maxHeight })
   }, [])
 
   useEffect(() => {
@@ -218,6 +221,9 @@ function StaffActionWithTip({
             boxShadow: '0 10px 28px rgba(15, 23, 42, 0.38)',
             pointerEvents: 'none',
             textAlign: 'left',
+            boxSizing: 'border-box',
+            maxHeight: tipPosition.maxHeight,
+            overflowY: 'auto',
           }}
         >
           {hint}
