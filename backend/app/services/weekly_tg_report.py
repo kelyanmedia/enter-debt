@@ -5,7 +5,7 @@ from __future__ import annotations
 import html
 import logging
 from collections import defaultdict
-from datetime import datetime, time, timedelta
+from datetime import datetime, time, timedelta, timezone
 from decimal import Decimal
 from typing import Dict, List, Optional, Tuple
 from zoneinfo import ZoneInfo
@@ -58,7 +58,7 @@ def report_period_tashkent(now: Optional[datetime] = None) -> Tuple[datetime, da
 
 def period_title_ru(start: datetime, end: datetime) -> str:
     def fmt_short(dt: datetime) -> str:
-        return f"{dt.day:02d}.{dt.month:02d}.{dt.year}"
+        return f"{dt.day:02d}.{dt.month:02d}.{dt.year} {dt:%H:%M}"
 
     return f"пн {fmt_short(start)} — {fmt_short(end)} ({_MONTHS_RU[end.month - 1]} {end.year}, Ташкент)"
 
@@ -201,7 +201,15 @@ def run_weekly_cash_report(db: Session, now: Optional[datetime] = None) -> dict:
     Возвращает служебный dict для логов / API.
     """
     start, end = report_period_tashkent(now)
-    rows = fetch_received_payment_rows_range(db, start, end)
+    # paid_at сохраняется в UTC. Для SQLite timezone-aware значения сериализуются
+    # без автоматической конвертации, поэтому передаём уже нормализованные границы.
+    # Заголовок остаётся в Ташкенте, чтобы период был понятен получателю.
+    rows = fetch_received_payment_rows_range(
+        db,
+        start.astimezone(timezone.utc),
+        end.astimezone(timezone.utc),
+        include_archived=True,
+    )
     text, total = build_weekly_report_messages(rows, start, end)
     chat_ids = admin_report_chat_ids(db)
     if not chat_ids:

@@ -17,29 +17,35 @@ def fetch_received_payment_rows_range(
     db: Session,
     start_at: datetime,
     end_at: datetime,
+    *,
+    include_archived: bool = False,
 ) -> List[ReceivedPaymentRowOut]:
     """
     Все поступления с paid_at в [start_at, end_at] (включительно).
     Логика совпадает с GET /dashboard/received-payments за месяц, но по произвольному диапазону.
+    include_archived=True — учитывать и архивные проекты (для пятничного отчёта по деньгам).
     """
     out: List[ReceivedPaymentRowOut] = []
+
+    month_filters = [
+        Payment.trashed_at.is_(None),
+        Payment.company_slug == get_request_company(),
+        Partner.trashed_at.is_(None),
+        Partner.company_slug == get_request_company(),
+        PaymentMonth.status == "paid",
+        PaymentMonth.paid_at.isnot(None),
+        PaymentMonth.paid_at >= start_at,
+        PaymentMonth.paid_at <= end_at,
+    ]
+    if not include_archived:
+        month_filters.insert(0, Payment.is_archived == False)
 
     q_months = (
         db.query(PaymentMonth, Payment, Partner)
         .join(Payment, Payment.id == PaymentMonth.payment_id)
         .join(Partner, Partner.id == Payment.partner_id)
         .options(joinedload(PaymentMonth.confirmed_by_user))
-        .filter(
-            Payment.is_archived == False,
-            Payment.trashed_at.is_(None),
-            Payment.company_slug == get_request_company(),
-            Partner.trashed_at.is_(None),
-            Partner.company_slug == get_request_company(),
-            PaymentMonth.status == "paid",
-            PaymentMonth.paid_at.isnot(None),
-            PaymentMonth.paid_at >= start_at,
-            PaymentMonth.paid_at <= end_at,
-        )
+        .filter(*month_filters)
         .order_by(Partner.name.asc(), Payment.id.asc(), PaymentMonth.paid_at.desc())
     )
     for pm, pay, part in q_months.all():
@@ -65,22 +71,25 @@ def fetch_received_payment_rows_range(
         )
 
     has_months_sq = select(PaymentMonth.payment_id).distinct()
+    whole_filters = [
+        Payment.trashed_at.is_(None),
+        Payment.company_slug == get_request_company(),
+        Partner.trashed_at.is_(None),
+        Partner.company_slug == get_request_company(),
+        Payment.status == "paid",
+        Payment.paid_at.isnot(None),
+        ~Payment.id.in_(has_months_sq),
+        Payment.paid_at >= start_at,
+        Payment.paid_at <= end_at,
+    ]
+    if not include_archived:
+        whole_filters.insert(0, Payment.is_archived == False)
+
     q_whole = (
         db.query(Payment, Partner)
         .join(Partner, Partner.id == Payment.partner_id)
         .options(joinedload(Payment.confirmed_by_user))
-        .filter(
-            Payment.is_archived == False,
-            Payment.trashed_at.is_(None),
-            Payment.company_slug == get_request_company(),
-            Partner.trashed_at.is_(None),
-            Partner.company_slug == get_request_company(),
-            Payment.status == "paid",
-            Payment.paid_at.isnot(None),
-            ~Payment.id.in_(has_months_sq),
-            Payment.paid_at >= start_at,
-            Payment.paid_at <= end_at,
-        )
+        .filter(*whole_filters)
         .order_by(Partner.name.asc(), Payment.paid_at.desc())
     )
     for pay, part in q_whole.all():
