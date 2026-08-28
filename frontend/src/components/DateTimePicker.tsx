@@ -2,7 +2,8 @@
  * DateTimePicker — красивый кастомный выбор даты + времени.
  * value/onChange: строка формата "YYYY-MM-DDTHH:MM" (datetime-local)
  */
-import { CSSProperties, useEffect, useRef, useState } from 'react'
+import { CSSProperties, useCallback, useEffect, useRef, useState } from 'react'
+import { createPortal } from 'react-dom'
 
 const DAYS = ['Пн', 'Вт', 'Ср', 'Чт', 'Пт', 'Сб', 'Вс']
 const MONTHS = [
@@ -13,6 +14,10 @@ const MONTHS_GEN = [
   'января', 'февраля', 'марта', 'апреля', 'мая', 'июня',
   'июля', 'августа', 'сентября', 'октября', 'ноября', 'декабря',
 ]
+
+const POPUP_WIDTH = 450
+const POPUP_GAP = 6
+const VIEWPORT_GUTTER = 8
 
 function parseLocal(s: string): { y: number; mo: number; d: number; h: number; min: number } | null {
   if (!s) return null
@@ -68,8 +73,27 @@ export default function DateTimePicker({
   const [hour, setHour] = useState(parsed?.h ?? 10)
   const [minute, setMinute] = useState(parsed?.min ?? 0)
   const ref = useRef<HTMLDivElement>(null)
+  const popupRef = useRef<HTMLDivElement>(null)
   const hourRef = useRef<HTMLDivElement>(null)
   const minRef = useRef<HTMLDivElement>(null)
+  const [popupPosition, setPopupPosition] = useState({ top: 0, left: 0 })
+
+  const updatePopupPosition = useCallback(() => {
+    const trigger = ref.current
+    if (!trigger) return
+    const rect = trigger.getBoundingClientRect()
+    const popupWidth = Math.min(POPUP_WIDTH, window.innerWidth - VIEWPORT_GUTTER * 2)
+    const maxLeft = Math.max(VIEWPORT_GUTTER, window.innerWidth - popupWidth - VIEWPORT_GUTTER)
+    const left = Math.min(Math.max(VIEWPORT_GUTTER, rect.left), maxLeft)
+    const popupHeight = popupRef.current?.offsetHeight || 430
+    const maxTop = Math.max(VIEWPORT_GUTTER, window.innerHeight - popupHeight - VIEWPORT_GUTTER)
+    const spaceBelow = window.innerHeight - rect.bottom - VIEWPORT_GUTTER
+    const spaceAbove = rect.top - VIEWPORT_GUTTER
+    const top = spaceBelow >= popupHeight || spaceBelow >= spaceAbove
+      ? Math.min(rect.bottom + POPUP_GAP, maxTop)
+      : Math.max(VIEWPORT_GUTTER, rect.top - popupHeight - POPUP_GAP)
+    setPopupPosition({ top, left })
+  }, [])
 
   useEffect(() => {
     const p = parseLocal(value)
@@ -86,11 +110,25 @@ export default function DateTimePicker({
   useEffect(() => {
     if (!open) return
     const handler = (e: MouseEvent) => {
-      if (ref.current && !ref.current.contains(e.target as Node)) setOpen(false)
+      const target = e.target as Node
+      if (!ref.current?.contains(target) && !popupRef.current?.contains(target)) setOpen(false)
     }
     document.addEventListener('mousedown', handler)
     return () => document.removeEventListener('mousedown', handler)
   }, [open])
+
+  // Popup lives outside modal/table overflow and follows its trigger while scrolling.
+  useEffect(() => {
+    if (!open) return
+    const frame = requestAnimationFrame(updatePopupPosition)
+    window.addEventListener('resize', updatePopupPosition)
+    window.addEventListener('scroll', updatePopupPosition, true)
+    return () => {
+      cancelAnimationFrame(frame)
+      window.removeEventListener('resize', updatePopupPosition)
+      window.removeEventListener('scroll', updatePopupPosition, true)
+    }
+  }, [open, updatePopupPosition])
 
   // Scroll selected time into center
   useEffect(() => {
@@ -165,13 +203,14 @@ export default function DateTimePicker({
         </span>
       </div>
 
-      {open && (
-        <div style={{
-          position: 'absolute', top: 'calc(100% + 6px)', left: 0, zIndex: 9999,
+      {open && typeof document !== 'undefined' && createPortal(
+        <div ref={popupRef} style={{
+          position: 'fixed', top: popupPosition.top, left: popupPosition.left, zIndex: 13000,
           background: '#fff', borderRadius: 14,
           boxShadow: '0 8px 32px rgba(0,0,0,.14)', border: '1px solid #e8edf3',
           display: 'flex', flexDirection: 'column',
-          minWidth: 340,
+          width: `min(${POPUP_WIDTH}px, calc(100vw - ${VIEWPORT_GUTTER * 2}px))`,
+          maxHeight: `calc(100vh - ${VIEWPORT_GUTTER * 2}px)`, overflowY: 'auto',
         }}>
           <div style={{ display: 'flex' }}>
             {/* Calendar side */}
@@ -317,7 +356,7 @@ export default function DateTimePicker({
             }}>Готово</button>
           </div>
         </div>
-      )}
+      , document.body)}
     </div>
   )
 }
