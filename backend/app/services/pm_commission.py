@@ -10,6 +10,7 @@ from typing import Any, Dict, List, Optional, Tuple
 from sqlalchemy.orm import Session
 
 from app.models.payment import Payment, PaymentMonth
+from app.services.vat import payment_net_amount
 
 
 def _add_calendar_months(d: date, n: int) -> date:
@@ -60,9 +61,9 @@ def _sum_paid(p: Payment) -> Decimal:
     for pm in months:
         if pm.status == "paid":
             amt = pm.amount if pm.amount is not None else p.amount
-            total += Decimal(str(amt or 0))
+            total += payment_net_amount(p, amt)
     if not months and p.status == "paid":
-        total = Decimal(str(p.amount or 0))
+        total = payment_net_amount(p)
     return total.quantize(Decimal("0.01"))
 
 
@@ -72,7 +73,7 @@ def compute_project_profit(p: Payment) -> Decimal:
     rec = _is_recurring_billing(p)
     if rec:
         return (_sum_paid(p) - internal).quantize(Decimal("0.01"))
-    basis = Decimal(str(p.amount or 0))
+    basis = payment_net_amount(p)
     return (basis - internal).quantize(Decimal("0.01"))
 
 

@@ -13,6 +13,7 @@ from app.models.available_funds_manual import AvailableFundsManual
 from app.models.partner import Partner
 from app.models.payment import Payment, PaymentMonth
 from app.schemas.schemas import AvailableFundsOut
+from app.services.vat import payment_net_amount
 
 
 def _split_method_amount(method: Optional[str], amount: Decimal) -> Tuple[Decimal, Decimal]:
@@ -45,8 +46,8 @@ def _sums_from_payments(db: Session, year: int, month: int) -> Tuple[Decimal, De
         )
     )
     for pm, pay in q_months.all():
-        eff = pm.amount if pm.amount is not None else pay.amount
-        a, c = _split_method_amount(getattr(pm, "received_payment_method", None), Decimal(str(eff)))
+        gross = pm.amount if pm.amount is not None else pay.amount
+        a, c = _split_method_amount(getattr(pm, "received_payment_method", None), payment_net_amount(pay, gross))
         on_acc += a
         on_cards += c
 
@@ -67,7 +68,7 @@ def _sums_from_payments(db: Session, year: int, month: int) -> Tuple[Decimal, De
         )
     )
     for pay in q_whole.all():
-        a, c = _split_method_amount(getattr(pay, "received_payment_method", None), Decimal(str(pay.amount)))
+        a, c = _split_method_amount(getattr(pay, "received_payment_method", None), payment_net_amount(pay))
         on_acc += a
         on_cards += c
 

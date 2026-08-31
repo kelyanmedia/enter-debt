@@ -11,6 +11,7 @@ from app.db.database import get_request_company
 from app.models.partner import Partner
 from app.models.payment import Payment, PaymentMonth
 from app.schemas.schemas import ReceivedPaymentRowOut
+from app.services.vat import payment_net_amount
 
 
 def fetch_received_payment_rows_range(
@@ -49,7 +50,7 @@ def fetch_received_payment_rows_range(
         .order_by(Partner.name.asc(), Payment.id.asc(), PaymentMonth.paid_at.desc())
     )
     for pm, pay, part in q_months.all():
-        eff = pm.amount if pm.amount is not None else pay.amount
+        eff = payment_net_amount(pay, pm.amount if pm.amount is not None else pay.amount)
         cu = pm.confirmed_by_user
         line_desc = (pm.description or "").strip() or None
         proj_desc = pay.description
@@ -98,7 +99,7 @@ def fetch_received_payment_rows_range(
             ReceivedPaymentRowOut(
                 kind="project_whole",
                 paid_at=pay.paid_at,
-                amount=pay.amount,
+                amount=payment_net_amount(pay),
                 partner_id=part.id,
                 partner_name=part.name,
                 payment_id=pay.id,

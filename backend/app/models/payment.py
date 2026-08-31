@@ -12,7 +12,10 @@ class Payment(Base):
     partner_id = Column(Integer, ForeignKey("partners.id"), nullable=False)
     payment_type = Column(String(30), nullable=False)
     description = Column(String(300), nullable=False)
+    # Полная сумма договора / счёта с НДС. Финансовые отчёты получают чистую
+    # выручку через payment_net_amount(...), чтобы НДС не попадал в оборот.
     amount = Column(Numeric(15, 2), nullable=False)
+    vat_rate = Column(Numeric(5, 2), nullable=False, default=0)  # 0 | 6 | 12; НДС добавляется сверху
     contract_months = Column(Integer, nullable=True)
 
     day_of_month = Column(Integer, nullable=True)

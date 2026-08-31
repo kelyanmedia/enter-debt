@@ -28,6 +28,7 @@ from app.models.lending_record import LendingRecord
 from app.models.company_ui import CompanyFounderIncomeSettings
 from app.finance.cash_flow_catalog import expense_pl_bucket
 from app.services.lending_lifecycle import active_lending_by_payment_id
+from app.services.vat import payment_net_amount
 from app.finance.projects_cost_categories import pc_cost_column_bucket
 from app.schemas.schemas import (
     PLCellOut,
@@ -180,9 +181,8 @@ def _is_recurring_billing(p: Payment) -> bool:
 
 
 def _line_amount(pm: PaymentMonth, p: Payment) -> Decimal:
-    if pm.amount is not None:
-        return Decimal(str(pm.amount))
-    return Decimal(str(p.amount))
+    gross = pm.amount if pm.amount is not None else p.amount
+    return payment_net_amount(p, gross)
 
 
 _TASK_COST_CATS = frozenset({"design", "dev", "other", "seo"})
@@ -495,10 +495,10 @@ def _payment_to_project_cost_row(
         )
 
     if not months_sorted and p.status == "paid" and p.paid_at:
-        sum_paid = Decimal(str(p.amount))
+        sum_paid = payment_net_amount(p)
 
     rec = _is_recurring_billing(p)
-    unit = Decimal(str(p.amount))
+    unit = payment_net_amount(p)
     contract_total: Decimal | None = None if rec else unit
     paid_pct: Decimal | None = None
     if not rec and contract_total is not None and contract_total > 0:
@@ -799,9 +799,9 @@ def _sum_paid_for_payment(p: Payment) -> Decimal:
     sum_paid = Decimal("0")
     for pm in p.months or []:
         if pm.status == "paid":
-            sum_paid += Decimal(str(pm.amount or 0))
+            sum_paid += _line_amount(pm, p)
     if not (p.months or []) and p.status == "paid" and p.paid_at:
-        sum_paid = Decimal(str(p.amount or 0))
+        sum_paid = payment_net_amount(p)
     return sum_paid.quantize(Decimal("0.01"))
 
 
@@ -809,7 +809,7 @@ def _profit_basis_amount(p: Payment, sum_paid: Decimal) -> Decimal:
     rec = _is_recurring_billing(p)
     if rec:
         return sum_paid
-    return Decimal(str(p.amount or 0)).quantize(Decimal("0.01"))
+    return payment_net_amount(p)
 
 
 @router.put("/projects-cost/{payment_id}/profit", response_model=ProjectCostRowOut)
@@ -1042,7 +1042,7 @@ def pl_report(
             paid_at = p.paid_at
             paid_date = paid_at.date() if isinstance(paid_at, datetime) else paid_at
             if paid_date.year == y:
-                rev_by_cat[cat][paid_date.month - 1] += Decimal(str(p.amount or 0))
+                rev_by_cat[cat][paid_date.month - 1] += payment_net_amount(p)
 
     total_rev = [Decimal("0") for _ in range(n)]
     for vals in rev_by_cat.values():

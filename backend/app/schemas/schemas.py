@@ -2,6 +2,7 @@ from pydantic import BaseModel, EmailStr, Field, BeforeValidator, field_validato
 from typing import Optional, List, Literal, Dict, Any, Annotated
 from datetime import datetime, date
 from decimal import Decimal
+from app.services.vat import VAT_RATES
 
 
 def _coerce_visible_manager_ids_field(v: Any) -> List[int]:
@@ -549,6 +550,7 @@ class PaymentBase(BaseModel):
     payment_type: str
     description: str
     amount: Decimal
+    vat_rate: Decimal = Decimal("0")  # 0 | 6 | 12; contract amount contains VAT when rate > 0
     contract_months: Optional[int] = None
     day_of_month: Optional[int] = None
     deadline_date: Optional[date] = None
@@ -565,9 +567,18 @@ class PaymentBase(BaseModel):
     hosting_renewal_anchor: Optional[date] = None
     hosting_prepaid_years: int = 0
 
+    @field_validator("vat_rate")
+    @classmethod
+    def _valid_vat_rate(cls, value: Decimal) -> Decimal:
+        rate = Decimal(str(value)).quantize(Decimal("0.01"))
+        if rate not in VAT_RATES:
+            raise ValueError("НДС: выберите 0%, 6% или 12%")
+        return rate
+
 
 class PaymentCreate(PaymentBase):
-    pass
+    # UI передаёт цену услуги без НДС; сервер рассчитывает и сохраняет сумму договора с НДС.
+    amount_without_vat: Optional[Decimal] = None
 
 
 # ── PAYMENT MONTHS ─────────────────────────────────────────────────────────────
@@ -629,6 +640,8 @@ class PaymentUpdate(BaseModel):
     payment_type: Optional[str] = None
     description: Optional[str] = None
     amount: Optional[Decimal] = None
+    amount_without_vat: Optional[Decimal] = None
+    vat_rate: Optional[Decimal] = None
     contract_months: Optional[int] = None
     day_of_month: Optional[int] = None
     deadline_date: Optional[date] = None
@@ -646,6 +659,16 @@ class PaymentUpdate(BaseModel):
     hosting_renewal_anchor: Optional[date] = None
     hosting_prepaid_years: Optional[int] = None
     pm_commission_enabled: Optional[bool] = None
+
+    @field_validator("vat_rate")
+    @classmethod
+    def _valid_optional_vat_rate(cls, value: Optional[Decimal]) -> Optional[Decimal]:
+        if value is None:
+            return None
+        rate = Decimal(str(value)).quantize(Decimal("0.01"))
+        if rate not in VAT_RATES:
+            raise ValueError("НДС: выберите 0%, 6% или 12%")
+        return rate
 
 
 class PaymentConfirm(BaseModel):
@@ -689,6 +712,10 @@ class PaymentOut(PaymentBase):
     next_payment_due_date: Optional[date] = None
     next_payment_month: Optional[str] = None
     pm_commission_enabled: bool = False
+    # Производные суммы для формы: amount — договор/счёт с НДС,
+    # amount_without_vat — чистая выручка, vat_amount — налог сверху.
+    amount_without_vat: Decimal = Decimal("0")
+    vat_amount: Decimal = Decimal("0")
 
     class Config:
         from_attributes = True

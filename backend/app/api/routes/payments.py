@@ -3,6 +3,7 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session, joinedload
 from typing import List, Optional
 from datetime import date, datetime, timezone
+from decimal import Decimal
 from calendar import monthrange
 from app.db.database import get_db, get_request_company
 from app.models.payment import Payment, PaymentMonth
@@ -11,6 +12,7 @@ from app.schemas.schemas import PaymentOut, PaymentCreate, PaymentUpdate, Paymen
 from app.core.security import get_current_user, require_payment_write
 from app.core.access import assert_partner_access, assert_partner_access_for_payment_delete, filter_payments_query
 from app.models.user import User
+from app.services.vat import gross_amount_from_net, payment_net_amount, payment_vat_amount
 
 router = APIRouter(prefix="/api/payments", tags=["payments"])
 
@@ -201,6 +203,8 @@ def enrich(p: Payment) -> PaymentOut:
     - иначе — срок проекта: deadline_date или расчётный день месяца (day_of_month).
     """
     out = PaymentOut.model_validate(p)
+    out.amount_without_vat = payment_net_amount(p)
+    out.vat_amount = payment_vat_amount(p)
     today = date.today()
     eff_status = effective_payment_status(p, today)
     out.status = eff_status
@@ -239,6 +243,8 @@ def enrich_as_month_line(p: Payment, pm: PaymentMonth, today: date) -> PaymentOu
     out.day_of_month = due.day
     eff = pm.amount if pm.amount is not None else p.amount
     out.amount = eff
+    out.amount_without_vat = payment_net_amount(p, eff)
+    out.vat_amount = payment_vat_amount(p, eff)
     desc = (pm.description or "").strip()
     out.description = desc if desc else p.description
     out.status = "overdue" if due < today else "pending"
@@ -261,6 +267,8 @@ def enrich_paid_month_line(p: Payment, pm: PaymentMonth, today: date) -> Payment
     out.day_of_month = due.day
     eff = pm.amount if pm.amount is not None else p.amount
     out.amount = eff
+    out.amount_without_vat = payment_net_amount(p, eff)
+    out.vat_amount = payment_vat_amount(p, eff)
     desc = (pm.description or "").strip()
     out.description = desc if desc else p.description
     out.status = "paid"
@@ -412,6 +420,9 @@ def create_payment(
 ):
     assert_partner_access(db, current_user, data.partner_id)
     dump = data.model_dump()
+    amount_without_vat = dump.pop("amount_without_vat", None)
+    if amount_without_vat is not None:
+        dump["amount"] = gross_amount_from_net(amount_without_vat, dump.get("vat_rate", Decimal("0")))
     dump["company_slug"] = get_request_company()
     payment = Payment(**dump)
     sync_hosting_fields(payment)
@@ -445,6 +456,14 @@ def update_payment(
     p = _require_payment_not_trashed(p)
     assert_partner_access(db, current_user, p.partner_id)
     upd = data.model_dump(exclude_unset=True)
+    amount_without_vat = upd.pop("amount_without_vat", None)
+    next_vat_rate = upd.get("vat_rate", getattr(p, "vat_rate", Decimal("0")))
+    if amount_without_vat is not None:
+        # В форме редактируется цена услуги без НДС; в amount хранится итог договора/счёта.
+        upd["amount"] = gross_amount_from_net(amount_without_vat, next_vat_rate)
+    elif "vat_rate" in upd and "amount" not in upd:
+        # При смене ставки без правки цены сохраняем прежнюю чистую цену услуги.
+        upd["amount"] = gross_amount_from_net(payment_net_amount(p), next_vat_rate)
     if "partner_id" in upd:
         assert_partner_access(db, current_user, upd["partner_id"])
     for field, value in upd.items():

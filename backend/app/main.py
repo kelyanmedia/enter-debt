@@ -1234,6 +1234,7 @@ def _migrate():
             ("mop_default_commission_percent", "ALTER TABLE users ADD COLUMN mop_default_commission_percent NUMERIC(5,2)"),
         ],
         "payments": [
+            ("vat_rate", "ALTER TABLE payments ADD COLUMN vat_rate NUMERIC(5,2) NOT NULL DEFAULT 0"),
             ("planned_deadline", "ALTER TABLE payments ADD COLUMN planned_deadline DATE"),
             ("effective_planned_deadline", "ALTER TABLE payments ADD COLUMN effective_planned_deadline DATE"),
             ("actual_close_date", "ALTER TABLE payments ADD COLUMN actual_close_date DATE"),

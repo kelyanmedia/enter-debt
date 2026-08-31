@@ -31,6 +31,7 @@ from app.core.security import get_current_user, require_admin, require_admin_or_
 from app.core.access import accessible_partner_ids, filter_payments_query, filter_partners_query, parse_visible_manager_ids
 from app.models.user import User
 from app.services.weekly_tg_report import run_weekly_cash_report
+from app.services.vat import payment_net_amount
 
 router = APIRouter(prefix="/api/dashboard", tags=["dashboard"])
 require_received_payments_access = require_finance_section("received_payments")
@@ -124,13 +125,7 @@ def _build_paid_agg(
     # строится по фактической дате paid_at. Удалённые записи исключает
     # filter_payments_query.
     q1 = (
-        db.query(
-            extract("year", PaymentMonth.paid_at).label("yy"),
-            extract("month", PaymentMonth.paid_at).label("mm"),
-            func.coalesce(
-                func.sum(func.coalesce(PaymentMonth.amount, Payment.amount)), 0
-            ).label("total"),
-        )
+        db.query(PaymentMonth, Payment)
         .join(Payment, Payment.id == PaymentMonth.payment_id)
         .filter(
             PaymentMonth.status == "paid",
@@ -140,22 +135,19 @@ def _build_paid_agg(
         )
     )
     q1 = filter_payments_query(q1, db, current_user)
-    q1 = q1.group_by(
-        extract("year", PaymentMonth.paid_at),
-        extract("month", PaymentMonth.paid_at),
-    )
-    for r in q1.all():
-        k = (int(r.yy), int(r.mm))
-        agg[k] = agg.get(k, Decimal(0)) + (Decimal(str(r.total)) if r.total else Decimal(0))
+    for pm, pay in q1.all():
+        paid_at = pm.paid_at
+        if paid_at is None:
+            continue
+        paid_date = paid_at.date() if isinstance(paid_at, datetime) else paid_at
+        k = (paid_date.year, paid_date.month)
+        gross = pm.amount if pm.amount is not None else pay.amount
+        agg[k] = agg.get(k, Decimal(0)) + payment_net_amount(pay, gross)
 
     # --- Источник 2: проекты без месяцев, подтверждённые напрямую ---
     has_months_sq = select(PaymentMonth.payment_id).distinct()
     q2 = (
-        db.query(
-            extract("year", Payment.paid_at).label("yy"),
-            extract("month", Payment.paid_at).label("mm"),
-            func.coalesce(func.sum(Payment.amount), 0).label("total"),
-        )
+        db.query(Payment)
         .filter(
             Payment.status == "paid",
             Payment.paid_at.isnot(None),
@@ -165,13 +157,13 @@ def _build_paid_agg(
         )
     )
     q2 = filter_payments_query(q2, db, current_user)
-    q2 = q2.group_by(
-        extract("year", Payment.paid_at),
-        extract("month", Payment.paid_at),
-    )
-    for r in q2.all():
-        k = (int(r.yy), int(r.mm))
-        agg[k] = agg.get(k, Decimal(0)) + (Decimal(str(r.total)) if r.total else Decimal(0))
+    for pay in q2.all():
+        paid_at = pay.paid_at
+        if paid_at is None:
+            continue
+        paid_date = paid_at.date() if isinstance(paid_at, datetime) else paid_at
+        k = (paid_date.year, paid_date.month)
+        agg[k] = agg.get(k, Decimal(0)) + payment_net_amount(pay)
 
     return agg
 
@@ -239,7 +231,7 @@ def received_payments_cashflow(
         .order_by(Partner.name.asc(), Payment.id.asc(), PaymentMonth.paid_at.desc())
     )
     for pm, pay, part in q_months.all():
-        eff = pm.amount if pm.amount is not None else pay.amount
+        eff = payment_net_amount(pay, pm.amount if pm.amount is not None else pay.amount)
         cu = pm.confirmed_by_user
         line_desc = (pm.description or "").strip() or None
         proj_desc = pay.description
@@ -284,7 +276,7 @@ def received_payments_cashflow(
             ReceivedPaymentRowOut(
                 kind="project_whole",
                 paid_at=pay.paid_at,
-                amount=pay.amount,
+                amount=payment_net_amount(pay),
                 partner_id=part.id,
                 partner_name=part.name,
                 payment_id=pay.id,
@@ -423,7 +415,7 @@ def get_dashboard(
         pm_cnt_q = pm_cnt_q.join(Partner, Payment.partner_id == Partner.id).filter(Partner.manager_id == manager_id)
 
     pm_sum_q = (
-        db.query(func.coalesce(func.sum(func.coalesce(PaymentMonth.amount, Payment.amount)), 0))
+        db.query(PaymentMonth, Payment)
         .join(Payment, Payment.id == PaymentMonth.payment_id)
         .filter(
             PaymentMonth.status == "paid",
@@ -453,7 +445,7 @@ def get_dashboard(
         p_cnt_q = p_cnt_q.join(Partner, Payment.partner_id == Partner.id).filter(Partner.manager_id == manager_id)
 
     p_sum_q = (
-        db.query(func.coalesce(func.sum(Payment.amount), 0))
+        db.query(Payment)
         .filter(
             Payment.status == "paid",
             Payment.paid_at.isnot(None),
@@ -467,7 +459,10 @@ def get_dashboard(
         p_sum_q = p_sum_q.join(Partner, Payment.partner_id == Partner.id).filter(Partner.manager_id == manager_id)
 
     paid_this_month = (pm_cnt_q.scalar() or 0) + (p_cnt_q.scalar() or 0)
-    paid_amount_this_month = (pm_sum_q.scalar() or Decimal(0)) + (p_sum_q.scalar() or Decimal(0))
+    paid_amount_this_month = sum(
+        (payment_net_amount(pay, pm.amount if pm.amount is not None else pay.amount) for pm, pay in pm_sum_q.all()),
+        Decimal(0),
+    ) + sum((payment_net_amount(pay) for pay in p_sum_q.all()), Decimal(0))
 
     pcq = db.query(func.count(Partner.id)).filter(
         Partner.status == "active",
