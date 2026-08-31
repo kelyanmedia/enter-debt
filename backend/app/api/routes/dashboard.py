@@ -120,6 +120,9 @@ def _build_paid_agg(
     agg: Dict[Tuple[int, int], Decimal] = {}
 
     # --- Источник 1: подтверждённые месяцы ---
+    # Архив проекта не отменяет уже поступившие деньги: финансовая история
+    # строится по фактической дате paid_at. Удалённые записи исключает
+    # filter_payments_query.
     q1 = (
         db.query(
             extract("year", PaymentMonth.paid_at).label("yy"),
@@ -130,7 +133,6 @@ def _build_paid_agg(
         )
         .join(Payment, Payment.id == PaymentMonth.payment_id)
         .filter(
-            Payment.is_archived == False,
             PaymentMonth.status == "paid",
             PaymentMonth.paid_at.isnot(None),
             func.date(PaymentMonth.paid_at) >= start_date,
@@ -155,7 +157,6 @@ def _build_paid_agg(
             func.coalesce(func.sum(Payment.amount), 0).label("total"),
         )
         .filter(
-            Payment.is_archived == False,
             Payment.status == "paid",
             Payment.paid_at.isnot(None),
             ~Payment.id.in_(has_months_sq),
@@ -226,7 +227,6 @@ def received_payments_cashflow(
         .join(Partner, Partner.id == Payment.partner_id)
         .options(joinedload(PaymentMonth.confirmed_by_user))
         .filter(
-            Payment.is_archived == False,
             Payment.trashed_at.is_(None),
             Payment.company_slug == get_request_company(),
             Partner.trashed_at.is_(None),
@@ -266,7 +266,6 @@ def received_payments_cashflow(
         .join(Partner, Partner.id == Payment.partner_id)
         .options(joinedload(Payment.confirmed_by_user))
         .filter(
-            Payment.is_archived == False,
             Payment.trashed_at.is_(None),
             Payment.company_slug == get_request_company(),
             Partner.trashed_at.is_(None),
@@ -413,7 +412,6 @@ def get_dashboard(
         db.query(func.count(PaymentMonth.id))
         .join(Payment, Payment.id == PaymentMonth.payment_id)
         .filter(
-            Payment.is_archived == False,
             PaymentMonth.status == "paid",
             PaymentMonth.paid_at.isnot(None),
             func.date(PaymentMonth.paid_at) >= _df,
@@ -428,7 +426,6 @@ def get_dashboard(
         db.query(func.coalesce(func.sum(func.coalesce(PaymentMonth.amount, Payment.amount)), 0))
         .join(Payment, Payment.id == PaymentMonth.payment_id)
         .filter(
-            Payment.is_archived == False,
             PaymentMonth.status == "paid",
             PaymentMonth.paid_at.isnot(None),
             func.date(PaymentMonth.paid_at) >= _df,
@@ -444,7 +441,6 @@ def get_dashboard(
     p_cnt_q = (
         db.query(func.count(Payment.id))
         .filter(
-            Payment.is_archived == False,
             Payment.status == "paid",
             Payment.paid_at.isnot(None),
             ~Payment.id.in_(has_months_sq),
@@ -459,7 +455,6 @@ def get_dashboard(
     p_sum_q = (
         db.query(func.coalesce(func.sum(Payment.amount), 0))
         .filter(
-            Payment.is_archived == False,
             Payment.status == "paid",
             Payment.paid_at.isnot(None),
             ~Payment.id.in_(has_months_sq),

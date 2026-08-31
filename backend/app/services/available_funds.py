@@ -34,7 +34,6 @@ def _sums_from_payments(db: Session, year: int, month: int) -> Tuple[Decimal, De
         .join(Payment, Payment.id == PaymentMonth.payment_id)
         .join(Partner, Partner.id == Payment.partner_id)
         .filter(
-            Payment.is_archived == False,
             Payment.trashed_at.is_(None),
             Payment.company_slug == get_request_company(),
             Partner.trashed_at.is_(None),
@@ -56,7 +55,6 @@ def _sums_from_payments(db: Session, year: int, month: int) -> Tuple[Decimal, De
         db.query(Payment)
         .join(Partner, Partner.id == Payment.partner_id)
         .filter(
-            Payment.is_archived == False,
             Payment.trashed_at.is_(None),
             Payment.company_slug == get_request_company(),
             Partner.trashed_at.is_(None),

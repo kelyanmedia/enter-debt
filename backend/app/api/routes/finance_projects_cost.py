@@ -342,11 +342,9 @@ def _pl_projects_cost_expense_uzs_by_month(
         net_uzs = _cf_entry_cost_uzs(e, rates)
         if net_uzs > 0:
             out[idx] += net_uzs
-    q = (
-        db.query(Payment)
-        .options(joinedload(Payment.months))
-        .filter(Payment.is_archived == False)
-    )
+    # Себестоимость уже оплаченных проектов остаётся в финансовой истории,
+    # даже если проект после оплаты автоматически ушёл в архив.
+    q = db.query(Payment).options(joinedload(Payment.months))
     q = filter_payments_query(q, db, current_user)
     for p in q.all():
         _distribute_manual_cost_to_year_months(p, _payment_manual_projects_cost_uzs(p), year, out)
@@ -1023,12 +1021,10 @@ def pl_report(
         return out
 
     # --- Выручка по категориям проекта (UZS, проекты без валюты в БД) ---
+    # Для финансового отчёта archive — это статус списка проектов, а не отмена
+    # факта оплаты. Поэтому учитываем все не удалённые проекты по paid_at.
     rev_by_cat: Dict[str, List[Decimal]] = {}
-    q = (
-        db.query(Payment)
-        .options(joinedload(Payment.months))
-        .filter(Payment.is_archived == False)
-    )
+    q = db.query(Payment).options(joinedload(Payment.months))
     q = filter_payments_query(q, db, current_user)
     for p in q.all():
         cat = (p.project_category or "uncategorized").strip().lower() or "uncategorized"
@@ -1040,6 +1036,13 @@ def pl_report(
                 continue
             amt = _line_amount(pm, p)
             rev_by_cat[cat][mi - 1] += amt
+        # Разовые проекты без графика подтверждаются прямо на уровне Payment.
+        # Они должны попадать в ту же категорию и в месяц фактической оплаты.
+        if not (p.months or []) and p.status == "paid" and p.paid_at is not None:
+            paid_at = p.paid_at
+            paid_date = paid_at.date() if isinstance(paid_at, datetime) else paid_at
+            if paid_date.year == y:
+                rev_by_cat[cat][paid_date.month - 1] += Decimal(str(p.amount or 0))
 
     total_rev = [Decimal("0") for _ in range(n)]
     for vals in rev_by_cat.values():
