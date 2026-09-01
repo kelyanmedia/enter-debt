@@ -2128,7 +2128,7 @@ export default function PaymentsPage() {
 
         {form.project_category !== 'tech_support' && form.project_category !== 'hosting_domain' && (
           <>
-            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
+            <div style={{ display: 'grid', gridTemplateColumns: 'minmax(0, 1fr) minmax(0, 1fr) minmax(170px, .9fr)', gap: 12, alignItems: 'start' }}>
               <Field label="Тип платежа">
                 <Select value={form.payment_type} onChange={e => setForm(f => ({ ...f, payment_type: e.target.value }))}>
                   <option value="recurring">Рекуррентный</option>
@@ -2139,8 +2139,8 @@ export default function PaymentsPage() {
               <Field label={Number(form.vat_rate) > 0 ? "Цена услуги без НДС (Uzs) *" : "Сумма (Uzs) *"}>
                 <MoneyInput value={form.amount} onChange={(v) => setForm(f => ({ ...f, amount: v }))} placeholder="0" />
               </Field>
+              <VatRateField vatRate={form.vat_rate} amount={form.amount} onChange={value => setForm(f => ({ ...f, vat_rate: value }))} />
             </div>
-            <VatRateField vatRate={form.vat_rate} amount={form.amount} onChange={value => setForm(f => ({ ...f, vat_rate: value }))} />
             {form.payment_type === 'recurring' && (
               <Field label="Период контракта (месяцев)">
                 <Input
