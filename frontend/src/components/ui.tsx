@@ -221,27 +221,61 @@ export function ConfirmModal({
   return (
     <div
       onClick={e => { if (e.target === e.currentTarget && !busy) onClose() }}
-      style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,.4)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex, padding: 16 }}
+      style={{
+        position: 'fixed',
+        inset: 0,
+        background: 'rgba(15, 23, 42, .56)',
+        backdropFilter: 'blur(3px)',
+        display: 'flex',
+        alignItems: 'center',
+        justifyContent: 'center',
+        zIndex,
+        padding: 16,
+      }}
     >
       <div
         onClick={e => e.stopPropagation()}
-        role="dialog"
+        role="alertdialog"
         aria-modal="true"
         style={{
           background: '#fff',
-          borderRadius: 16,
-          width: 420,
+          borderRadius: 20,
+          width: 460,
           maxWidth: '100%',
-          boxShadow: '0 12px 48px rgba(0,0,0,.22)',
-          padding: '24px 24px 20px',
+          overflow: 'hidden',
+          boxShadow: '0 24px 70px rgba(15,23,42,.34)',
         }}
       >
-        <div style={{ fontSize: 16, fontWeight: 700, marginBottom: 10, color: '#1a1d23' }}>{title}</div>
-        <div style={{ fontSize: 14, color: '#4b5563', lineHeight: 1.55, marginBottom: 22 }}>{message}</div>
-        <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 10, flexWrap: 'wrap' }}>
+        <div style={{ padding: '24px 24px 18px', borderBottom: '1px solid #e8eef4' }}>
+          <div
+            aria-hidden
+            style={{
+              width: 42,
+              height: 42,
+              borderRadius: 14,
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'center',
+              background: danger ? '#fff1f2' : '#ecfdf3',
+              color: danger ? '#dc2626' : '#15803d',
+              fontSize: 23,
+              marginBottom: 14,
+            }}
+          >
+            {danger ? '!' : '✓'}
+          </div>
+          <div style={{ fontSize: 19, fontWeight: 800, letterSpacing: '-.01em', marginBottom: 8, color: '#172033' }}>{title}</div>
+          <div style={{ fontSize: 14, color: '#536176', lineHeight: 1.6 }}>{message}</div>
+        </div>
+        <div style={{ padding: '14px 24px 20px', display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 12, flexWrap: 'wrap' }}>
+          <span style={{ fontSize: 12, color: '#7b8798', whiteSpace: 'nowrap' }}>
+            <kbd style={{ padding: '2px 6px', border: '1px solid #d9e1ea', borderBottomWidth: 2, borderRadius: 5, background: '#f8fafc', fontFamily: 'inherit' }}>Enter</kbd>{' '}
+            подтвердить
+          </span>
+          <div style={{ display: 'flex', gap: 10, marginLeft: 'auto', flexWrap: 'wrap' }}>
           <BtnOutline
             onClick={() => { if (!busy) onClose() }}
-            style={{ opacity: busy ? 0.65 : 1, pointerEvents: busy ? 'none' : 'auto' }}
+            style={{ minWidth: 104, justifyContent: 'center', opacity: busy ? 0.65 : 1, pointerEvents: busy ? 'none' : 'auto' }}
           >
             {cancelLabel}
           </BtnOutline>
@@ -254,10 +288,12 @@ export function ConfirmModal({
               display: 'inline-flex',
               alignItems: 'center',
               gap: 6,
-              padding: '8px 16px',
-              borderRadius: 9,
+              minWidth: 158,
+              justifyContent: 'center',
+              padding: '10px 16px',
+              borderRadius: 10,
               fontSize: 13,
-              fontWeight: 600,
+              fontWeight: 700,
               background: confirmBg,
               color: '#fff',
               border: 'none',
@@ -268,6 +304,7 @@ export function ConfirmModal({
           >
             {busy ? '…' : confirmLabel}
           </button>
+          </div>
         </div>
       </div>
     </div>
