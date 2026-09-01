@@ -551,6 +551,7 @@ class PaymentBase(BaseModel):
     description: str
     amount: Decimal
     vat_rate: Decimal = Decimal("0")  # 0 | 6 | 12; contract amount contains VAT when rate > 0
+    vat_included_in_amount: bool = False
     contract_months: Optional[int] = None
     day_of_month: Optional[int] = None
     deadline_date: Optional[date] = None
@@ -642,6 +643,7 @@ class PaymentUpdate(BaseModel):
     amount: Optional[Decimal] = None
     amount_without_vat: Optional[Decimal] = None
     vat_rate: Optional[Decimal] = None
+    vat_included_in_amount: Optional[bool] = None
     contract_months: Optional[int] = None
     day_of_month: Optional[int] = None
     deadline_date: Optional[date] = None

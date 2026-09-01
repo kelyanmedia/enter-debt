@@ -16,6 +16,9 @@ class Payment(Base):
     # выручку через payment_net_amount(...), чтобы НДС не попадал в оборот.
     amount = Column(Numeric(15, 2), nullable=False)
     vat_rate = Column(Numeric(5, 2), nullable=False, default=0)  # 0 | 6 | 12; НДС добавляется сверху
+    # Как пользователь вводил сумму: False — цена без НДС, True — итог уже с НДС.
+    # В БД `amount` всегда хранится итог договора/счёта с НДС.
+    vat_included_in_amount = Column(Boolean, nullable=False, default=False)
     contract_months = Column(Integer, nullable=True)
 
     day_of_month = Column(Integer, nullable=True)

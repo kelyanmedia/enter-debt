@@ -133,3 +133,36 @@ def test_only_supported_vat_rates_are_accepted():
             amount=Decimal("1"),
             vat_rate=Decimal("7"),
         )
+
+
+def test_vat_inclusive_amount_is_split_without_manual_calculation(monkeypatch):
+    token = set_company_context("kelyanmedia")
+    db, engine = _db()
+    try:
+        admin = User(company_slug="kelyanmedia", name="Админ", email="vat-inclusive@example.test", hashed_password="test", role="admin", is_active=True)
+        partner = Partner(company_slug="kelyanmedia", name="Клиент", status="active")
+        db.add_all((admin, partner))
+        db.commit()
+        monkeypatch.setattr(feed_events, "emit_payment_created", lambda *_args, **_kwargs: None)
+
+        created = payments.create_payment(
+            PaymentCreate(
+                partner_id=partner.id,
+                payment_type="one_time",
+                description="Сумма уже с НДС",
+                amount=Decimal("11200000"),
+                vat_rate=Decimal("12"),
+                vat_included_in_amount=True,
+            ),
+            db=db,
+            current_user=admin,
+        )
+
+        assert created.amount == Decimal("11200000")
+        assert created.amount_without_vat == Decimal("10000000.00")
+        assert created.vat_amount == Decimal("1200000.00")
+        assert created.vat_included_in_amount is True
+    finally:
+        db.close()
+        Base.metadata.drop_all(engine)
+        reset_company_context(token)

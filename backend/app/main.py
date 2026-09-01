@@ -363,6 +363,8 @@ def _migrate():
         "ALTER TABLE users ADD COLUMN IF NOT EXISTS team_expense_visible_user_ids TEXT",
         "UPDATE users SET see_all_partners = FALSE WHERE see_all_partners IS NULL",
         "ALTER TABLE payments ADD COLUMN IF NOT EXISTS contract_months INTEGER",
+        "ALTER TABLE payments ADD COLUMN IF NOT EXISTS vat_rate NUMERIC(5,2) NOT NULL DEFAULT 0",
+        "ALTER TABLE payments ADD COLUMN IF NOT EXISTS vat_included_in_amount BOOLEAN NOT NULL DEFAULT FALSE",
         "ALTER TABLE payments ADD COLUMN IF NOT EXISTS notify_accounting BOOLEAN DEFAULT TRUE",
         "ALTER TABLE payments ADD COLUMN IF NOT EXISTS contract_url VARCHAR(500)",
         "ALTER TABLE payments ADD COLUMN IF NOT EXISTS service_period VARCHAR(20)",
@@ -1235,6 +1237,7 @@ def _migrate():
         ],
         "payments": [
             ("vat_rate", "ALTER TABLE payments ADD COLUMN vat_rate NUMERIC(5,2) NOT NULL DEFAULT 0"),
+            ("vat_included_in_amount", "ALTER TABLE payments ADD COLUMN vat_included_in_amount BOOLEAN NOT NULL DEFAULT 0"),
             ("planned_deadline", "ALTER TABLE payments ADD COLUMN planned_deadline DATE"),
             ("effective_planned_deadline", "ALTER TABLE payments ADD COLUMN effective_planned_deadline DATE"),
             ("actual_close_date", "ALTER TABLE payments ADD COLUMN actual_close_date DATE"),

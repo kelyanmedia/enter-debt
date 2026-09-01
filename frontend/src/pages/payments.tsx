@@ -28,7 +28,7 @@ interface PaymentMonth {
 }
 interface Payment {
   id: number; partner_id: number; description: string; amount: number
-  amount_without_vat?: number; vat_amount?: number; vat_rate?: number
+  amount_without_vat?: number; vat_amount?: number; vat_rate?: number; vat_included_in_amount?: boolean
   payment_type: string; status: string; deadline_date?: string; day_of_month?: number
   contract_months?: number; remind_days_before: number; created_at: string; postponed_until?: string
   notify_accounting: boolean; contract_url?: string; service_period?: string
@@ -48,11 +48,24 @@ interface Payment {
   pm_commission_enabled?: boolean
 }
 
-function VatRateField({ vatRate, amount, onChange }: { vatRate: string; amount: string; onChange: (value: string) => void }) {
-  const net = Number(amount) || 0
+function VatRateField({
+  vatRate,
+  amount,
+  vatIncludedInAmount,
+  onChange,
+  onIncludedChange,
+}: {
+  vatRate: string
+  amount: string
+  vatIncludedInAmount: boolean
+  onChange: (value: string) => void
+  onIncludedChange: (checked: boolean) => void
+}) {
+  const entered = Number(amount) || 0
   const rate = Number(vatRate) || 0
-  const vat = Math.round(net * rate) / 100
-  const gross = net + vat
+  const gross = vatIncludedInAmount ? entered : entered * (100 + rate) / 100
+  const net = vatIncludedInAmount ? entered * 100 / (100 + rate) : entered
+  const vat = gross - net
   return (
     <Field label="НДС в договоре">
       <Select value={vatRate} onChange={e => onChange(e.target.value)}>
@@ -60,9 +73,20 @@ function VatRateField({ vatRate, amount, onChange }: { vatRate: string; amount: 
         <option value="6">НДС 6% — добавить сверху</option>
         <option value="12">НДС 12% — добавить сверху</option>
       </Select>
+      {rate > 0 && (
+        <label style={{ display: 'flex', alignItems: 'center', gap: 8, marginTop: 9, color: '#334155', fontSize: 12, fontWeight: 650, cursor: 'pointer' }}>
+          <input
+            type="checkbox"
+            checked={vatIncludedInAmount}
+            onChange={e => onIncludedChange(e.target.checked)}
+            style={{ width: 16, height: 16, accentColor: '#1f7a46', cursor: 'pointer' }}
+          />
+          Сумма уже с НДС
+        </label>
+      )}
       {rate > 0 && net > 0 && (
         <div style={{ marginTop: 7, padding: '9px 11px', borderRadius: 9, background: '#f0fdf4', border: '1px solid #bbf7d0', fontSize: 12, lineHeight: 1.5, color: '#166534' }}>
-          НДС добавится сверху: <b>{formatMoneyNumber(vat)} сум</b>. Сумма договора: <b>{formatMoneyNumber(gross)} сум</b>.
+          {vatIncludedInAmount ? <>Введено с НДС: <b>{formatMoneyNumber(gross)} сум</b>. В том числе НДС: <b>{formatMoneyNumber(vat)} сум</b>.</> : <>НДС добавится сверху: <b>{formatMoneyNumber(vat)} сум</b>. Сумма договора: <b>{formatMoneyNumber(gross)} сум</b>.</>}
           В P&amp;L, ДДС и оборот попадёт <b>{formatMoneyNumber(net)} сум</b> без НДС.
         </div>
       )}
@@ -140,6 +164,7 @@ function dueSourceHint(p: Payment): string {
 const EMPTY_FORM = {
   partner_id: '', payment_type: 'recurring', description: '', amount: '',
   vat_rate: '0',
+  vat_included_in_amount: false,
   day_of_month: '', deadline_date: '', remind_days_before: '3', contract_months: '',
   notify_accounting: true, contract_url: '', service_period: 'yearly', project_category: '' as string,
   billing_variant: '' as string,
@@ -479,8 +504,9 @@ export default function PaymentsPage() {
       partner_id: String(p.partner_id),
       payment_type: p.payment_type,
       description: p.description,
-      amount: String(Number(p.amount_without_vat ?? p.amount)),
+      amount: String(Number(p.vat_included_in_amount ? p.amount : p.amount_without_vat ?? p.amount)),
       vat_rate: String(Number(p.vat_rate ?? 0)),
+      vat_included_in_amount: Boolean(p.vat_included_in_amount),
       day_of_month: p.day_of_month ? String(p.day_of_month) : '',
       deadline_date: p.deadline_date || '',
       remind_days_before: String(p.remind_days_before),
@@ -589,8 +615,9 @@ export default function PaymentsPage() {
         payment_type: paymentType,
         description: form.description,
         amount: Number(form.amount),
-        amount_without_vat: Number(form.amount),
+        amount_without_vat: form.vat_included_in_amount ? undefined : Number(form.amount),
         vat_rate: Number(form.vat_rate) || 0,
+        vat_included_in_amount: form.vat_included_in_amount,
         contract_months: contractMonths,
         day_of_month: dayOfMonth,
         deadline_date: deadlineDate,
@@ -1953,10 +1980,16 @@ export default function PaymentsPage() {
         </Field>
         {form.project_category === 'tech_support' && (
           <>
-            <Field label={Number(form.vat_rate) > 0 ? "Цена услуги без НДС (Uzs) *" : "Сумма (Uzs) *"}>
+            <Field label={Number(form.vat_rate) > 0 ? (form.vat_included_in_amount ? "Сумма с НДС (Uzs) *" : "Цена услуги без НДС (Uzs) *") : "Сумма (Uzs) *"}>
               <MoneyInput value={form.amount} onChange={(v) => setForm(f => ({ ...f, amount: v }))} placeholder="0" />
             </Field>
-            <VatRateField vatRate={form.vat_rate} amount={form.amount} onChange={value => setForm(f => ({ ...f, vat_rate: value }))} />
+            <VatRateField
+              vatRate={form.vat_rate}
+              amount={form.amount}
+              vatIncludedInAmount={form.vat_included_in_amount}
+              onChange={value => setForm(f => ({ ...f, vat_rate: value, vat_included_in_amount: value === '0' ? false : f.vat_included_in_amount }))}
+              onIncludedChange={checked => setForm(f => ({ ...f, vat_included_in_amount: checked }))}
+            />
             <Field label="Формат оплаты">
               <div style={{ display: 'flex', gap: 10 }}>
                 {[
@@ -2061,13 +2094,19 @@ export default function PaymentsPage() {
                 placeholder="Например: счёт на ИП, карта, перевод…"
               />
             </Field>
-            <Field label={Number(form.vat_rate) > 0 ? "Тариф без НДС (Uzs) *" : "Тариф за период (Uzs) *"}>
+            <Field label={Number(form.vat_rate) > 0 ? (form.vat_included_in_amount ? "Тариф с НДС (Uzs) *" : "Тариф без НДС (Uzs) *") : "Тариф за период (Uzs) *"}>
               <MoneyInput value={form.amount} onChange={(v) => setForm(f => ({ ...f, amount: v }))} placeholder="0" />
               <div style={{ fontSize: 11, color: '#8a8fa8', marginTop: 6, lineHeight: 1.45 }}>
                 Это не «сумма договора на все годы»: ориентир для новых строк графика. Каждый год можно дублировать строку и менять сумму в строке — лимита по сумме проекта нет.
               </div>
             </Field>
-            <VatRateField vatRate={form.vat_rate} amount={form.amount} onChange={value => setForm(f => ({ ...f, vat_rate: value }))} />
+            <VatRateField
+              vatRate={form.vat_rate}
+              amount={form.amount}
+              vatIncludedInAmount={form.vat_included_in_amount}
+              onChange={value => setForm(f => ({ ...f, vat_rate: value, vat_included_in_amount: value === '0' ? false : f.vat_included_in_amount }))}
+              onIncludedChange={checked => setForm(f => ({ ...f, vat_included_in_amount: checked }))}
+            />
             <Field label="Комментарий">
               <textarea
                 style={textareaStyle}
@@ -2136,10 +2175,16 @@ export default function PaymentsPage() {
                   <option value="service_expiry">Сервисный</option>
                 </Select>
               </Field>
-              <Field label={Number(form.vat_rate) > 0 ? "Цена услуги без НДС (Uzs) *" : "Сумма (Uzs) *"}>
+              <Field label={Number(form.vat_rate) > 0 ? (form.vat_included_in_amount ? "Сумма с НДС (Uzs) *" : "Цена услуги без НДС (Uzs) *") : "Сумма (Uzs) *"}>
                 <MoneyInput value={form.amount} onChange={(v) => setForm(f => ({ ...f, amount: v }))} placeholder="0" />
               </Field>
-              <VatRateField vatRate={form.vat_rate} amount={form.amount} onChange={value => setForm(f => ({ ...f, vat_rate: value }))} />
+              <VatRateField
+                vatRate={form.vat_rate}
+                amount={form.amount}
+                vatIncludedInAmount={form.vat_included_in_amount}
+                onChange={value => setForm(f => ({ ...f, vat_rate: value, vat_included_in_amount: value === '0' ? false : f.vat_included_in_amount }))}
+                onIncludedChange={checked => setForm(f => ({ ...f, vat_included_in_amount: checked }))}
+              />
             </div>
             {form.payment_type === 'recurring' && (
               <Field label="Период контракта (месяцев)">
