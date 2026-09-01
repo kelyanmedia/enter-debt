@@ -3,7 +3,7 @@ import Link from 'next/link'
 import DatePicker from '@/components/DatePicker'
 import { useRouter } from 'next/router'
 import Layout from '@/components/Layout'
-import { PageHeader, Card, Th, Td, Empty, formatMoneyNumber, BtnOutline, BtnPrimary, MoneyInput, Input, Field, Modal } from '@/components/ui'
+import { PageHeader, Card, Th, Td, Empty, formatMoneyNumber, BtnOutline, BtnPrimary, MoneyInput, Input, Field, Modal, ConfirmModal } from '@/components/ui'
 import { useAuth } from '@/context/AuthContext'
 import api from '@/lib/api'
 import { canAccessFinanceSection } from '@/lib/roles'
@@ -283,6 +283,7 @@ export default function FinanceProjectsCostPage() {
   })
   const [lendingSaving, setLendingSaving] = useState(false)
   const [lendingDeleting, setLendingDeleting] = useState(false)
+  const [lendingArchiveTarget, setLendingArchiveTarget] = useState<{ row: ProjectCostRow; items: ProjectCostLendingItem[]; summary: string } | null>(null)
 
   const canManageLending = user ? canAccessFinanceSection(user, 'lending') : false
 
@@ -494,20 +495,24 @@ export default function FinanceProjectsCostPage() {
   }, [lendingForm, lendingModalRow, load])
 
   const removeLendingFromProject = useCallback(
-    async (row: ProjectCostRow) => {
+    (row: ProjectCostRow) => {
       const items = row.lending_items || []
       if (items.length === 0) return
       const summary = items
         .map((i) => `${i.lending_category === 'internal' ? 'Внутр.' : 'Внеш.'}: ${formatMoneyNumber(Number(i.principal_uzs))}`)
         .join(', ')
-      const msg =
-        items.length === 1
-          ? `Удалить кредитование (${summary})?`
-          : `Удалить ${items.length} записей кредитования (${summary})?`
-      if (!window.confirm(msg)) return
+      setLendingArchiveTarget({ row, items, summary })
+    },
+    [],
+  )
+
+  const archiveLendingFromProject = useCallback(
+    async () => {
+      const target = lendingArchiveTarget
+      if (!target) return
       setLendingDeleting(true)
       try {
-        for (const item of items) {
+        for (const item of target.items) {
           await api.delete(`finance/lending/${item.id}`)
         }
         await load()
@@ -517,7 +522,7 @@ export default function FinanceProjectsCostPage() {
         setLendingDeleting(false)
       }
     },
-    [load],
+    [lendingArchiveTarget, load],
   )
 
   const cancelCostEdit = useCallback(() => {
@@ -775,7 +780,7 @@ export default function FinanceProjectsCostPage() {
           disabled={!canManageLending || lendingDeleting}
           title={
             hasLending
-              ? `Удалить кредитование: ${title}`
+              ? `Перенести кредитование в архив: ${title}`
               : 'Добавить запись кредитования по проекту'
           }
           style={{
@@ -799,7 +804,7 @@ export default function FinanceProjectsCostPage() {
             disabled={lendingDeleting}
             title={
               hasLending
-                ? `Удалить кредитование: ${title}`
+                ? `Перенести кредитование в архив: ${title}`
                 : 'Добавить запись кредитования по проекту'
             }
             style={{
@@ -1675,6 +1680,21 @@ export default function FinanceProjectsCostPage() {
           />
         </Field>
       </Modal>
+      <ConfirmModal
+        open={lendingArchiveTarget !== null}
+        onClose={() => setLendingArchiveTarget(null)}
+        title="Перенести кредитование в архив?"
+        confirmLabel="Перенести в архив"
+        danger={false}
+        message={
+          <>
+            {lendingArchiveTarget?.items.length === 1 ? 'Запись' : 'Все записи'} ({lendingArchiveTarget?.summary}) по проекту
+            «<strong>{lendingArchiveTarget?.row.project_name || lendingArchiveTarget?.row.partner_name}</strong>» останутся в
+            архиве со всей сохранённой историей. <strong>Enter</strong> — подтвердить.
+          </>
+        }
+        onConfirm={archiveLendingFromProject}
+      />
       <Modal
         open={labelEditField !== null}
         onClose={() => {

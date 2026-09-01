@@ -14,6 +14,7 @@ import {
   BtnOutline,
   BtnPrimary,
   Modal,
+  ConfirmModal,
   formatMoneyNumber,
 } from '@/components/ui'
 import { useAuth } from '@/context/AuthContext'
@@ -170,6 +171,7 @@ export default function FinanceLendingPage() {
   const [form, setForm] = useState<LendingFormState>(() => emptyForm())
   const [projectOptions, setProjectOptions] = useState<ProjectOption[]>([])
   const [projectsLoading, setProjectsLoading] = useState(false)
+  const [archiveTarget, setArchiveTarget] = useState<LendingRecord | null>(null)
   const repaymentCalc = useMemo(() => calculatedRepayment(form), [form])
 
   useEffect(() => {
@@ -357,8 +359,7 @@ export default function FinanceLendingPage() {
     }
   }
 
-  const remove = async (r: LendingRecord) => {
-    if (!window.confirm(`Удалить запись «${r.entity_name}»?`)) return
+  const archive = async (r: LendingRecord) => {
     try {
       await api.delete(`finance/lending/${r.id}`)
       await load()
@@ -662,13 +663,7 @@ export default function FinanceLendingPage() {
                         <Td style={{ fontSize: 13, color: '#475569', maxWidth: 220 }}>{r.note?.trim() || '—'}</Td>
                         <Td>
                           {archiveView ? (
-                            <BtnOutline
-                              type="button"
-                              onClick={() => void remove(r)}
-                              style={{ fontSize: 12, padding: '5px 9px', color: '#b91c1c' }}
-                            >
-                              Удалить
-                            </BtnOutline>
+                            <span style={{ fontSize: 12, color: '#64748b' }}>В архиве</span>
                           ) : (
                             <div style={{ display: 'flex', gap: 8 }}>
                               <BtnOutline type="button" onClick={() => openEdit(r)} style={{ fontSize: 12, padding: '5px 9px' }}>
@@ -676,10 +671,10 @@ export default function FinanceLendingPage() {
                               </BtnOutline>
                               <BtnOutline
                                 type="button"
-                                onClick={() => void remove(r)}
-                                style={{ fontSize: 12, padding: '5px 9px', color: '#b91c1c' }}
+                                onClick={() => setArchiveTarget(r)}
+                                style={{ fontSize: 12, padding: '5px 9px', color: '#475569' }}
                               >
-                                Удалить
+                                В архив
                               </BtnOutline>
                             </div>
                           )}
@@ -901,6 +896,23 @@ export default function FinanceLendingPage() {
           />
         </Field>
       </Modal>
+      <ConfirmModal
+        open={archiveTarget !== null}
+        onClose={() => setArchiveTarget(null)}
+        title="Перенести запись в архив?"
+        confirmLabel="Перенести в архив"
+        danger={false}
+        message={
+          <>
+            Запись «<strong>{archiveTarget?.entity_name}</strong>» исчезнет из активного кредитования, но останется в
+            архиве вместе со всей сохранённой историей. <strong>Enter</strong> — подтвердить.
+          </>
+        }
+        onConfirm={async () => {
+          if (!archiveTarget) return
+          await archive(archiveTarget)
+        }}
+      />
     </Layout>
   )
 }

@@ -1,7 +1,7 @@
 """Учёт кредитования: выдача под % в месяц или безвозмездно на период."""
 from __future__ import annotations
 
-from datetime import date
+from datetime import date, datetime, timezone
 from decimal import Decimal
 from typing import List
 
@@ -222,6 +222,10 @@ def delete_lending(
     )
     if not row:
         raise HTTPException(status_code=404, detail="Запись не найдена")
-    db.delete(row)
+    # История кредитования и вложенные к ней данные не должны пропадать при
+    # удалении из активного списка. `closed_at` — единый признак архива,
+    # который уже используется для автоматически закрытых записей.
+    if row.closed_at is None:
+        row.closed_at = datetime.now(timezone.utc)
     db.commit()
-    return {"ok": True}
+    return {"ok": True, "archived": True}

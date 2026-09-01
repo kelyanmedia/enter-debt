@@ -183,9 +183,10 @@ export function ConfirmModal({
   zIndex?: number
 }) {
   const [busy, setBusy] = useState(false)
-  if (!open) return null
+  const confirmButtonRef = useRef<HTMLButtonElement | null>(null)
   const confirmBg = danger ? '#e84040' : '#1f7a46'
   const handleConfirm = async () => {
+    if (busy) return
     setBusy(true)
     try {
       await onConfirm()
@@ -196,6 +197,27 @@ export function ConfirmModal({
       setBusy(false)
     }
   }
+  useEffect(() => {
+    if (!open || busy) return
+    const focusTimer = window.setTimeout(() => confirmButtonRef.current?.focus(), 0)
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.isComposing) return
+      if (event.key === 'Escape') {
+        event.preventDefault()
+        onClose()
+      }
+      if (event.key === 'Enter') {
+        event.preventDefault()
+        void handleConfirm()
+      }
+    }
+    document.addEventListener('keydown', onKeyDown)
+    return () => {
+      window.clearTimeout(focusTimer)
+      document.removeEventListener('keydown', onKeyDown)
+    }
+  }, [open, busy, onClose, handleConfirm])
+  if (!open) return null
   return (
     <div
       onClick={e => { if (e.target === e.currentTarget && !busy) onClose() }}
@@ -225,6 +247,7 @@ export function ConfirmModal({
           </BtnOutline>
           <button
             type="button"
+            ref={confirmButtonRef}
             disabled={busy}
             onClick={handleConfirm}
             style={{

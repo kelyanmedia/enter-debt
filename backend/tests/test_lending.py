@@ -62,3 +62,20 @@ def test_normalize_internal_forces_no_rate():
 def test_charged_months_day_rule():
     assert fl._charged_months(date(2026, 4, 25), date(2026, 5, 25)) == 1
     assert fl._charged_months(date(2026, 4, 25), date(2026, 5, 26)) == 2
+
+
+def test_delete_lending_archives_instead_of_removing(monkeypatch):
+    row = _lending_row(id=17)
+    row.closed_at = None
+    query = MagicMock()
+    query.filter.return_value.first.return_value = row
+    db = MagicMock()
+    db.query.return_value = query
+    monkeypatch.setattr(fl, "get_request_company", lambda: "kelyanmedia")
+
+    result = fl.delete_lending(17, db=db, _=MagicMock())
+
+    assert result == {"ok": True, "archived": True}
+    assert row.closed_at is not None
+    db.delete.assert_not_called()
+    db.commit.assert_called_once()
