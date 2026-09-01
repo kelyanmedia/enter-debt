@@ -301,14 +301,14 @@ def post_weekly_cash_report_send(
     """
     Отправить в Telegram тот же отчёт, что и по расписанию (пт 18:00 Ташкент):
     поступления с понедельника 00:00 до min(сейчас, пятница 18:00) текущей недели.
-    Получатели — все активные админы с telegram_chat_id, иначе ADMIN_TELEGRAM_CHAT_ID.
+    Получатель — только ADMIN_TELEGRAM_CHAT_ID (личный отчёт владельцу).
     """
     r = run_weekly_cash_report(db)
     detail = None
     if not r["ok"]:
         err = r.get("error")
         if err == "no_recipient":
-            detail = "Нет получателя: привяжите Telegram администратору в профиле бота или задайте ADMIN_TELEGRAM_CHAT_ID."
+            detail = "Нет получателя: задайте ADMIN_TELEGRAM_CHAT_ID в настройках сервера."
         elif err == "no_bot_token":
             detail = "BOT_TOKEN не задан — отправка в Telegram недоступна."
         else:

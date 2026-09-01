@@ -14,8 +14,6 @@ import httpx
 from sqlalchemy.orm import Session
 
 from app.core.config import settings
-from app.db.database import get_request_company
-from app.models.user import User
 from app.schemas.schemas import ReceivedPaymentRowOut
 from app.services.received_cashflow import fetch_received_payment_rows_range
 
@@ -176,20 +174,11 @@ def send_telegram_html(chat_id: int, text: str) -> bool:
 
 
 def admin_report_chat_ids(db: Session) -> List[int]:
-    """Все активные админы с привязанным Telegram; иначе дефолт из настроек."""
-    rows = (
-        db.query(User.telegram_chat_id)
-        .filter(
-            User.role == "admin",
-            User.is_active == True,
-            User.telegram_chat_id.isnot(None),
-            User.company_slug == get_request_company(),
-        )
-        .all()
-    )
-    ids = sorted({int(r[0]) for r in rows if r[0] is not None})
-    if ids:
-        return ids
+    """
+    Пятничный отчёт по поступлениям — только владельцу (ADMIN_TELEGRAM_CHAT_ID).
+    Не рассылаем всем админам компании.
+    """
+    _ = db  # сессия оставлена для единообразия вызова
     if settings.ADMIN_TELEGRAM_CHAT_ID:
         return [int(settings.ADMIN_TELEGRAM_CHAT_ID)]
     return []
@@ -197,7 +186,8 @@ def admin_report_chat_ids(db: Session) -> List[int]:
 
 def run_weekly_cash_report(db: Session, now: Optional[datetime] = None) -> dict:
     """
-    Собирает отчёт за период report_period_tashkent(now) и шлёт всем админам в Telegram.
+    Собирает отчёт за период report_period_tashkent(now) и шлёт только ADMIN_TELEGRAM_CHAT_ID.
+    Учитывает и архивные проекты — деньги уже зачислены.
     Возвращает служебный dict для логов / API.
     """
     start, end = report_period_tashkent(now)
