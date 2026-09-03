@@ -29,6 +29,13 @@ router = APIRouter(prefix="/api/employee-tasks", tags=["employee-tasks"])
 VALID_STATUS = frozenset({"not_started", "in_progress", "pending_approval", "done"})
 VALID_CURRENCY = frozenset({"USD", "UZS"})
 
+
+def _payment_moment_for_day(day: Optional[date]) -> datetime:
+    """Явная дата выплаты хранится как начало указанного дня в UTC; пустая — сейчас."""
+    if day is None:
+        return datetime.now(timezone.utc)
+    return datetime(day.year, day.month, day.day, tzinfo=timezone.utc)
+
 _MONTHS_RU = (
     "Янв.",
     "Февр.",
@@ -508,6 +515,7 @@ def update_task(
     old_amount = t.amount
     old_budget = t.budget_amount
     old_currency = t.currency
+    old_paid_at = t.paid_at
     old_alloc = t.allocated_payment_id
     old_cat = t.cost_category
 
@@ -554,6 +562,8 @@ def update_task(
         upd["currency"] = str(upd["currency"]).upper()
     if "budget_amount" in upd:
         upd["budget_amount"] = _normalize_task_budget(upd.get("budget_amount"))
+    paid_at_input = upd.pop("paid_at", None) if "paid_at" in upd else None
+    paid_at_supplied = "paid_at" in dump
     for k, v in upd.items():
         setattr(t, k, v)
 
@@ -563,7 +573,10 @@ def update_task(
     elif t.status != "done":
         t.done_at = None
     if t.paid and not old_paid:
-        t.paid_at = now
+        t.paid_at = _payment_moment_for_day(paid_at_input)
+    elif t.paid and paid_at_supplied:
+        # Дата может быть исправлена после оплаты: перенести факт и строку ДДС.
+        t.paid_at = _payment_moment_for_day(paid_at_input)
     elif not t.paid:
         t.paid_at = None
 
@@ -589,10 +602,11 @@ def update_task(
     old_cat_n = (old_cat or "").strip().lower()
     new_cat_n = (t.cost_category or "").strip().lower()
     alloc_changed = (old_alloc != t.allocated_payment_id) or (old_cat_n != new_cat_n)
-    refresh_lock = became_paid or (t.paid and (money_changed or alloc_changed))
+    paid_date_changed = t.paid and t.paid_at != old_paid_at
+    refresh_lock = became_paid or paid_date_changed or (t.paid and (money_changed or alloc_changed))
     sync_employee_task_pl_fx_lock(db, t, refresh=refresh_lock)
 
-    if became_paid or (old_paid and not t.paid) or (t.paid and (money_changed or alloc_changed)):
+    if became_paid or paid_date_changed or (old_paid and not t.paid) or (t.paid and (money_changed or alloc_changed)):
         owner = db.query(User).filter(User.id == t.user_id).first()
         sync_employee_task_cash_flow(db, t, owner=owner)
 

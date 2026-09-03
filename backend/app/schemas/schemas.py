@@ -221,6 +221,8 @@ class EmployeeTaskUpdate(BaseModel):
     currency: Optional[str] = Field(None, max_length=3)
     status: Optional[str] = Field(None, max_length=30)
     paid: Optional[bool] = None
+    # Календарная дата фактической выплаты. Пусто при отметке оплаты — текущий день.
+    paid_at: Optional[date] = None
     allocated_payment_id: Optional[int] = None
     cost_category: Optional[str] = Field(None, max_length=20)
 

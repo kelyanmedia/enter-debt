@@ -53,6 +53,7 @@ interface TaskRow {
   currency: string
   status: string
   paid?: boolean
+  paid_at?: string | null
   created_at: string
   allocated_payment_id?: number | null
   cost_category?: string | null
@@ -266,6 +267,8 @@ export default function StaffPage() {
   const [taskFormError, setTaskFormError] = useState('')
   const [statusSavingId, setStatusSavingId] = useState<number | null>(null)
   const [actionBusyId, setActionBusyId] = useState<number | null>(null)
+  const [paymentTask, setPaymentTask] = useState<TaskRow | null>(null)
+  const [paymentDate, setPaymentDate] = useState('')
   const [exportBusy, setExportBusy] = useState(false)
   const [staffTipRow, setStaffTipRow] = useState<number | null>(null)
   const [staffTipKey, setStaffTipKey] = useState<string | null>(null)
@@ -653,10 +656,31 @@ export default function StaffPage() {
     }
   }
 
+  const saveTaskPayment = async () => {
+    if (!paymentTask) return
+    const taskId = paymentTask.id
+    setActionBusyId(taskId)
+    try {
+      await api.patch(`employee-tasks/${taskId}`, { paid: true, paid_at: paymentDate || null })
+      setPaymentTask(null)
+      setPaymentDate('')
+      loadDetail()
+    } catch {
+      loadDetail()
+    } finally {
+      setActionBusyId(null)
+    }
+  }
+
   const toggleTaskPaid = async (t: TaskRow) => {
+    if (!t.paid) {
+      setPaymentTask(t)
+      setPaymentDate('')
+      return
+    }
     setActionBusyId(t.id)
     try {
-      await api.patch(`employee-tasks/${t.id}`, { paid: !t.paid })
+      await api.patch(`employee-tasks/${t.id}`, { paid: false })
       loadDetail()
     } catch {
       loadDetail()
@@ -1804,6 +1828,46 @@ export default function StaffPage() {
         confirmLabel="Удалить"
         onConfirm={runDelete}
       />
+      <Modal
+        open={paymentTask !== null}
+        onClose={() => {
+          if (actionBusyId === paymentTask?.id) return
+          setPaymentTask(null)
+          setPaymentDate('')
+        }}
+        title="Оплата задачи"
+        width={620}
+        footer={
+          <>
+            <BtnOutline
+              type="button"
+              disabled={actionBusyId === paymentTask?.id}
+              onClick={() => {
+                setPaymentTask(null)
+                setPaymentDate('')
+              }}
+            >
+              Отмена
+            </BtnOutline>
+            <BtnPrimary type="button" disabled={actionBusyId === paymentTask?.id} onClick={() => void saveTaskPayment()}>
+              {actionBusyId === paymentTask?.id ? 'Сохраняем…' : 'Подтвердить оплату'}
+            </BtnPrimary>
+          </>
+        }
+      >
+        <div style={{ fontSize: 14, color: '#475569', lineHeight: 1.55, marginBottom: 18 }}>
+          <strong style={{ color: '#1a1d23' }}>{paymentTask?.project_name}</strong>
+          {paymentTask?.task_description ? ` · ${paymentTask.task_description}` : ''}
+          <br />
+          Оставьте дату пустой, если деньги ушли сегодня. Указанная дата определит месяц факта в ДДС и зарплатном фонде.
+        </div>
+        <Field label="Дата фактической оплаты (необязательно)">
+          <DatePicker value={paymentDate} onChange={setPaymentDate} />
+        </Field>
+        <div style={{ padding: '11px 13px', borderRadius: 10, border: '1px solid #bfdbfe', background: '#eff6ff', color: '#1d4ed8', fontSize: 12, lineHeight: 1.5 }}>
+          Если выберете прошлую дату, строка ДДС будет записана в её месяц. Сумма и дата сохраняются в базе как факт выплаты.
+        </div>
+      </Modal>
     </Layout>
   )
 }
