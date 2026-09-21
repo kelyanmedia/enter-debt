@@ -61,6 +61,62 @@ function num(v: string | null | undefined) {
   return Number.isFinite(n) ? n : null
 }
 
+const taskDescriptionTextareaStyle: CSSProperties = {
+  width: '100%',
+  minHeight: 96,
+  resize: 'vertical',
+  border: '1px solid #e8e9ef',
+  borderRadius: 9,
+  padding: '10px 12px',
+  fontSize: 13.5,
+  lineHeight: 1.45,
+  outline: 'none',
+  color: '#1a1d23',
+  fontFamily: 'inherit',
+  background: '#fff',
+  boxSizing: 'border-box',
+}
+
+function clipboardCell(value: string | null | undefined) {
+  return (value ?? '').replace(/[\t\r\n]+/g, ' ').trim()
+}
+
+function taskRowsClipboardText(rows: TaskRow[]) {
+  return [
+    'Дата\tПроект\tОписание\tСсылка\tЧасы\tСумма\tВалюта\tСтатус',
+    ...rows.map(row => [
+      clipboardCell(formatDate(row.work_date)),
+      clipboardCell(row.project_name),
+      clipboardCell(row.task_description),
+      clipboardCell(row.task_url),
+      clipboardCell(row.hours),
+      clipboardCell(row.amount),
+      clipboardCell(row.currency),
+      clipboardCell(taskStatusRu(row.status)),
+    ].join('\t')),
+  ].join('\n')
+}
+
+async function copyToClipboard(text: string) {
+  try {
+    await navigator.clipboard.writeText(text)
+    return true
+  } catch {
+    const textarea = document.createElement('textarea')
+    textarea.value = text
+    textarea.setAttribute('readonly', '')
+    textarea.style.position = 'fixed'
+    textarea.style.opacity = '0'
+    document.body.appendChild(textarea)
+    textarea.select()
+    try {
+      return document.execCommand('copy')
+    } finally {
+      document.body.removeChild(textarea)
+    }
+  }
+}
+
 const ACTION_HINTS = {
   move:
     'Перенос в следующий месяц: дата задачи сдвигается на следующий календарный месяц, строка пропадает из текущего месяца. Подходит, если работа переносится.',
@@ -95,6 +151,8 @@ export default function MyWorkPage() {
   const monthMenuRef = useRef<HTMLDivElement>(null)
   const [actionBusyId, setActionBusyId] = useState<number | null>(null)
   const [exportBusy, setExportBusy] = useState(false)
+  const [copiedTaskId, setCopiedTaskId] = useState<number | null>(null)
+  const [allTasksCopied, setAllTasksCopied] = useState(false)
 
   const fetchMonthsWithTasks = useCallback(() => {
     return api
@@ -274,6 +332,22 @@ export default function MyWorkPage() {
     } finally {
       setActionBusyId(null)
     }
+  }
+
+  const copyTaskDescription = async (task: TaskRow) => {
+    const link = task.task_url?.trim()
+    const copied = await copyToClipboard(link ? `${task.task_description}\n${link}` : task.task_description)
+    if (!copied) return
+    setCopiedTaskId(task.id)
+    window.setTimeout(() => setCopiedTaskId(current => (current === task.id ? null : current)), 1600)
+  }
+
+  const copyAllTasks = async () => {
+    if (!tasks.length) return
+    const copied = await copyToClipboard(taskRowsClipboardText(tasks))
+    if (!copied) return
+    setAllTasksCopied(true)
+    window.setTimeout(() => setAllTasksCopied(false), 1600)
   }
 
   const totals = useMemo(
@@ -590,6 +664,15 @@ export default function MyWorkPage() {
               >
                 {exportBusy ? '…' : '📄 PDF'}
               </BtnOutline>
+              <BtnOutline
+                type="button"
+                disabled={!tasks.length}
+                onClick={() => void copyAllTasks()}
+                style={{ fontSize: 12, padding: '6px 12px', fontWeight: 600 }}
+                title="Скопировать все видимые задачи в формате для вставки в таблицу"
+              >
+                {allTasksCopied ? '✓ Скопировано' : '⎘ Скопировать всё'}
+              </BtnOutline>
             </div>
           </div>
           <table style={{ width: '100%', borderCollapse: 'collapse' }}>
@@ -673,7 +756,17 @@ export default function MyWorkPage() {
                             void patchTaskStatus(t.id, next, t)
                           }}
                         />
-                        <div style={{ display: 'flex', gap: 6, flexWrap: 'nowrap', alignItems: 'center' }}>
+                        <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', alignItems: 'center' }}>
+                          <button
+                            type="button"
+                            title="Скопировать описание задачи и ссылку"
+                            aria-label="Скопировать описание задачи и ссылку"
+                            style={{ ...iconBtn, color: copiedTaskId === t.id ? '#166534' : '#475569' }}
+                            disabled={busy}
+                            onClick={() => void copyTaskDescription(t)}
+                          >
+                            {copiedTaskId === t.id ? '✓' : '⎘'}
+                          </button>
                           <button
                             type="button"
                             title={ACTION_HINTS.move}
@@ -797,7 +890,12 @@ export default function MyWorkPage() {
           <Input value={form.project_name} onChange={e => setForm(f => ({ ...f, project_name: e.target.value }))} placeholder="Клиент / название" />
         </Field>
         <Field label="Тип задачи *">
-          <Input value={form.task_description} onChange={e => setForm(f => ({ ...f, task_description: e.target.value }))} placeholder="Лендинг, доработки, обучение…" />
+          <textarea
+            value={form.task_description}
+            onChange={e => setForm(f => ({ ...f, task_description: e.target.value }))}
+            placeholder="Лендинг, доработки, обучение…"
+            style={taskDescriptionTextareaStyle}
+          />
         </Field>
         <Field label="Ссылка (по желанию)">
           <Input value={form.task_url} onChange={e => setForm(f => ({ ...f, task_url: e.target.value }))} placeholder="https://…" />
