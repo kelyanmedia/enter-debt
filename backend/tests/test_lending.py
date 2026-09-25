@@ -3,7 +3,7 @@ from __future__ import annotations
 
 import os
 import sys
-from datetime import date
+from datetime import date, datetime, timezone
 from decimal import Decimal
 from unittest.mock import MagicMock
 
@@ -22,6 +22,7 @@ def _lending_row(**kwargs):
     row.principal_uzs = kwargs.get("principal_uzs", Decimal("1000000"))
     row.monthly_rate_percent = kwargs.get("monthly_rate_percent", Decimal("5"))
     row.deadline_date = kwargs.get("deadline_date", None)
+    row.closed_at = kwargs.get("closed_at", None)
     return row
 
 
@@ -62,6 +63,20 @@ def test_normalize_internal_forces_no_rate():
 def test_charged_months_day_rule():
     assert fl._charged_months(date(2026, 4, 25), date(2026, 5, 25)) == 1
     assert fl._charged_months(date(2026, 4, 25), date(2026, 5, 26)) == 2
+
+
+def test_archived_lending_freezes_calculation_on_archive_date():
+    row = _lending_row(
+        issued_on=date(2026, 1, 10),
+        monthly_rate_percent=Decimal("5"),
+        closed_at=datetime(2026, 3, 10, 14, 30, tzinfo=timezone.utc),
+    )
+
+    total, months, calculation_date = fl._calculated_total(row)
+
+    assert calculation_date == date(2026, 3, 10)
+    assert months == 2
+    assert total == Decimal("1100000.00")
 
 
 def test_delete_lending_archives_instead_of_removing(monkeypatch):

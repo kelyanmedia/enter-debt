@@ -33,6 +33,11 @@ def _charged_months(issued_on: date, calculation_date: date) -> int:
 
 
 def _calculation_date(row: LendingRecord) -> date:
+    # Архив — снимок расчёта на момент закрытия. Иначе у бессрочной записи
+    # проценты продолжали бы меняться каждый день уже после переноса в архив.
+    closed_at = getattr(row, "closed_at", None)
+    if isinstance(closed_at, datetime):
+        return closed_at.date()
     return row.deadline_date or date.today()
 
 

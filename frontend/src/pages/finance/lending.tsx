@@ -399,129 +399,85 @@ export default function FinanceLendingPage() {
       />
       <div style={{ padding: '22px 24px', display: 'flex', flexDirection: 'column', gap: 14, minHeight: 0 }}>
         <div style={{ display: 'flex', flexWrap: 'wrap', alignItems: 'center', gap: 10 }}>
-          {!archiveView ? (
+          {!archiveView && (
             <>
               <BtnPrimary type="button" onClick={() => openCreate()}>
                 Добавить запись
               </BtnPrimary>
-              <BtnOutline type="button" onClick={() => void load()} disabled={fetching} style={{ fontSize: 12, padding: '6px 12px' }}>
-                {fetching ? 'Загрузка…' : 'Обновить'}
-              </BtnOutline>
-              <span style={{ width: 1, height: 22, background: '#e2e8f0', margin: '0 2px' }} aria-hidden />
-              {(['external', 'internal'] as const).map((cat) => {
-                const active = categoryFilter === cat
-                const label = cat === 'external' ? 'Внешнее' : 'Внутреннее'
-                const count = cat === 'external' ? categoryCounts.external : categoryCounts.internal
-                return (
-                  <BtnOutline
-                    key={cat}
-                    type="button"
-                    onClick={() => setCategoryFilter((prev) => (prev === cat ? 'all' : cat))}
-                    title={
-                      cat === 'external'
-                        ? 'Кредит со стороны (с % или без). Повторный клик — показать все.'
-                        : 'Свои деньги на проект, без %. Повторный клик — показать все.'
-                    }
-                    style={{
-                      fontSize: 12,
-                      padding: '6px 12px',
-                      ...(active
-                        ? {
-                            background: cat === 'internal' ? '#0ea5e9' : '#ea580c',
-                            color: '#fff',
-                            borderColor: cat === 'internal' ? '#0284c7' : '#c2410c',
-                            fontWeight: 700,
-                          }
-                        : {}),
-                    }}
-                  >
-                    {label}
-                    <span style={{ marginLeft: 6, opacity: active ? 0.9 : 0.65, fontWeight: 600 }}>({count})</span>
-                  </BtnOutline>
-                )
-              })}
-              {categoryFilter !== 'all' ? (
-                <button
-                  type="button"
-                  onClick={() => setCategoryFilter('all')}
-                  style={{
-                    fontSize: 12,
-                    fontWeight: 600,
-                    color: '#64748b',
-                    background: 'transparent',
-                    border: 'none',
-                    cursor: 'pointer',
-                    fontFamily: 'inherit',
-                    textDecoration: 'underline',
-                    textUnderlineOffset: 3,
-                  }}
-                >
-                  Все записи
-                </button>
-              ) : null}
-            </>
-          ) : (
-            <>
-              <BtnOutline
-                type="button"
-                onClick={() => {
-                  setArchiveView(false)
-                  setCategoryFilter('all')
-                }}
-                style={{ fontSize: 12, padding: '6px 12px', fontWeight: 600 }}
-              >
-                ← К активным
-              </BtnOutline>
-              <span style={{ width: 1, height: 22, background: '#e2e8f0', margin: '0 2px' }} aria-hidden />
-              {(['external', 'internal'] as const).map((cat) => {
-                const active = categoryFilter === cat
-                const label = cat === 'external' ? 'Внешнее' : 'Внутреннее'
-                const count = cat === 'external' ? categoryCounts.external : categoryCounts.internal
-                return (
-                  <BtnOutline
-                    key={cat}
-                    type="button"
-                    onClick={() => setCategoryFilter((prev) => (prev === cat ? 'all' : cat))}
-                    style={{
-                      fontSize: 12,
-                      padding: '6px 12px',
-                      ...(active
-                        ? {
-                            background: cat === 'internal' ? '#0ea5e9' : '#ea580c',
-                            color: '#fff',
-                            borderColor: cat === 'internal' ? '#0284c7' : '#c2410c',
-                            fontWeight: 700,
-                          }
-                        : {}),
-                    }}
-                  >
-                    {label}
-                    <span style={{ marginLeft: 6, opacity: active ? 0.9 : 0.65, fontWeight: 600 }}>({count})</span>
-                  </BtnOutline>
-                )
-              })}
             </>
           )}
-          <div style={{ marginLeft: 'auto', display: 'flex', gap: 8 }}>
-            {archiveView ? (
-              <BtnOutline type="button" onClick={() => void load()} disabled={fetching} style={{ fontSize: 12, padding: '6px 12px' }}>
-                {fetching ? 'Загрузка…' : 'Обновить'}
-              </BtnOutline>
-            ) : (
+          <BtnOutline type="button" onClick={() => void load()} disabled={fetching} style={{ fontSize: 12, padding: '6px 12px' }}>
+            {fetching ? 'Загрузка…' : 'Обновить'}
+          </BtnOutline>
+          <span style={{ width: 1, height: 22, background: '#e2e8f0', margin: '0 2px' }} aria-hidden />
+          {(['external', 'internal'] as const).map((cat) => {
+            const active = categoryFilter === cat
+            const label = cat === 'external' ? 'Внешнее' : 'Внутреннее'
+            const count = cat === 'external' ? categoryCounts.external : categoryCounts.internal
+            return (
               <BtnOutline
+                key={cat}
                 type="button"
-                onClick={() => {
-                  setArchiveView(true)
-                  setCategoryFilter('all')
-                  setSearch('')
+                onClick={() => setCategoryFilter((prev) => (prev === cat ? 'all' : cat))}
+                title={
+                  cat === 'external'
+                    ? 'Кредит со стороны (с % или без). Повторный клик — показать все.'
+                    : 'Свои деньги на проект, без %. Повторный клик — показать все.'
+                }
+                style={{
+                  fontSize: 12,
+                  padding: '6px 12px',
+                  ...(active
+                    ? {
+                        background: cat === 'internal' ? '#0ea5e9' : '#ea580c',
+                        color: '#fff',
+                        borderColor: cat === 'internal' ? '#0284c7' : '#c2410c',
+                        fontWeight: 700,
+                      }
+                    : {}),
                 }}
-                style={{ fontSize: 12, padding: '6px 12px', fontWeight: 600 }}
-                title="История закрытого кредитования"
               >
-                Архив{archiveCount > 0 ? ` (${archiveCount})` : ''}
+                {label}
+                <span style={{ marginLeft: 6, opacity: active ? 0.9 : 0.65, fontWeight: 600 }}>({count})</span>
               </BtnOutline>
-            )}
-          </div>
+            )
+          })}
+          <BtnOutline
+            type="button"
+            onClick={() => {
+              setArchiveView((active) => !active)
+              setCategoryFilter('all')
+              setSearch('')
+            }}
+            style={{
+              fontSize: 12,
+              padding: '6px 12px',
+              fontWeight: 700,
+              ...(archiveView ? { background: '#475569', color: '#fff', borderColor: '#334155' } : {}),
+            }}
+            title={archiveView ? 'Вернуться к активному кредитованию' : 'Открыть архив: записи сохраняются со всеми данными и датой переноса'}
+          >
+            {archiveView ? 'Архив открыт' : 'Архив'}{archiveCount > 0 ? ` (${archiveCount})` : ''}
+          </BtnOutline>
+          {categoryFilter !== 'all' ? (
+            <button
+              type="button"
+              onClick={() => setCategoryFilter('all')}
+              style={{
+                fontSize: 12,
+                fontWeight: 600,
+                color: '#64748b',
+                background: 'transparent',
+                border: 'none',
+                cursor: 'pointer',
+                fontFamily: 'inherit',
+                textDecoration: 'underline',
+                textUnderlineOffset: 3,
+              }}
+            >
+              Все записи
+            </button>
+          ) : null}
         </div>
 
         <div
