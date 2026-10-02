@@ -45,6 +45,9 @@ class CashFlowEntry(Base):
     employee_task_id = Column(
         Integer, ForeignKey("employee_tasks.id", ondelete="CASCADE"), nullable=True, index=True
     )
+    payroll_entry_id = Column(
+        Integer, ForeignKey("payroll_entries.id", ondelete="CASCADE"), nullable=True, index=True
+    )
     created_by_user_id = Column(Integer, ForeignKey("users.id", ondelete="SET NULL"), nullable=True, index=True)
     notes = Column(String(500), nullable=True)
     template_line_id = Column(Integer, ForeignKey("cash_flow_template_lines.id", ondelete="SET NULL"), nullable=True)

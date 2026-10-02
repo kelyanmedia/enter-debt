@@ -29,7 +29,7 @@ from app.models import user, partner, payment
 import app.models.telegram_join  # noqa: F401 — таблица telegram_join_requests
 import app.models.feed_notification  # noqa: F401 — лента событий
 import app.models.ceo_metric_override  # noqa: F401 — ручные значения CEO dashboard
-from app.api.routes import auth, users, partners, payments, dashboard, notifications, archive, payment_months, telegram_join, feed_notifications, contract_requests, employee_tasks, employee_payment_records, finance_projects_cost, finance_cash_flow, finance_lending, sales_companies, trash
+from app.api.routes import auth, users, partners, payments, dashboard, notifications, archive, payment_months, telegram_join, feed_notifications, contract_requests, employee_tasks, employee_payment_records, finance_projects_cost, finance_cash_flow, finance_lending, finance_payroll, sales_companies, trash
 from app.api.routes import commissions, subscription_items, access_entries, company_assets, company_ui, pm_commissions
 from app.api.routes import sale_pipelines
 from app.api.routes import sales_analytics
@@ -50,6 +50,7 @@ import app.models.ceo_dashboard_block  # noqa: F401 — блоки CEO Dashboard
 import app.models.pl_manual_line  # noqa: F401 — ручные строки P&L по компании
 import app.models.available_funds_manual  # noqa: F401
 import app.models.lending_record  # noqa: F401 — кредитование
+import app.models.payroll  # noqa: F401 — зарплатный фонд
 import app.models.sales_company  # noqa: F401 — продажи / CRM-lite
 import app.models.sale_deal_task  # noqa: F401 — задачи по сделкам
 import app.models.sale_meeting  # noqa: F401 — календарь встреч
@@ -237,6 +238,7 @@ app.include_router(finance_projects_cost.router)
 app.include_router(finance_projects_cost.router_finance_no_api_prefix)
 app.include_router(finance_cash_flow.router)
 app.include_router(finance_lending.router)
+app.include_router(finance_payroll.router)
 app.include_router(sales_companies.router)
 app.include_router(sale_pipelines.router)
 app.include_router(sales_analytics.router)
@@ -716,6 +718,11 @@ def _migrate():
         "ALTER TABLE cash_flow_entries ADD COLUMN IF NOT EXISTS cost_category VARCHAR(20)",
         "ALTER TABLE cash_flow_entries ADD COLUMN IF NOT EXISTS employee_task_id INTEGER REFERENCES employee_tasks(id) ON DELETE CASCADE",
         "CREATE INDEX IF NOT EXISTS ix_cash_flow_entries_employee_task_id ON cash_flow_entries (employee_task_id)",
+        "ALTER TABLE cash_flow_entries ADD COLUMN IF NOT EXISTS payroll_entry_id INTEGER REFERENCES payroll_entries(id) ON DELETE CASCADE",
+        "CREATE INDEX IF NOT EXISTS ix_cash_flow_entries_payroll_entry_id ON cash_flow_entries (payroll_entry_id)",
+        "ALTER TABLE payroll_employees ADD COLUMN IF NOT EXISTS card_holder_first_name VARCHAR(100)",
+        "ALTER TABLE payroll_employees ADD COLUMN IF NOT EXISTS card_holder_last_name VARCHAR(100)",
+        "ALTER TABLE payroll_employees ADD COLUMN IF NOT EXISTS employment_type VARCHAR(16) NOT NULL DEFAULT 'inhouse'",
         "ALTER TABLE ceo_metric_overrides ADD COLUMN IF NOT EXISTS company_slug VARCHAR(32) NOT NULL DEFAULT 'kelyanmedia'",
         "ALTER TABLE feed_notifications ADD COLUMN IF NOT EXISTS company_slug VARCHAR(32) NOT NULL DEFAULT 'kelyanmedia'",
         "ALTER TABLE telegram_join_requests ADD COLUMN IF NOT EXISTS company_slug VARCHAR(32) NOT NULL DEFAULT 'kelyanmedia'",
@@ -1211,6 +1218,12 @@ def _migrate():
             ("created_by_user_id", "ALTER TABLE cash_flow_entries ADD COLUMN created_by_user_id INTEGER REFERENCES users(id) ON DELETE SET NULL"),
             ("cost_category", "ALTER TABLE cash_flow_entries ADD COLUMN cost_category VARCHAR(20)"),
             ("employee_task_id", "ALTER TABLE cash_flow_entries ADD COLUMN employee_task_id INTEGER REFERENCES employee_tasks(id) ON DELETE CASCADE"),
+            ("payroll_entry_id", "ALTER TABLE cash_flow_entries ADD COLUMN payroll_entry_id INTEGER REFERENCES payroll_entries(id) ON DELETE CASCADE"),
+        ],
+        "payroll_employees": [
+            ("card_holder_first_name", "ALTER TABLE payroll_employees ADD COLUMN card_holder_first_name VARCHAR(100)"),
+            ("card_holder_last_name", "ALTER TABLE payroll_employees ADD COLUMN card_holder_last_name VARCHAR(100)"),
+            ("employment_type", "ALTER TABLE payroll_employees ADD COLUMN employment_type VARCHAR(16) NOT NULL DEFAULT 'inhouse'"),
         ],
         "sale_deals": [
             ("short_note", "ALTER TABLE sale_deals ADD COLUMN short_note TEXT"),

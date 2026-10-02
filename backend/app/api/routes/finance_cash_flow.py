@@ -564,6 +564,11 @@ def delete_entry(
             status_code=400,
             detail="Строка создана из «Команда» (оплаченная задача). Снимите «Оплачено» в задаче или измените сумму там.",
         )
+    if getattr(row, "payroll_entry_id", None):
+        raise HTTPException(
+            status_code=400,
+            detail="Строка создана из «Зарплатный фонд». Снимите галочку «Оплачено» там.",
+        )
     db.delete(row)
     db.commit()
     return {"ok": True}

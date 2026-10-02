@@ -81,6 +81,7 @@ const NAV_SECTIONS: NavSection[] = [
       { href: '/received-payments', label: 'Оплаты', icon: '💳', financeTeam: true, financeSectionKey: 'received_payments' },
       { href: '/finance/expenses', label: 'Расходы', icon: '📤', financeTeam: true, financeSectionKey: 'expenses' },
       { href: '/finance/lending', label: 'Кредитование', icon: '🏦', financeTeam: true, financeSectionKey: 'lending' },
+      { href: '/finance/payroll', label: 'Зарплатный фонд', icon: '👥', financeTeam: true, financeSectionKey: 'cashflow' },
     ],
   },
   {

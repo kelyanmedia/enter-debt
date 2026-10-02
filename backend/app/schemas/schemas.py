@@ -851,6 +851,128 @@ class LendingRecordUpdate(BaseModel):
     note: Optional[str] = None
 
 
+PayrollCurrency = Literal["UZS", "USD"]
+PayrollPaymentMethod = Literal["cash", "card", "transfer"]
+PayrollEmploymentType = Literal["inhouse", "outsource"]
+
+
+class PayrollEmployeeOut(BaseModel):
+    id: int
+    user_id: Optional[int] = None
+    full_name: str
+    position: Optional[str] = None
+    department: Optional[str] = None
+    employment_type: str = "inhouse"
+    base_salary: Decimal
+    currency: str
+    payment_method: str
+    card_number: Optional[str] = None
+    card_holder_first_name: Optional[str] = None
+    card_holder_last_name: Optional[str] = None
+    bank_name: Optional[str] = None
+    phone: Optional[str] = None
+    pay_day: Optional[int] = None
+    hired_on: Optional[date] = None
+    note: Optional[str] = None
+    sort_order: int = 0
+    is_active: bool = True
+
+    class Config:
+        from_attributes = True
+
+
+class PayrollEmployeeCreate(BaseModel):
+    full_name: str = Field(..., min_length=1, max_length=200)
+    position: Optional[str] = Field(None, max_length=200)
+    department: Optional[str] = Field(None, max_length=120)
+    employment_type: PayrollEmploymentType = "inhouse"
+    base_salary: Decimal = Field(Decimal("0"), ge=0)
+    currency: PayrollCurrency = "UZS"
+    payment_method: PayrollPaymentMethod = "card"
+    card_number: Optional[str] = Field(None, max_length=32)
+    card_holder_first_name: Optional[str] = Field(None, max_length=100)
+    card_holder_last_name: Optional[str] = Field(None, max_length=100)
+    bank_name: Optional[str] = Field(None, max_length=120)
+    phone: Optional[str] = Field(None, max_length=40)
+    pay_day: Optional[int] = Field(None, ge=1, le=31)
+    hired_on: Optional[date] = None
+    note: Optional[str] = None
+
+
+class PayrollEmployeeUpdate(BaseModel):
+    full_name: Optional[str] = Field(None, min_length=1, max_length=200)
+    position: Optional[str] = Field(None, max_length=200)
+    department: Optional[str] = Field(None, max_length=120)
+    employment_type: Optional[PayrollEmploymentType] = None
+    base_salary: Optional[Decimal] = Field(None, ge=0)
+    currency: Optional[PayrollCurrency] = None
+    payment_method: Optional[PayrollPaymentMethod] = None
+    card_number: Optional[str] = Field(None, max_length=32)
+    card_holder_first_name: Optional[str] = Field(None, max_length=100)
+    card_holder_last_name: Optional[str] = Field(None, max_length=100)
+    bank_name: Optional[str] = Field(None, max_length=120)
+    phone: Optional[str] = Field(None, max_length=40)
+    pay_day: Optional[int] = Field(None, ge=1, le=31)
+    hired_on: Optional[date] = None
+    note: Optional[str] = None
+    sort_order: Optional[int] = None
+    is_active: Optional[bool] = None
+
+
+class PayrollEntryOut(BaseModel):
+    id: int
+    period_month: str
+    employee_id: int
+    employee_name: str
+    employee_active: bool = True
+    position: Optional[str] = None
+    department: Optional[str] = None
+    employment_type: str = "inhouse"
+    currency: str
+    base_amount: Decimal
+    bonus_amount: Decimal
+    bonus_note: Optional[str] = None
+    deduction_amount: Decimal
+    deduction_note: Optional[str] = None
+    total_amount: Decimal
+    payment_method: str
+    card_number: Optional[str] = None
+    card_holder_first_name: Optional[str] = None
+    card_holder_last_name: Optional[str] = None
+    bank_name: Optional[str] = None
+    phone: Optional[str] = None
+    pay_day: Optional[int] = None
+    paid: bool
+    paid_on: Optional[date] = None
+    cash_flow_entry_id: Optional[int] = None
+    note: Optional[str] = None
+
+
+class PayrollEntryCreate(BaseModel):
+    period_month: str = Field(..., pattern=r"^\d{4}-\d{2}$")
+    employee_id: int
+
+
+class PayrollEntryUpdate(BaseModel):
+    position: Optional[str] = Field(None, max_length=200)
+    currency: Optional[PayrollCurrency] = None
+    base_amount: Optional[Decimal] = Field(None, ge=0)
+    bonus_amount: Optional[Decimal] = Field(None, ge=0)
+    bonus_note: Optional[str] = Field(None, max_length=300)
+    deduction_amount: Optional[Decimal] = Field(None, ge=0)
+    deduction_note: Optional[str] = Field(None, max_length=300)
+    payment_method: Optional[PayrollPaymentMethod] = None
+    paid: Optional[bool] = None
+    paid_on: Optional[date] = None
+    note: Optional[str] = None
+
+
+class PayrollGenerateIn(BaseModel):
+    period_month: str = Field(..., pattern=r"^\d{4}-\d{2}$")
+    # true — взять оклад/бонус/способ из предыдущего месяца, если там была строка
+    copy_from_previous: bool = True
+
+
 class CashFlowTemplateLineOut(BaseModel):
     id: int
     template_group: str
@@ -923,6 +1045,8 @@ class CashFlowEntryOut(BaseModel):
     created_by_user_id: Optional[int] = None
     notes: Optional[str] = None
     template_line_id: Optional[int] = None
+    employee_task_id: Optional[int] = None
+    payroll_entry_id: Optional[int] = None
     created_at: datetime
 
     class Config:
