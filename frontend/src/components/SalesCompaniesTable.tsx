@@ -387,6 +387,75 @@ function downloadImportTemplate() {
   XLSX.writeFile(wb, 'sales-companies-import-template.xlsx')
 }
 
+const EXPORT_EXTRA_HEADERS = [
+  'ID',
+  'Контакт (общий)',
+  'Последнее взаимодействие',
+  'Взаимодействий',
+]
+
+/** Экспорт клиентской базы: колонки как в шаблоне импорта (файл можно загрузить обратно) + служебные справа. */
+function exportCompaniesWorkbook(rows: SalesCompany[], fileSuffix: string) {
+  const sortedInteractions = (r: SalesCompany) =>
+    [...(r.interactions || [])].sort((a, b) => String(b.interaction_date).localeCompare(String(a.interaction_date)))
+
+  const companies = [
+    [...IMPORT_HEADERS, ...EXPORT_EXTRA_HEADERS],
+    ...rows.map((r) => {
+      const history = sortedInteractions(r)
+      return [
+        r.company_name || '',
+        r.brand_name || '',
+        r.client_type || '',
+        r.group_name || '',
+        r.status || '',
+        r.position || '',
+        r.contact_name || '',
+        r.phone || '',
+        r.email || '',
+        r.contact_actuality_date || '',
+        r.lpr_name || '',
+        r.lpr_role || '',
+        r.lvr_name || '',
+        r.lvr_role || '',
+        r.brought_by_manager_name || r.brought_by_name || '',
+        r.comment || '',
+        r.previous_jobs || '',
+        r.assigned_manager_name || '',
+        r.id,
+        r.contact || '',
+        history[0]?.interaction_date || '',
+        history.length,
+      ]
+    }),
+  ]
+
+  const interactions = [
+    ['ID компании', 'Компания', 'Дата', 'Проект', 'Статус', 'Заметка'],
+    ...rows.flatMap((r) =>
+      sortedInteractions(r).map((i) => [r.id, r.company_name || '', i.interaction_date || '', i.project_name || '', i.status || '', i.note || '']),
+    ),
+  ]
+
+  const companiesSheet = XLSX.utils.aoa_to_sheet(companies)
+  companiesSheet['!cols'] = companies[0].map((h) => {
+    const longest = companies.reduce((m, row) => Math.max(m, String(row[companies[0].indexOf(h)] ?? '').length), String(h).length)
+    return { wch: Math.min(Math.max(longest + 2, 8), 48) }
+  })
+  companiesSheet['!autofilter'] = { ref: XLSX.utils.encode_range({ s: { r: 0, c: 0 }, e: { r: companies.length - 1, c: companies[0].length - 1 } }) }
+
+  const interactionsSheet = XLSX.utils.aoa_to_sheet(interactions)
+  interactionsSheet['!cols'] = [{ wch: 11 }, { wch: 36 }, { wch: 12 }, { wch: 28 }, { wch: 18 }, { wch: 60 }]
+  interactionsSheet['!autofilter'] = { ref: XLSX.utils.encode_range({ s: { r: 0, c: 0 }, e: { r: interactions.length - 1, c: 5 } }) }
+
+  const wb = XLSX.utils.book_new()
+  XLSX.utils.book_append_sheet(wb, companiesSheet, 'Компании')
+  XLSX.utils.book_append_sheet(wb, interactionsSheet, 'Взаимодействия')
+  const d = new Date()
+  const stamp = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`
+  XLSX.writeFile(wb, `client-base-${stamp}${fileSuffix}.xlsx`)
+}
+
 function statusStyle(status: string | null | undefined): CSSProperties {
   const s = (status || '').toLowerCase()
   if (s.includes('кп') || s.includes('переговор')) return { background: '#ecfdf5', color: '#047857', border: '1px solid #a7f3d0' }
@@ -1203,6 +1272,14 @@ export function SalesCompaniesTable({ scope, isAdmin }: { scope: 'all' | 'mine';
       ? '__custom'
       : ''
   const visibleColumnCount = selectionMode ? 13 : 12
+  // Выгрузка всей базы — только для админа в «Клиентской базе»
+  const canExport = isAdmin && scope === 'all'
+  const exportRows = selectedIds.length > 0 ? rows.filter((r) => selectedSet.has(r.id)) : filteredRows
+  const exportToExcel = () => {
+    if (!canExport || exportRows.length === 0) return
+    const suffix = selectedIds.length > 0 ? '-selected' : exportRows.length < rows.length ? '-filtered' : ''
+    exportCompaniesWorkbook(exportRows, suffix)
+  }
   const toggleGroupFilter = (value: string) => {
     setGroupFilters((prev) => (prev.includes(value) ? prev.filter((x) => x !== value) : [...prev, value]))
   }
@@ -1240,6 +1317,21 @@ export function SalesCompaniesTable({ scope, isAdmin }: { scope: 'all' | 'mine';
           <BtnOutline type="button" onClick={openWishlist} style={{ fontSize: 13, padding: '8px 14px', borderRadius: 8 }}>
             Wishlist
           </BtnOutline>
+          {canExport ? (
+            <BtnOutline
+              type="button"
+              onClick={exportToExcel}
+              disabled={fetching || exportRows.length === 0}
+              title={
+                selectedIds.length > 0
+                  ? 'Выгрузить в Excel только выбранные компании'
+                  : 'Выгрузить в Excel компании, видимые с текущими фильтрами (без фильтров — всю базу)'
+              }
+              style={{ fontSize: 13, padding: '8px 14px', borderRadius: 8 }}
+            >
+              Экспорт в Excel ({exportRows.length})
+            </BtnOutline>
+          ) : null}
           <BtnOutline type="button" onClick={() => void load()} disabled={fetching} style={{ fontSize: 13, padding: '8px 14px', borderRadius: 8 }}>
             {fetching ? '…' : 'Обновить'}
           </BtnOutline>
