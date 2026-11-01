@@ -7,7 +7,7 @@ import Layout from '@/components/Layout'
 import {
   PageHeader, Card, Th, Td, BtnOutline, BtnPrimary, BtnIconEdit, Empty,
   formatDate, formatMoneyNumber, Modal, Field, Input, Select, ConfirmModal, MoneyInput,
-  EmployeeTaskStatusSelect,
+  EmployeeTaskStatusSelect, PaymentOptionCombobox,
 } from '@/components/ui'
 import api from '@/lib/api'
 import {
@@ -1755,17 +1755,16 @@ export default function StaffPage() {
             В отчёт попадает сумма работы минус «бюджет клиента». UZS — как есть; USD — по курсу месяца даты задачи из «Доступные средства» (без курса строка в Projects Cost не учитывается).
           </p>
           <Field label="Проект («Проекты»)">
-            <Select
+            <PaymentOptionCombobox
               value={form.allocated_payment_id}
-              onChange={e => setForm(f => ({ ...f, allocated_payment_id: e.target.value }))}
-            >
-              <option value="">— не распределять —</option>
-              {allocatablePayments.map(p => (
-                <option key={p.id} value={String(p.id)}>
-                  {(p.description || '').trim() || `Проект #${p.id}`} · {p.partner_name || '—'}
-                </option>
-              ))}
-            </Select>
+              onChange={id => setForm(f => ({ ...f, allocated_payment_id: id }))}
+              emptyLabel="— не распределять —"
+              options={allocatablePayments.map(p => ({
+                id: p.id,
+                label: (p.description || '').trim() || `Проект #${p.id}`,
+                partner_name: p.partner_name || undefined,
+              }))}
+            />
           </Field>
           <Field label="Статья себестоимости">
             <Select

@@ -699,7 +699,7 @@ export default function UsersPage() {
               compact
               name={editing.name}
               email={editing.email}
-              password={editing.admin_stored_password}
+              password={form.new_password.trim() || editing.admin_stored_password}
             />
             <div style={{ fontSize: 11, color: '#8a8fa8', marginTop: 8, lineHeight: 1.45 }}>
               Ниже можно заменить логин и пароль. Пароль сохраняется для показа в этой карточке.

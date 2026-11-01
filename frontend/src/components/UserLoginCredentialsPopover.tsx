@@ -153,7 +153,7 @@ export function UserLoginCredentialsPanel({
           copy={!!pwd}
           mono
           accent
-          emptyHint="не задан — укажите ниже"
+          emptyHint="не сохранён — задайте новый пароль ниже"
         />
         <CredInfoField label="Ссылка" value={url} copy mono />
       </div>
