@@ -30,7 +30,7 @@ import app.models.telegram_join  # noqa: F401 — таблица telegram_join_r
 import app.models.feed_notification  # noqa: F401 — лента событий
 import app.models.ceo_metric_override  # noqa: F401 — ручные значения CEO dashboard
 from app.api.routes import auth, users, partners, payments, dashboard, notifications, archive, payment_months, telegram_join, feed_notifications, contract_requests, employee_tasks, employee_payment_records, finance_projects_cost, finance_cash_flow, finance_lending, sales_companies, trash
-from app.api.routes import commissions, subscription_items, access_entries, company_assets, company_ui, pm_commissions
+from app.api.routes import commissions, subscription_items, access_entries, company_assets, event_assets, company_ui, pm_commissions
 from app.api.routes import sale_pipelines
 from app.api.routes import sales_analytics
 from app.api.routes import sales_calendar
@@ -44,6 +44,7 @@ import app.models.subscription_item  # noqa: F401
 import app.models.employee_payment_record  # noqa: F401
 import app.models.access_entry  # noqa: F401
 import app.models.company_asset  # noqa: F401 — имущество
+import app.models.event_asset  # noqa: F401 — активы мероприятий
 import app.models.cash_flow  # noqa: F401 — ДДС
 import app.models.company_ui  # noqa: F401 — подписи разделов/линий по компании
 import app.models.ceo_dashboard_block  # noqa: F401 — блоки CEO Dashboard по компании
@@ -248,6 +249,7 @@ app.include_router(pm_commissions.router)
 app.include_router(subscription_items.router)
 app.include_router(access_entries.router)
 app.include_router(company_assets.router)
+app.include_router(event_assets.router)
 app.include_router(company_ui.router)
 app.include_router(trash.router)
 
@@ -1085,6 +1087,25 @@ def _migrate():
                     conn.commit()
             except Exception as e:
                 log.warning("Migration skipped [%s] (company_assets.%s): %s", _slug, column, e)
+
+    for _slug, eng in iter_company_engines():
+        try:
+            cols = {c["name"] for c in inspect(eng).get_columns("event_assets")}
+            for _col, _typ in (("added_on", "DATE"), ("price", "NUMERIC(14, 2)"), ("market_rent", "NUMERIC(14, 2)"), ("photo_path", "VARCHAR(500)")):
+                if _col not in cols:
+                    with eng.connect() as conn:
+                        conn.execute(text(f"ALTER TABLE event_assets ADD COLUMN {_col} {_typ}"))
+                        conn.commit()
+        except Exception as e:
+            log.warning("Migration skipped [%s] (event_assets.added_on): %s", _slug, e)
+        try:
+            ucols = {c["name"] for c in inspect(eng).get_columns("event_asset_usages")}
+            if "export_id" not in ucols:
+                with eng.connect() as conn:
+                    conn.execute(text("ALTER TABLE event_asset_usages ADD COLUMN export_id VARCHAR(40)"))
+                    conn.commit()
+        except Exception as e:
+            log.warning("Migration skipped [%s] (event_asset_usages.export_id): %s", _slug, e)
 
     # Такой же добор для ДДС: старые строки не должны внезапно начать конвертироваться
     # по курсу, поэтому по умолчанию флаг автоконвертации = FALSE.

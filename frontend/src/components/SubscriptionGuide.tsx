@@ -1,4 +1,5 @@
-import { ReactNode } from 'react'
+import { ReactNode, useEffect, useState } from 'react'
+import api from '@/lib/api'
 import Link from 'next/link'
 import { useRouter } from 'next/router'
 import Layout from '@/components/Layout'
@@ -47,16 +48,39 @@ export const SUBSCRIPTION_TABS = [
   },
 ] as const
 
+const ASSETS_TAB = {
+  href: '/subscriptions/assets',
+  label: 'Активы',
+  icon: '📦',
+  title: 'Позиции для мероприятий: стойки, оборудование, отметки вывоза',
+}
+
 export function SubscriptionsTopTabs() {
   const router = useRouter()
   const { user } = useAuth()
-  const tabs = SUBSCRIPTION_TABS.filter((tab) => {
+  const [assetsOpen, setAssetsOpen] = useState(false)
+  useEffect(() => {
+    void api.get<{ enabled: boolean }>('event-assets/section').then((r) => setAssetsOpen(!!r.data.enabled)).catch(() => setAssetsOpen(false))
+  }, [])
+  const toggleAssets = async () => {
+    const next = !assetsOpen
+    try {
+      await api.put('event-assets/section', { enabled: next })
+      setAssetsOpen(next)
+      if (next) void router.push(ASSETS_TAB.href)
+      else if (router.pathname === ASSETS_TAB.href) void router.push('/subscriptions/property')
+    } catch {
+      /* только админ */
+    }
+  }
+  const baseTabs = SUBSCRIPTION_TABS.filter((tab) => {
     if (user?.role !== 'administration') return true
     if (tab.href === '/subscriptions/accesses' || tab.href === '/subscriptions/service-accesses' || tab.href === '/subscriptions/property') {
       return !!user.can_view_accesses
     }
     return !!user.can_view_subscriptions
   })
+  const tabs = assetsOpen ? [...baseTabs, ASSETS_TAB] : baseTabs
   return (
     <div
       style={{
@@ -98,6 +122,25 @@ export function SubscriptionsTopTabs() {
             </Link>
           )
         })}
+        {user?.role === 'admin' && (
+          <button
+            type="button"
+            onClick={() => void toggleAssets()}
+            style={{
+              padding: '10px 16px',
+              borderRadius: 10,
+              fontSize: 13,
+              fontWeight: 600,
+              border: '1px dashed #94a3b8',
+              background: 'transparent',
+              color: '#475569',
+              cursor: 'pointer',
+              fontFamily: 'inherit',
+            }}
+          >
+            {assetsOpen ? 'Скрыть раздел «Активы»' : '+ Открыть раздел «Активы»'}
+          </button>
+        )}
       </div>
     </div>
   )

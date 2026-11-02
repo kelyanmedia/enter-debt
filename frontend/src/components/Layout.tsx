@@ -3,6 +3,7 @@ import type { CSSProperties } from 'react'
 import { useRouter } from 'next/router'
 import Link from 'next/link'
 import { useAuth } from '@/context/AuthContext'
+import api from '@/lib/api'
 import { NotificationBell } from '@/components/NotificationDrawer'
 import { EmployeeQaDrawer } from '@/components/EmployeeSidebarGuide'
 import { companyDisplayName, getCompanySlug, getTokenForSlug } from '@/lib/company'
@@ -28,6 +29,8 @@ type NavItem = {
   activePathPrefix?: string
   /** Раздел «Продажи» — мастер-база лидов, только админ */
   salesClientBase?: boolean
+  /** Пункт «Активы» — виден, когда админ открыл раздел */
+  eventAssets?: boolean
   /** Раздел «Продажи» — список компаний менеджера (и админ) */
   salesCompanies?: boolean
   /** Раздел «Продажи» — воронки/kanban: admin + mop */
@@ -104,6 +107,13 @@ const NAV_SECTIONS: NavSection[] = [
         label: 'Имущество',
         icon: '🏷️',
         activePathPrefix: '/subscriptions/property',
+      },
+      {
+        href: '/subscriptions/assets',
+        label: 'Активы',
+        icon: '📦',
+        activePathPrefix: '/subscriptions/assets',
+        eventAssets: true,
       },
     ],
   },
@@ -238,8 +248,9 @@ function CompanyWorkspaceSelect({ readOnly }: { readOnly?: boolean }) {
   )
 }
 
-function filterVisibleNavItems(section: NavSection, user: { role: string; can_view_sales?: boolean; can_view_crm?: boolean; can_view_subscriptions?: boolean; can_view_accesses?: boolean }) {
+function filterVisibleNavItems(section: NavSection, assetsOpen: boolean, user: { role: string; can_view_sales?: boolean; can_view_crm?: boolean; can_view_subscriptions?: boolean; can_view_accesses?: boolean }) {
   return section.items.filter(n => {
+    if (n.eventAssets) return user.role === 'admin' || assetsOpen
     if (n.administrationDdsInput) return user.role === 'administration'
     if (n.adminOnly && user.role !== 'admin') return false
     if (
@@ -315,6 +326,11 @@ export default function Layout({ children }: { children: ReactNode }) {
   const { user, loading, logout, authBootstrapFailed, retryAuthBootstrap } = useAuth()
   const router = useRouter()
   const [employeeQaOpen, setEmployeeQaOpen] = useState(false)
+  const [assetsOpen, setAssetsOpen] = useState(false)
+  useEffect(() => {
+    if (!user) return
+    void api.get<{ enabled: boolean }>('event-assets/section').then((r) => setAssetsOpen(!!r.data.enabled)).catch(() => setAssetsOpen(false))
+  }, [user])
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false)
   const [sidebarManualExpand, setSidebarManualExpand] = useState(false)
 
@@ -823,7 +839,7 @@ export default function Layout({ children }: { children: ReactNode }) {
         <nav style={{ padding: sidebarNarrow ? '8px 6px' : '14px 10px', flex: 1, overflowY: 'auto', overflowX: 'hidden' }}>
           {NAV_SECTIONS.map((section, si) => {
             if (section.hideForFinancier && user.role === 'financier') return null
-            const visible = filterVisibleNavItems(section, user)
+            const visible = filterVisibleNavItems(section, assetsOpen, user)
             if (visible.length === 0) return null
             return (
               <div key={section.title} style={{ marginTop: si > 0 ? (sidebarNarrow ? 8 : 12) : 0 }}>
